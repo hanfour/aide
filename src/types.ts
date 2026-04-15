@@ -152,7 +152,7 @@ export interface EvalStandard {
 export interface CliOptions {
   since?: string;
   until?: string;
-  format: "text" | "json" | "markdown";
+  format: "text" | "json" | "markdown" | "html";
   output?: string;
   standard?: string;
   previous?: boolean;
@@ -175,6 +175,7 @@ export interface EvalReport {
   generatedAt: string;
   period: { since: string; until: string };
   standardName: string;
+  locale: "en" | "zh-TW";
   meta?: ReportMeta;
   usage: UsageOverview;
   sections: EvalSectionResult[];

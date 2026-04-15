@@ -6,7 +6,7 @@ import { homedir } from "os";
 
 export type Locale = "en" | "zh-TW";
 export type Theme = "default" | "minimal" | "no-color";
-export type OutputFormat = "text" | "json" | "markdown";
+export type OutputFormat = "text" | "json" | "markdown" | "html";
 
 export interface AppConfig {
   readonly locale: Locale;
@@ -21,7 +21,7 @@ export interface AppConfig {
 
 const LOCALES: ReadonlySet<string> = new Set(["en", "zh-TW"]);
 const THEMES: ReadonlySet<string> = new Set(["default", "minimal", "no-color"]);
-const FORMATS: ReadonlySet<string> = new Set(["text", "json", "markdown"]);
+const FORMATS: ReadonlySet<string> = new Set(["text", "json", "markdown", "html"]);
 
 const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   locale: "en",

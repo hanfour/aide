@@ -69,6 +69,12 @@ describe("config", () => {
       expect(updated.defaultFormat).toBe("markdown");
     });
 
+    it("sets defaultFormat to html", () => {
+      const config = getDefaultConfig();
+      const updated = setConfigValue(config, "defaultFormat", "html");
+      expect(updated.defaultFormat).toBe("html");
+    });
+
     it("sets defaultPeriodDays to a positive integer", () => {
       const config = getDefaultConfig();
       const updated = setConfigValue(config, "defaultPeriodDays", "14");

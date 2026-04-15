@@ -26,7 +26,7 @@ Engineering managers need evidence-based data to evaluate how effectively their 
 - Detects decision-making patterns (iterative refinement, multi-task coordination, active corrections)
 - Detects risk identification signals (security awareness, performance discussions, bug catching)
 - Configurable evaluation standard — bring your own criteria, keywords, and thresholds
-- Multiple output formats: terminal (colored), JSON, Markdown
+- Multiple output formats: terminal (colored), JSON, Markdown, HTML
 - JSON output is machine-parseable (`--format json` emits clean JSON to stdout, progress logs go to stderr)
 - Noise filtering to exclude system messages and code review templates from analysis
 - `init-standard` command to export the default standard as a customization template
@@ -63,50 +63,37 @@ All data is read **locally and read-only**. No data is sent to any external serv
 
 ## Installation / 安裝
 
-### Option A: Clone and run locally / 本地 Clone 執行
+### Recommended: Install from npm / 建議：從 npm 安裝
 
 ```bash
-# 1. Clone the repository
-git clone <repo-url> ~/aide
-cd ~/aide
+npm install -g @hanfour.huang/aide
 
-# 2. Install dependencies
-npm install
-
-# 3. Build (compiles TypeScript to dist/)
-npm run build
-
-# 4. Verify installation
-node dist/cli.js --version
+# Verify installation
+aide --version
 ```
 
-### Option B: Development mode (no build required) / 開發模式
+### Update / 更新
 
 ```bash
-git clone <repo-url> ~/aide
-cd ~/aide
-npm install
-
-# Run directly with tsx (TypeScript execution)
-npx tsx src/cli.ts --help
+npm install -g @hanfour.huang/aide@latest
 ```
 
-### Option C: Global install via npm link / 全域安裝
+### Existing local-clone users / 已使用 clone 安裝的使用者
 
-```bash
-cd ~/aide
-npm install
-npm run build
-npm link
-
-# Now available globally
-aide --help
-```
-
-After `npm link`, the `aide` command is available system-wide. To unlink:
+If you previously installed from a cloned repo or `npm link`, migrate to the npm package:
 
 ```bash
 npm unlink -g aide
+npm install -g @hanfour.huang/aide@latest
+```
+
+### Development mode / 開發模式
+
+```bash
+git clone https://github.com/hanfour/aide.git ~/aide
+cd ~/aide
+npm install
+npx tsx src/cli.ts --help
 ```
 
 ---
@@ -115,20 +102,19 @@ npm unlink -g aide
 
 ```bash
 # Quick usage summary (last 7 days)
-npx tsx src/cli.ts summary
+aide summary
 
 # Full evaluation report (last 30 days, terminal output)
-npx tsx src/cli.ts report
+aide report
 
 # Save report as Markdown
-npx tsx src/cli.ts report --format markdown --output report.md
+aide report --format markdown --output report.md
+
+# Save report as HTML
+aide report --format html --output report.html
 
 # Monthly KPI report
-npx tsx src/cli.ts monthly
-
-# If globally installed via npm link:
-aide summary
-aide report
+aide monthly
 ```
 
 ---
@@ -139,10 +125,10 @@ aide report
 
 ```bash
 # Last 7 days (default)
-npx tsx src/cli.ts summary
+aide summary
 
 # Custom date range
-npx tsx src/cli.ts summary --since 2026-03-01 --until 2026-03-31
+aide summary --since 2026-03-01 --until 2026-03-31
 ```
 
 Output:
@@ -167,37 +153,40 @@ Codex
 
 ```bash
 # Default: last 30 days, text format, built-in OneAD standard
-npx tsx src/cli.ts report
+aide report
 
 # Current calendar month
-npx tsx src/cli.ts monthly
+aide monthly
 
 # Previous full calendar month
-npx tsx src/cli.ts monthly --previous
+aide monthly --previous
 
 # Current calendar quarter
-npx tsx src/cli.ts quarterly
+aide quarterly
 
 # Previous full calendar quarter
-npx tsx src/cli.ts quarterly --previous
+aide quarterly --previous
 
 # Custom date range
-npx tsx src/cli.ts report --since 2026-03-01 --until 2026-04-14
+aide report --since 2026-03-01 --until 2026-04-14
 
 # Output as Markdown file
-npx tsx src/cli.ts report --format markdown --output report.md
+aide report --format markdown --output report.md
+
+# Output as HTML file
+aide report --format html --output report.html
 
 # Output as JSON (machine-parseable, clean stdout)
-npx tsx src/cli.ts report --format json --output report.json
+aide report --format json --output report.json
 
 # Pipe JSON for programmatic consumption
-npx tsx src/cli.ts report --format json 2>/dev/null | jq '.sections[].score'
+aide report --format json 2>/dev/null | jq '.sections[].score'
 
 # Use a custom evaluation standard
-npx tsx src/cli.ts report --standard my-standard.json
+aide report --standard my-standard.json
 
 # Include engineer/department metadata in report
-npx tsx src/cli.ts report --engineer "Jane Doe" --department "R&D"
+aide report --engineer "Jane Doe" --department "R&D"
 ```
 
 > **Note:** When using `--format json`, progress and status messages are written to stderr.
@@ -205,12 +194,13 @@ npx tsx src/cli.ts report --engineer "Jane Doe" --department "R&D"
 
 ### Using the compiled CLI / 使用編譯後的 CLI
 
-If you have run `npm run build`, you can use `node dist/cli.js` instead of `npx tsx src/cli.ts`:
+If you are developing locally and have run `npm run build`, you can use `node dist/cli.js`:
 
 ```bash
 node dist/cli.js report --since 2026-03-01 --until 2026-03-31
 node dist/cli.js summary
 node dist/cli.js monthly --previous --format markdown --output march.md
+node dist/cli.js report --format html --output report.html
 ```
 
 ---

@@ -143,6 +143,18 @@
       margin-bottom: 24px;
       letter-spacing: 0.02em;
     }
+    .hero-badges {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+    .hero-badges img {
+      display: block;
+      height: 20px;
+    }
     .hero h1 {
       font-size: clamp(2.2rem, 5vw, 3.4rem);
       font-weight: 800;
@@ -438,6 +450,7 @@
         <a href="#install">Install</a>
         <a href="#usage">Usage</a>
         <a href="#scoring">Scoring</a>
+        <a href="https://www.npmjs.com/package/@hanfour.huang/aide" target="_blank">npm</a>
         <a href="https://github.com/hanfour/aide" target="_blank">GitHub</a>
         <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
           <span id="theme-icon">&#9790;</span>
@@ -448,7 +461,15 @@
 
   <!-- Hero -->
   <section class="hero">
-    <div class="hero-badge">CLI Tool &middot; Local &middot; Privacy-first</div>
+    <div class="hero-badges">
+      <div class="hero-badge">CLI Tool &middot; Local &middot; Privacy-first</div>
+      <a href="https://www.npmjs.com/package/@hanfour.huang/aide" target="_blank" aria-label="View package on npm">
+        <img src="https://img.shields.io/npm/v/%40hanfour.huang%2Faide" alt="npm version badge">
+      </a>
+      <a href="https://www.npmjs.com/package/@hanfour.huang/aide" target="_blank" aria-label="View package downloads on npm">
+        <img src="https://img.shields.io/npm/dm/%40hanfour.huang%2Faide" alt="npm downloads badge">
+      </a>
+    </div>
     <h1>
       <span class="gradient">AI Development</span><br>
       Performance Evaluator
@@ -462,6 +483,9 @@
     </p>
     <div class="hero-actions">
       <a href="#install" class="btn btn-primary">Get Started</a>
+      <a href="https://www.npmjs.com/package/@hanfour.huang/aide" class="btn btn-secondary" target="_blank">
+        View on npm
+      </a>
       <a href="https://github.com/hanfour/aide" class="btn btn-secondary" target="_blank">
         View on GitHub
       </a>
@@ -561,7 +585,7 @@
           <div class="pipeline-box">
             <div class="num">Step 4</div>
             <div class="label">Report</div>
-            <div class="desc">Text, JSON, or Markdown</div>
+            <div class="desc">Text, JSON, Markdown, or HTML</div>
           </div>
         </div>
       </div>
@@ -599,25 +623,30 @@
     <div class="container">
       <div class="section-header">
         <h2>Installation</h2>
-        <p>Requires Node.js &ge; 18 and local Claude Code / Codex usage data.</p>
+        <p>Install from npm. Requires Node.js &ge; 18 and local Claude Code / Codex usage data. Package page: <a href="https://www.npmjs.com/package/@hanfour.huang/aide" target="_blank">@hanfour.huang/aide</a></p>
       </div>
       <div class="code-block">
         <div class="code-header">
           <span class="lang">bash</span>
           <button class="copy-btn" onclick="copyCode(this)">Copy</button>
         </div>
-        <pre><span class="comment"># Clone &amp; install</span>
-<span class="cmd">git clone</span> &lt;repo-url&gt; ~/aide
-<span class="cmd">cd</span> ~/aide
-<span class="cmd">npm install</span>
+        <pre><span class="comment"># Install globally from npm</span>
+<span class="cmd">npm install -g</span> @hanfour.huang/aide
 
-<span class="comment"># Quick test</span>
-<span class="cmd">npx tsx</span> src/cli.ts summary
-
-<span class="comment"># Or build &amp; install globally</span>
-<span class="cmd">npm run</span> build
-<span class="cmd">npm link</span>
+<span class="comment"># Verify installation</span>
 <span class="cmd">aide</span> --help</pre>
+      </div>
+      <div class="code-block" style="margin-top:16px;">
+        <div class="code-header">
+          <span class="lang">bash — update</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <pre><span class="comment"># Update to latest version</span>
+<span class="cmd">npm install -g</span> @hanfour.huang/aide@latest
+
+<span class="comment"># If you previously used npm link</span>
+<span class="cmd">npm unlink -g</span> aide
+<span class="cmd">npm install -g</span> @hanfour.huang/aide@latest</pre>
       </div>
     </div>
   </section>
@@ -642,6 +671,9 @@
 
 <span class="comment"># Monthly KPI report as Markdown</span>
 <span class="cmd">aide</span> monthly --format markdown --output report.md
+
+<span class="comment"># HTML report for manager review</span>
+<span class="cmd">aide</span> report --format html --output report.html
 
 <span class="comment"># Previous quarter, JSON for automation</span>
 <span class="cmd">aide</span> quarterly --previous --format json | jq '.sections[].score'
@@ -717,6 +749,7 @@
   <footer>
     <div class="container">
       <div class="links">
+        <a href="https://www.npmjs.com/package/@hanfour.huang/aide">npm</a>
         <a href="https://github.com/hanfour/aide">GitHub</a>
         <a href="https://github.com/hanfour/aide/issues">Issues</a>
         <a href="#install">Get Started</a>

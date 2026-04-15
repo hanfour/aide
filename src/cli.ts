@@ -23,6 +23,7 @@ import {
   renderTextReport,
   renderJsonReport,
   renderMarkdownReport,
+  renderHtmlReport,
 } from "./reporters/report.js";
 import { checkDataQuality } from "./data-quality.js";
 import { resolvePresetPeriod } from "./period.js";
@@ -36,6 +37,14 @@ import {
 } from "./config.js";
 import type { AppConfig } from "./config.js";
 import type { EvalReport, CliOptions } from "./types.js";
+import {
+  localizeHeadline,
+  localizeObservationTokens,
+  localizeOverallAssessment,
+  localizeRecommendations,
+  localizeSectionScoreLine,
+  t,
+} from "./i18n.js";
 
 const program = new Command();
 
@@ -60,15 +69,14 @@ configCmd
   .action(() => {
     const config = loadConfig();
     const defaults = getDefaultConfig();
+    const dict = t(config.locale);
     console.log("");
-    console.log(chalk.bold("aide Configuration"));
-    console.log(chalk.dim(`Config file: ${getConfigPath()}`));
+    console.log(chalk.bold(dict.configTitle));
+    console.log(chalk.dim(`${dict.configFile}: ${getConfigPath()}`));
     console.log("");
     for (const [key, value] of Object.entries(config)) {
       const isDefault = value === defaults[key as keyof AppConfig];
-      const label = isDefault
-        ? chalk.dim("(default)")
-        : chalk.green("(custom)");
+      const label = isDefault ? chalk.dim(dict.defaultLabel) : chalk.green(dict.customLabel);
       console.log(`  ${chalk.bold(key)}: ${value} ${label}`);
     }
     console.log("");
@@ -80,9 +88,10 @@ configCmd
   .action((key: string, value: string) => {
     try {
       const config = loadConfig();
+      const dict = t(config.locale);
       const updated = setConfigValue(config, key, value);
       saveConfig(updated);
-      console.log(chalk.green(`Set ${key} = ${value}`));
+      console.log(chalk.green(`${dict.setOk} ${key} = ${value}`));
     } catch (err) {
       console.error(
         chalk.red(err instanceof Error ? err.message : String(err)),
@@ -95,8 +104,10 @@ configCmd
   .command("reset")
   .description("Reset all settings to defaults / 重設為預設值")
   .action(() => {
+    const config = loadConfig();
+    const dict = t(config.locale);
     resetConfig();
-    console.log(chalk.green("Configuration reset to defaults."));
+    console.log(chalk.green(dict.configReset));
   });
 
 configCmd
@@ -113,7 +124,7 @@ program
   .description("Generate evaluation report / 產出評核報告")
   .option("-s, --since <date>", "Start date (YYYY-MM-DD)")
   .option("-u, --until <date>", "End date (YYYY-MM-DD)")
-  .option("-f, --format <format>", "Output format: text, json, markdown")
+  .option("-f, --format <format>", "Output format: text, json, markdown, html")
   .option("-o, --output <file>", "Write report to file")
   .option(
     "--standard <path>",
@@ -132,7 +143,7 @@ program
 program
   .command("monthly")
   .description("Generate monthly KPI report / 產出月度 KPI 評核報告")
-  .option("-f, --format <format>", "Output format: text, json, markdown")
+  .option("-f, --format <format>", "Output format: text, json, markdown, html")
   .option("-o, --output <file>", "Write report to file")
   .option(
     "--standard <path>",
@@ -156,7 +167,7 @@ program
 program
   .command("quarterly")
   .description("Generate quarterly KPI report / 產出季度 KPI 評核報告")
-  .option("-f, --format <format>", "Output format: text, json, markdown")
+  .option("-f, --format <format>", "Output format: text, json, markdown, html")
   .option("-o, --output <file>", "Write report to file")
   .option(
     "--standard <path>",
@@ -198,13 +209,14 @@ program
   )
   .option("-o, --output <file>", "Output file path", "eval-standard.json")
   .action((opts: { output: string }) => {
+    const config = loadConfig();
+    const dict = t(config.locale);
     writeFileSync(opts.output, getDefaultStandardTemplateText(), "utf-8");
     process.stderr.write(
-      chalk.green(`Default standard exported to ${opts.output}`) + "\n",
+      chalk.green(`${dict.defaultStandardExported} ${opts.output}`) + "\n",
     );
     process.stderr.write(
-      chalk.dim("Edit this file to create your custom evaluation standard.") +
-        "\n",
+      chalk.dim(dict.defaultStandardHint) + "\n",
     );
   });
 
@@ -252,6 +264,7 @@ function runReport(opts: CliOptions, config: AppConfig): void {
 
   const useColor = config.theme !== "no-color";
   const c = useColor ? chalk : new Chalk({ level: 0 });
+  const dict = t(config.locale);
   const log = (msg: string) => process.stderr.write(msg + "\n");
 
   // Load standard
@@ -259,8 +272,8 @@ function runReport(opts: CliOptions, config: AppConfig): void {
   if (standardPath) {
     log(c.dim(`\nUsing custom standard: ${standardPath}`));
   }
-  log(c.dim(`Standard: ${standard.name}`));
-  log(c.dim(`Extracting data from ${since} to ${until}...\n`));
+  log(c.dim(`${dict.standardLabel}: ${standard.name}`));
+  log(c.dim(`${dict.extractingLabel} ${since} to ${until}...\n`));
 
   // ── Extract ──
   const claudeSessions = extractClaudeSessions(since, until, config.claudeDir);
@@ -327,7 +340,7 @@ function runReport(opts: CliOptions, config: AppConfig): void {
   );
 
   if (dataWarnings.length > 0) {
-    log(c.yellow(`  Data warnings: ${dataWarnings.length}`));
+    log(c.yellow(`  ${dict.dataWarningsCount}: ${dataWarnings.length}`));
   }
 
   // ── Report ──
@@ -340,11 +353,12 @@ function runReport(opts: CliOptions, config: AppConfig): void {
     generatedAt: dayjs().format("YYYY-MM-DD HH:mm:ss"),
     period: { since, until },
     standardName: standard.name,
+    locale: config.locale,
     meta,
     usage,
     sections,
     dataWarnings,
-    managementSummary: buildManagementSummary(sections, usage, since, until),
+    managementSummary: buildManagementSummary(config.locale, sections, usage, since, until),
   };
 
   let rendered: string;
@@ -353,22 +367,26 @@ function runReport(opts: CliOptions, config: AppConfig): void {
       rendered = renderJsonReport(report);
       break;
     case "markdown":
-      rendered = renderMarkdownReport(report);
+      rendered = renderMarkdownReport(report, config.locale);
+      break;
+    case "html":
+      rendered = renderHtmlReport(report, config.locale);
       break;
     default:
-      rendered = renderTextReport(report);
+      rendered = renderTextReport(report, config.locale);
       break;
   }
 
   if (output) {
     writeFileSync(output, rendered, "utf-8");
-    log(c.green(`\nReport written to ${output}`));
+    log(c.green(`\n${dict.reportWritten} ${output}`));
   } else {
     process.stdout.write(rendered + "\n");
   }
 }
 
 function buildManagementSummary(
+  locale: AppConfig["locale"],
   sections: EvalReport["sections"],
   usage: EvalReport["usage"],
   since: string,
@@ -377,50 +395,20 @@ function buildManagementSummary(
   const superiorCount = sections.filter(
     (section) => section.score > 100,
   ).length;
-  const highRiskSections = sections.filter(
-    (section) => section.id === "riskControl" && section.score <= 100,
+  const headline = localizeHeadline(locale, superiorCount, sections.length);
+  const overallAssessment = localizeOverallAssessment(
+    locale,
+    since,
+    until,
+    usage,
+    superiorCount,
+    sections.length,
   );
-
-  const headline =
-    superiorCount === sections.length
-      ? "Overall KPI posture is strong across all configured sections."
-      : superiorCount > 0
-        ? "KPI evidence is mixed: some sections are superior, but not all."
-        : "KPI evidence remains at standard level; stronger decision and risk evidence is needed.";
-
-  const overallAssessment =
-    `Period ${since} to ${until}. ` +
-    `${usage.claudeCode.totalSessions} Claude Code sessions and ${usage.codex.totalSessions} Codex threads were analyzed. ` +
-    `${superiorCount}/${sections.length} sections reached Superior (120%).`;
-
   const observations = [
-    `Claude Code tokens: ${(usage.claudeCode.totalInputTokens + usage.claudeCode.totalOutputTokens).toLocaleString("en-US")}.`,
-    `Codex tokens: ${usage.codex.totalTokensUsed.toLocaleString("en-US")}.`,
-    ...sections.map(
-      (section) => `${section.name}: ${section.score}% (${section.label}).`,
-    ),
+    ...localizeObservationTokens(locale, usage),
+    ...sections.map((section) => localizeSectionScoreLine(locale, section)),
   ];
-
-  const recommendations: string[] = [];
-  if (
-    sections.some(
-      (section) => section.id === "interaction" && section.score <= 100,
-    )
-  ) {
-    recommendations.push(
-      "Strengthen interaction evidence with clearer decision comparisons, iterative choices, and explicit corrections.",
-    );
-  }
-  if (highRiskSections.length > 0) {
-    recommendations.push(
-      "Strengthen risk-control evidence with explicit security, performance, and bug-prevention discussions.",
-    );
-  }
-  if (recommendations.length === 0) {
-    recommendations.push(
-      "Maintain current evidence quality and continue documenting decision and risk-control reasoning.",
-    );
-  }
+  const recommendations = localizeRecommendations(locale, sections);
 
   return {
     headline,

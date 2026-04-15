@@ -5,44 +5,25 @@ import { existsSync } from "fs";
 import dayjs from "dayjs";
 
 const PROJECT_ROOT = join(import.meta.dirname, "..");
-const CLI = join(PROJECT_ROOT, "src", "cli.ts");
-const TSX = join(PROJECT_ROOT, "node_modules", ".bin", "tsx");
-
-/** Check if tsx subprocess execution is available in this environment */
-function canRunSubprocess(): boolean {
-  try {
-    execSync(`"${TSX}" --version`, {
-      encoding: "utf-8",
-      timeout: 5000,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const SUBPROCESS_AVAILABLE = canRunSubprocess();
+const CLI = join(PROJECT_ROOT, "dist", "cli.js");
 
 /** Run CLI, returning stdout only (stderr is suppressed) */
-const run = (args: string) =>
-  execSync(`"${TSX}" "${CLI}" ${args} 2>/dev/null`, {
+const run = (args: string, env?: Record<string, string>) =>
+  execSync(`node "${CLI}" ${args} 2>/dev/null`, {
     encoding: "utf-8",
     timeout: 30000,
-    env: { ...process.env, NO_COLOR: "1" },
+    env: { ...process.env, NO_COLOR: "1", ...env },
   });
 
 /** Run CLI, returning stderr only (stdout is suppressed) */
 const runStderr = (args: string) =>
-  execSync(`"${TSX}" "${CLI}" ${args} 2>&1 1>/dev/null`, {
+  execSync(`node "${CLI}" ${args} 2>&1 1>/dev/null`, {
     encoding: "utf-8",
     timeout: 30000,
     env: { ...process.env, NO_COLOR: "1" },
   });
 
-const describeSubprocess = SUBPROCESS_AVAILABLE ? describe : describe.skip;
-
-describeSubprocess("CLI regression (subprocess)", () => {
+describe("CLI regression (subprocess)", () => {
   it("shows help without error", () => {
     const output = run("--help");
     expect(output).toContain("aide");
@@ -106,6 +87,15 @@ describeSubprocess("CLI regression (subprocess)", () => {
     const parsed = JSON.parse(content);
     expect(parsed).toHaveProperty("name");
     expect(parsed).toHaveProperty("sections");
+  });
+
+  it("report html format emits standalone HTML with embedded report data", () => {
+    const output = run(
+      "report --since 2026-04-01 --until 2026-04-14 --format html",
+    );
+    expect(output).toContain("<!DOCTYPE html>");
+    expect(output).toContain("At a Glance");
+    expect(output).toContain("Usage Stats");
   });
 });
 
