@@ -1,0 +1,22 @@
+{
+  "name": "Test Standard",
+  "sections": [
+    {
+      "id": "quality",
+      "name": "Code Quality",
+      "weight": "50%",
+      "standard": { "score": 100, "label": "Standard", "criteria": ["Basic quality"] },
+      "superior": { "score": 120, "label": "Superior", "criteria": ["Exceptional quality"] },
+      "keywords": ["refactor", "optimize"],
+      "thresholds": { "keywordHits": 3, "avgToolUses": 10 },
+      "superiorRules": {
+        "mode": "grouped",
+        "strongThresholds": ["keywordHits"],
+        "supportThresholds": ["avgToolUses"],
+        "minStrongMatched": 1,
+        "minSupportMatched": 0
+      }
+    }
+  ],
+  "noiseFilters": { "prefixes": ["<system>"], "templatePhrases": [], "minLength": 5 }
+}

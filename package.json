@@ -1,0 +1,38 @@
+{
+  "name": "aide",
+  "version": "0.1.0",
+  "description": "aide — AI Development Performance Evaluator. Analyze Claude Code & Codex usage for technical performance review.",
+  "type": "module",
+  "bin": {
+    "aide": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && npm run test"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "ai",
+    "evaluation",
+    "performance"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "dayjs": "^1.11.13"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.4"
+  }
+}

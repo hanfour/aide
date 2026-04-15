@@ -1,0 +1,21 @@
+{
+  "name": "Bad Ref Standard",
+  "sections": [
+    {
+      "id": "test",
+      "name": "Test Section",
+      "weight": "100%",
+      "standard": { "score": 100, "label": "OK", "criteria": ["ok"] },
+      "superior": { "score": 120, "label": "Great", "criteria": ["great"] },
+      "keywords": [],
+      "thresholds": { "keywordHits": 5 },
+      "superiorRules": {
+        "mode": "grouped",
+        "strongThresholds": ["nonExistentKey"],
+        "supportThresholds": ["alsoMissing"],
+        "minStrongMatched": 1,
+        "minSupportMatched": 1
+      }
+    }
+  ]
+}

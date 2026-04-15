@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>aide — AI Development Performance Evaluator</title>
+  <meta name="description" content="CLI tool that reads local Claude Code & Codex usage data to generate technical performance evaluation reports.">
+  <style>
+    /* ── Reset & Variables ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #ffffff;
+      --bg-secondary: #f6f8fa;
+      --bg-code: #f0f2f5;
+      --text: #1a1a2e;
+      --text-secondary: #596174;
+      --text-muted: #8b95a5;
+      --border: #e2e6eb;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --accent-bg: #eff6ff;
+      --green: #10b981;
+      --green-bg: #ecfdf5;
+      --orange: #f59e0b;
+      --orange-bg: #fffbeb;
+      --purple: #8b5cf6;
+      --purple-bg: #f5f3ff;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+      --shadow-lg: 0 8px 30px rgba(0,0,0,0.12);
+      --radius: 12px;
+      --radius-sm: 8px;
+      --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif;
+      --font-mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+    }
+
+    .dark {
+      --bg: #0d1117;
+      --bg-secondary: #161b22;
+      --bg-code: #1c2128;
+      --text: #e6edf3;
+      --text-secondary: #9eaab6;
+      --text-muted: #6e7a88;
+      --border: #30363d;
+      --accent: #58a6ff;
+      --accent-hover: #79c0ff;
+      --accent-bg: #0d1f3c;
+      --green: #3fb950;
+      --green-bg: #0a2618;
+      --orange: #d29922;
+      --orange-bg: #2a1f05;
+      --purple: #a78bfa;
+      --purple-bg: #1a1433;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+      --shadow-lg: 0 8px 30px rgba(0,0,0,0.5);
+    }
+
+    /* ── Base ── */
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      transition: background 0.3s, color 0.3s;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-hover); }
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.88em;
+      background: var(--bg-code);
+      padding: 0.15em 0.4em;
+      border-radius: 4px;
+    }
+
+    /* ── Layout ── */
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+
+    /* ── Nav ── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      background: color-mix(in srgb, var(--bg) 85%, transparent);
+    }
+    .nav-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 64px;
+    }
+    .nav-brand {
+      font-weight: 700;
+      font-size: 1.2rem;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .nav-brand span { color: var(--accent); }
+    .nav-links { display: flex; align-items: center; gap: 24px; }
+    .nav-links a {
+      color: var(--text-secondary);
+      font-size: 0.92rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+    .theme-toggle {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 1.1rem;
+      color: var(--text-secondary);
+      transition: all 0.2s;
+    }
+    .theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Hero ── */
+    .hero {
+      text-align: center;
+      padding: 100px 24px 80px;
+    }
+    .hero-badge {
+      display: inline-block;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--accent);
+      background: var(--accent-bg);
+      padding: 6px 16px;
+      border-radius: 20px;
+      margin-bottom: 24px;
+      letter-spacing: 0.02em;
+    }
+    .hero h1 {
+      font-size: clamp(2.2rem, 5vw, 3.4rem);
+      font-weight: 800;
+      line-height: 1.15;
+      margin-bottom: 20px;
+      letter-spacing: -0.025em;
+    }
+    .hero h1 .gradient {
+      background: linear-gradient(135deg, var(--accent), var(--purple));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero p {
+      font-size: 1.15rem;
+      color: var(--text-secondary);
+      max-width: 620px;
+      margin: 0 auto 36px;
+    }
+    .hero-actions { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 28px;
+      border-radius: var(--radius-sm);
+      font-weight: 600;
+      font-size: 0.95rem;
+      transition: all 0.2s;
+      border: none;
+      cursor: pointer;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { background: var(--accent-hover); color: #fff; transform: translateY(-1px); box-shadow: var(--shadow-md); }
+    .btn-secondary {
+      background: var(--bg-secondary);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { border-color: var(--accent); color: var(--accent); transform: translateY(-1px); }
+
+    /* ── Section ── */
+    section { padding: 80px 0; }
+    section:nth-child(even) { background: var(--bg-secondary); }
+    .section-header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+    .section-header h2 {
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+      letter-spacing: -0.02em;
+    }
+    .section-header p {
+      color: var(--text-secondary);
+      font-size: 1.05rem;
+      max-width: 560px;
+      margin: 0 auto;
+    }
+
+    /* ── Features Grid ── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+    }
+    .feature-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      transition: all 0.25s;
+    }
+    .feature-card:hover {
+      transform: translateY(-3px);
+      box-shadow: var(--shadow-md);
+      border-color: var(--accent);
+    }
+    .feature-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      margin-bottom: 16px;
+    }
+    .feature-icon.blue { background: var(--accent-bg); }
+    .feature-icon.green { background: var(--green-bg); }
+    .feature-icon.orange { background: var(--orange-bg); }
+    .feature-icon.purple { background: var(--purple-bg); }
+    .feature-card h3 { font-size: 1.05rem; font-weight: 600; margin-bottom: 8px; }
+    .feature-card p { font-size: 0.9rem; color: var(--text-secondary); line-height: 1.6; }
+
+    /* ── Code Block ── */
+    .code-block {
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow-x: auto;
+      position: relative;
+    }
+    .code-block pre {
+      padding: 24px;
+      font-family: var(--font-mono);
+      font-size: 0.88rem;
+      line-height: 1.7;
+      color: var(--text);
+      margin: 0;
+    }
+    .code-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .code-header .lang { font-family: var(--font-mono); }
+    .copy-btn {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .comment { color: var(--text-muted); }
+    .cmd { color: var(--green); }
+
+    /* ── Pipeline ── */
+    .pipeline {
+      display: flex;
+      gap: 0;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 32px;
+    }
+    .pipeline-step {
+      display: flex;
+      align-items: center;
+      gap: 0;
+    }
+    .pipeline-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 20px 28px;
+      text-align: center;
+      transition: all 0.2s;
+    }
+    .pipeline-box:hover { border-color: var(--accent); box-shadow: var(--shadow-sm); }
+    .pipeline-box .num {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+    }
+    .pipeline-box .label { font-weight: 600; font-size: 0.95rem; }
+    .pipeline-box .desc { font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px; }
+    .pipeline-arrow {
+      color: var(--text-muted);
+      font-size: 1.4rem;
+      padding: 0 8px;
+      display: flex;
+      align-items: center;
+    }
+
+    /* ── Data Sources Table ── */
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    th {
+      background: var(--bg-secondary);
+      font-weight: 600;
+      text-align: left;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    td {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    tr:last-child td { border-bottom: none; }
+    td code { font-size: 0.82rem; }
+
+    /* ── Scoring Section ── */
+    .scoring-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+      gap: 24px;
+    }
+    .scoring-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .scoring-card-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .scoring-card-header .weight {
+      background: var(--accent-bg);
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 12px;
+    }
+    .scoring-card-header h3 { font-size: 1rem; font-weight: 600; }
+    .scoring-row {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+    }
+    .scoring-row:last-child { border-bottom: none; }
+    .scoring-label {
+      width: 120px;
+      flex-shrink: 0;
+      padding: 14px 20px;
+      font-weight: 600;
+      font-size: 0.88rem;
+      border-right: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+    }
+    .scoring-label.standard { color: var(--accent); }
+    .scoring-label.superior { color: var(--green); }
+    .scoring-content {
+      padding: 14px 20px;
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 0;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+    }
+    footer a { color: var(--text-secondary); }
+    footer .links { display: flex; justify-content: center; gap: 24px; margin-bottom: 16px; }
+
+    /* ── Responsive ── */
+    @media (max-width: 768px) {
+      .hero { padding: 60px 16px 50px; }
+      .features-grid { grid-template-columns: 1fr; }
+      .scoring-grid { grid-template-columns: 1fr; }
+      .pipeline { flex-direction: column; align-items: center; }
+      .pipeline-arrow { transform: rotate(90deg); padding: 4px 0; }
+      .nav-links { gap: 12px; }
+      .nav-links a { font-size: 0.82rem; }
+      section { padding: 50px 0; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Nav -->
+  <nav>
+    <div class="nav-inner">
+      <a href="#" class="nav-brand">
+        <span>&gt;_</span> aide
+      </a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#install">Install</a>
+        <a href="#usage">Usage</a>
+        <a href="#scoring">Scoring</a>
+        <a href="https://github.com/anthropics/aide" target="_blank">GitHub</a>
+        <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+          <span id="theme-icon">&#9790;</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-badge">CLI Tool &middot; Local &middot; Privacy-first</div>
+    <h1>
+      <span class="gradient">AI Development</span><br>
+      Performance Evaluator
+    </h1>
+    <p>
+      Read local Claude Code &amp; Codex usage data to generate evidence-based
+      technical performance evaluation reports for engineering managers.
+    </p>
+    <p style="font-size:0.95rem;color:var(--text-muted);margin-top:-16px;margin-bottom:32px;">
+      AI 開發績效評核工具 — 讀取本地端 AI 工具使用資料，產出技術績效評核報告。
+    </p>
+    <div class="hero-actions">
+      <a href="#install" class="btn btn-primary">Get Started</a>
+      <a href="https://github.com/anthropics/aide" class="btn btn-secondary" target="_blank">
+        View on GitHub
+      </a>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section id="features">
+    <div class="container">
+      <div class="section-header">
+        <h2>Features</h2>
+        <p>Everything you need to evaluate AI-assisted development performance.</p>
+      </div>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon blue">&#128202;</div>
+          <h3>Multi-source Extraction</h3>
+          <p>Reads Claude Code session metadata, facets, SQLite cost data, JSONL conversations, and Codex thread data from local storage.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon green">&#128161;</div>
+          <h3>Decision Pattern Detection</h3>
+          <p>Detects iterative refinement, multi-task coordination, and active corrections to evaluate decision-making quality.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon orange">&#128737;</div>
+          <h3>Risk Signal Analysis</h3>
+          <p>Identifies security awareness, performance discussions, bug catching, and other risk-control behaviors.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon purple">&#128196;</div>
+          <h3>Multiple Output Formats</h3>
+          <p>Generate reports in colored terminal, JSON (machine-parseable stdout), or Markdown format.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon blue">&#9881;</div>
+          <h3>Configurable Standards</h3>
+          <p>Bring your own evaluation criteria, keywords, thresholds, and superior rules via custom JSON standard files.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon green">&#128274;</div>
+          <h3>Privacy-first &amp; Local</h3>
+          <p>All data is read locally and read-only. No data is sent to any external service. Your code stays yours.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon orange">&#128197;</div>
+          <h3>Period Presets</h3>
+          <p>Built-in monthly and quarterly commands with <code>--previous</code> flag for calendar-aligned KPI reviews.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon purple">&#128200;</div>
+          <h3>Management Summary</h3>
+          <p>Auto-generated executive summary with headline, observations, and recommendations for KPI reviews.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon blue">&#128295;</div>
+          <h3>Persistent Config</h3>
+          <p>Set defaults for locale, theme, output format, period days, and data directories via <code>config</code> command.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Architecture -->
+  <section id="architecture">
+    <div class="container">
+      <div class="section-header">
+        <h2>How It Works</h2>
+        <p>A four-stage pipeline from raw data to scored report.</p>
+      </div>
+      <div class="pipeline">
+        <div class="pipeline-step">
+          <div class="pipeline-box">
+            <div class="num">Step 1</div>
+            <div class="label">Extract</div>
+            <div class="desc">Read JSON, JSONL, SQLite</div>
+          </div>
+          <div class="pipeline-arrow">&#10132;</div>
+        </div>
+        <div class="pipeline-step">
+          <div class="pipeline-box">
+            <div class="num">Step 2</div>
+            <div class="label">Analyze</div>
+            <div class="desc">Aggregate &amp; detect patterns</div>
+          </div>
+          <div class="pipeline-arrow">&#10132;</div>
+        </div>
+        <div class="pipeline-step">
+          <div class="pipeline-box">
+            <div class="num">Step 3</div>
+            <div class="label">Score</div>
+            <div class="desc">Compare against thresholds</div>
+          </div>
+          <div class="pipeline-arrow">&#10132;</div>
+        </div>
+        <div class="pipeline-step">
+          <div class="pipeline-box">
+            <div class="num">Step 4</div>
+            <div class="label">Report</div>
+            <div class="desc">Text, JSON, or Markdown</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Data Sources -->
+  <section>
+    <div class="container">
+      <div class="section-header">
+        <h2>Data Sources</h2>
+        <p>All data is read locally. Nothing leaves your machine.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Source</th><th>Path</th><th>Data</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Claude Code Sessions</td><td><code>~/.claude/usage-data/session-meta/*.json</code></td><td>Tokens, duration, tools, languages, git commits</td></tr>
+            <tr><td>Claude Code Facets</td><td><code>~/.claude/usage-data/facets/*.json</code></td><td>Goals, outcomes, friction, helpfulness</td></tr>
+            <tr><td>Claude Code Costs</td><td><code>~/.claude/__store.db</code></td><td>Per-message cost (USD), model, duration</td></tr>
+            <tr><td>Claude Code JSONL</td><td><code>~/.claude/projects/*/*.jsonl</code></td><td>Full conversations for keyword scanning</td></tr>
+            <tr><td>Codex Threads</td><td><code>~/.codex/state_5.sqlite</code></td><td>Tokens, model, title, git info</td></tr>
+            <tr><td>Codex History</td><td><code>~/.codex/history.jsonl</code></td><td>Full user prompts by thread</td></tr>
+            <tr><td>Codex Logs</td><td><code>~/.codex/logs_2.sqlite</code></td><td>Tool calls and error events</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Install -->
+  <section id="install">
+    <div class="container">
+      <div class="section-header">
+        <h2>Installation</h2>
+        <p>Requires Node.js &ge; 18 and local Claude Code / Codex usage data.</p>
+      </div>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="lang">bash</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <pre><span class="comment"># Clone &amp; install</span>
+<span class="cmd">git clone</span> &lt;repo-url&gt; ~/aide
+<span class="cmd">cd</span> ~/aide
+<span class="cmd">npm install</span>
+
+<span class="comment"># Quick test</span>
+<span class="cmd">npx tsx</span> src/cli.ts summary
+
+<span class="comment"># Or build &amp; install globally</span>
+<span class="cmd">npm run</span> build
+<span class="cmd">npm link</span>
+<span class="cmd">aide</span> --help</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Usage -->
+  <section id="usage">
+    <div class="container">
+      <div class="section-header">
+        <h2>Usage</h2>
+        <p>Generate reports with a single command.</p>
+      </div>
+      <div class="code-block" style="margin-bottom:24px;">
+        <div class="code-header">
+          <span class="lang">bash</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <pre><span class="comment"># Quick summary (last 7 days)</span>
+<span class="cmd">aide</span> summary
+
+<span class="comment"># Full report (last 30 days)</span>
+<span class="cmd">aide</span> report
+
+<span class="comment"># Monthly KPI report as Markdown</span>
+<span class="cmd">aide</span> monthly --format markdown --output report.md
+
+<span class="comment"># Previous quarter, JSON for automation</span>
+<span class="cmd">aide</span> quarterly --previous --format json | jq '.sections[].score'
+
+<span class="comment"># Custom date range with engineer metadata</span>
+<span class="cmd">aide</span> report --since 2026-03-01 --until 2026-03-31 \
+  --engineer "Jane Doe" --department "R&amp;D"
+
+<span class="comment"># Use a custom evaluation standard</span>
+<span class="cmd">aide</span> report --standard my-standard.json</pre>
+      </div>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="lang">bash — config</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <pre><span class="comment"># View settings</span>
+<span class="cmd">aide</span> config
+
+<span class="comment"># Set defaults</span>
+<span class="cmd">aide</span> config set locale zh-TW
+<span class="cmd">aide</span> config set theme no-color
+<span class="cmd">aide</span> config set defaultFormat markdown
+<span class="cmd">aide</span> config set defaultPeriodDays 14
+
+<span class="comment"># Reset to defaults</span>
+<span class="cmd">aide</span> config reset</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Scoring -->
+  <section id="scoring">
+    <div class="container">
+      <div class="section-header">
+        <h2>Default Scoring Standard</h2>
+        <p>Built-in OneAD R&amp;D AI-Application Evaluation Standard. Fully customizable.</p>
+      </div>
+      <div class="scoring-grid">
+        <div class="scoring-card">
+          <div class="scoring-card-header">
+            <span class="weight">20% KPI</span>
+            <h3>AI Interaction &amp; Decision</h3>
+          </div>
+          <div class="scoring-row">
+            <div class="scoring-label standard">100%</div>
+            <div class="scoring-content">Actively use AI for coding; clear decision notes</div>
+          </div>
+          <div class="scoring-row">
+            <div class="scoring-label superior">120%</div>
+            <div class="scoring-content">Multi-iteration guidance (A&rarr;B&rarr;C); system-constraint-aware optimization</div>
+          </div>
+        </div>
+        <div class="scoring-card">
+          <div class="scoring-card-header">
+            <span class="weight">50% KPI</span>
+            <h3>AI Identification &amp; Risk Control</h3>
+          </div>
+          <div class="scoring-row">
+            <div class="scoring-label standard">100%</div>
+            <div class="scoring-content">Catch common AI errors / hallucinations; stable code</div>
+          </div>
+          <div class="scoring-row">
+            <div class="scoring-label superior">120%</div>
+            <div class="scoring-content">Identify critical risks (security, performance, memory); produce SOP/Wiki for team</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container">
+      <div class="links">
+        <a href="https://github.com/anthropics/aide">GitHub</a>
+        <a href="https://github.com/anthropics/aide/issues">Issues</a>
+        <a href="#install">Get Started</a>
+      </div>
+      <p>MIT License &middot; aide</p>
+    </div>
+  </footer>
+
+  <script>
+    // Theme toggle
+    function getPreferredTheme() {
+      const saved = localStorage.getItem('theme');
+      if (saved) return saved;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+
+    function applyTheme(theme) {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      document.getElementById('theme-icon').textContent = theme === 'dark' ? '\u2600' : '\u263E';
+      localStorage.setItem('theme', theme);
+    }
+
+    function toggleTheme() {
+      const current = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+      applyTheme(current === 'dark' ? 'light' : 'dark');
+    }
+
+    applyTheme(getPreferredTheme());
+
+    // Copy button
+    function copyCode(btn) {
+      const pre = btn.closest('.code-block').querySelector('pre');
+      navigator.clipboard.writeText(pre.textContent).then(() => {
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+      });
+    }
+  </script>
+</body>
+</html>
