@@ -1,8 +1,7 @@
-export default function HomePage() {
-  return (
-    <main style={{ padding: 24, fontFamily: 'system-ui, sans-serif' }}>
-      <h1>aide</h1>
-      <p>AI Development Performance Evaluator — platform preview</p>
-    </main>
-  )
+import { auth } from '@/auth'
+import { redirect } from 'next/navigation'
+
+export default async function HomePage() {
+  const session = await auth()
+  redirect(session?.user ? '/dashboard' : '/sign-in')
 }
