@@ -14,10 +14,10 @@
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "db:generate": "drizzle-kit generate",
+    "db:generate": "tsx ./node_modules/drizzle-kit/bin.cjs generate",
     "db:migrate": "tsx src/migrate.ts",
     "db:seed": "tsx src/seed.ts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "tsx ./node_modules/drizzle-kit/bin.cjs studio"
   },
   "dependencies": {
     "@aide/config": "workspace:*",
