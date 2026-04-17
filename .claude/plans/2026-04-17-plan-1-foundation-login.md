@@ -670,6 +670,7 @@ git commit -m "feat(db): reserve @aide/db package skeleton"
 **Files:**
 - Create: `apps/api/package.json`
 - Create: `apps/api/tsconfig.json`
+- Create: `apps/api/tsconfig.build.json`
 - Create: `apps/api/vitest.config.ts`
 - Create: `apps/api/src/env.ts`
 - Create: `apps/api/src/server.ts`
@@ -685,7 +686,7 @@ git commit -m "feat(db): reserve @aide/db package skeleton"
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "lint": "tsc --noEmit",
@@ -721,6 +722,19 @@ git commit -m "feat(db): reserve @aide/db package skeleton"
   },
   "include": ["src/**/*", "tests/**/*"],
   "exclude": ["dist", "node_modules"]
+}
+```
+
+- [ ] **Step 2b: Create `apps/api/tsconfig.build.json`** (production build excludes tests so `dist/server.js` path is correct)
+
+```json
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["dist", "node_modules", "tests"]
 }
 ```
 
