@@ -323,12 +323,14 @@ git commit -m "chore: add turbo pipeline config"
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "./dist",
-    "rootDir": "./src"
+    "outDir": "./dist"
   },
-  "include": ["src/**/*", "tests/**/*"]
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["dist", "node_modules"]
 }
 ```
+
+> Omitting `rootDir` lets TS infer it from `include`, so test files get type-checked alongside source. `vitest` imports source directly, so `dist/` emits only `src/` (tests are type-checked but not emitted).
 
 - [ ] **Step 3: Write the failing test — `packages/config/tests/env.test.ts`**
 
@@ -484,10 +486,10 @@ git commit -m "feat(config): add zod-validated server env schema"
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "./dist",
-    "rootDir": "./src"
+    "outDir": "./dist"
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["dist", "node_modules"]
 }
 ```
 
@@ -553,10 +555,10 @@ git commit -m "feat(core): reserve @aide/core package skeleton"
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "./dist",
-    "rootDir": "./src"
+    "outDir": "./dist"
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["dist", "node_modules"]
 }
 ```
 
@@ -629,10 +631,10 @@ git commit -m "feat(auth): reserve @aide/auth package skeleton"
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "./dist",
-    "rootDir": "./src"
+    "outDir": "./dist"
   },
-  "include": ["src/**/*", "tests/**/*"]
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["dist", "node_modules"]
 }
 ```
 
@@ -714,11 +716,11 @@ git commit -m "feat(db): reserve @aide/db package skeleton"
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": "./src",
     "module": "NodeNext",
     "moduleResolution": "NodeNext"
   },
-  "include": ["src/**/*", "tests/**/*"]
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["dist", "node_modules"]
 }
 ```
 
