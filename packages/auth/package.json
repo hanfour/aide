@@ -5,7 +5,9 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
@@ -14,7 +16,10 @@
   },
   "dependencies": {
     "@aide/config": "workspace:*",
-    "@aide/db": "workspace:*"
+    "@aide/db": "workspace:*",
+    "@auth/core": "^0.34.3",
+    "@auth/drizzle-adapter": "^1.7.0",
+    "next-auth": "5.0.0-beta.25"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
