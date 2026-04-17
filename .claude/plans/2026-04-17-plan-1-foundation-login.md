@@ -1626,22 +1626,26 @@ async function main() {
   const existingOrg = await db.query.organizations.findFirst({
     where: eq(organizations.slug, orgSlug)
   })
-  const org =
-    existingOrg ??
-    (await db
+  let org = existingOrg
+  if (!org) {
+    const [inserted] = await db
       .insert(organizations)
       .values({ slug: orgSlug, name: orgName })
       .returning()
-      .then((r) => r[0]!))
+    if (!inserted) throw new Error('Failed to insert organization')
+    org = inserted
+  }
 
   const existingUser = await db.query.users.findFirst({ where: eq(users.email, email) })
-  const user =
-    existingUser ??
-    (await db
+  let user = existingUser
+  if (!user) {
+    const [inserted] = await db
       .insert(users)
       .values({ email, name: 'Bootstrap Super Admin' })
       .returning()
-      .then((r) => r[0]!))
+    if (!inserted) throw new Error('Failed to insert user')
+    user = inserted
+  }
 
   await db
     .insert(organizationMembers)
