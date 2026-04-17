@@ -1,20 +1,24 @@
 import Fastify from 'fastify'
+import { parseServerEnv } from '@aide/config/env'
 import { healthRoutes } from './rest/health.js'
+import { cookiesPlugin } from './plugins/cookies.js'
+import { authPlugin } from './plugins/auth.js'
 
 export async function buildServer() {
+  const env = parseServerEnv()
   const app = Fastify({
     logger: {
-      level: process.env.LOG_LEVEL ?? 'info',
-      transport:
-        process.env.NODE_ENV === 'production'
-          ? undefined
-          : { target: 'pino-pretty' }
+      level: env.LOG_LEVEL,
+      transport: env.NODE_ENV === 'production' ? undefined : { target: 'pino-pretty' }
     },
     disableRequestLogging: false,
     genReqId: () => crypto.randomUUID()
   })
 
+  await app.register(cookiesPlugin)
+  await app.register(authPlugin, { env })
   await app.register(healthRoutes)
+
   return app
 }
 

@@ -16,7 +16,9 @@
     "@aide/config": "workspace:*",
     "@aide/db": "workspace:*",
     "@fastify/cookie": "^11.0.0",
+    "drizzle-orm": "^0.36.0",
     "fastify": "^5.1.0",
+    "fastify-plugin": "^5.1.0",
     "pino": "^9.5.0"
   },
   "devDependencies": {

@@ -54,9 +54,15 @@ importers:
       '@fastify/cookie':
         specifier: ^11.0.0
         version: 11.0.2
+      drizzle-orm:
+        specifier: ^0.36.0
+        version: 0.36.4(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(@types/react@19.2.14)(better-sqlite3@11.10.0)(pg@8.20.0)(react@19.2.5)
       fastify:
         specifier: ^5.1.0
         version: 5.8.5
+      fastify-plugin:
+        specifier: ^5.1.0
+        version: 5.1.0
       pino:
         specifier: ^9.5.0
         version: 9.14.0
