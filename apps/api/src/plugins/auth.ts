@@ -1,11 +1,16 @@
 import fp from "fastify-plugin";
 import { eq } from "drizzle-orm";
 import { createDb, sessions, users } from "@aide/db";
+import { resolvePermissions, type UserPermissions } from "@aide/auth";
 import type { ServerEnv } from "@aide/config";
 
 declare module "fastify" {
   interface FastifyRequest {
     user: { id: string; email: string } | null;
+    perm: UserPermissions | null;
+  }
+  interface FastifyInstance {
+    db: ReturnType<typeof createDb>["db"];
   }
 }
 
@@ -19,6 +24,8 @@ export const authPlugin = fp<AuthPluginOptions>(async (fastify, opts) => {
     await pool.end();
   });
   fastify.decorateRequest("user", null);
+  fastify.decorateRequest("perm", null);
+  fastify.decorate("db", db);
 
   const cookieName =
     opts.env.NODE_ENV === "production"
@@ -43,6 +50,7 @@ export const authPlugin = fp<AuthPluginOptions>(async (fastify, opts) => {
 
     if (row && row.expires > new Date()) {
       req.user = { id: row.userId, email: row.email };
+      req.perm = await resolvePermissions(db, row.userId);
     }
   });
 });
