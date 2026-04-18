@@ -3290,11 +3290,17 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
-      thresholds: { lines: 90, functions: 90, branches: 85, statements: 90 }
+      // Spec §8.1 / §14 DoD: packages/auth ≥ 95%. `can()` matrix + DB-backed
+      // permissions + bootstrap + config already give broad coverage; the 90+
+      // table cases in Task 3 plus the three integration tests in Task 4 carry
+      // the statement count.
+      thresholds: { lines: 95, functions: 95, branches: 90, statements: 95 }
     }
   }
 })
 ```
+
+If running `pnpm --filter @aide/auth test -- --coverage` reports below 95%, add targeted tests (role.revoke path, error messages, default branches in `can()`) until the threshold passes. Do NOT lower the threshold — it is a spec requirement.
 
 - [ ] **Step 4: Full workspace test**
 

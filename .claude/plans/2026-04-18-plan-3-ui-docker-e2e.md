@@ -165,9 +165,13 @@ git commit -m "feat(web): add Tailwind + shadcn/ui primitives"
 - Modify: `apps/api/package.json`, `apps/api/src/trpc/router.ts` (export type)
 - Create: `apps/web/src/lib/trpc/client.ts`, `Provider.tsx`, `server.ts`
 - Create: `apps/web/src/app/providers.tsx`
-- Modify: `apps/web/src/app/layout.tsx`, `packages/config/src/env.ts`
+- Modify: `apps/web/src/app/layout.tsx`, `apps/web/next.config.mjs` (rewrites), `packages/config/src/env.ts`
 
-Spec §4.7 says \`apps/web\` and \`apps/api\` are deployed on the same cookie domain. We therefore configure \`httpBatchLink\` to hit the API directly via a **public origin** env var — no Next.js proxy route. This keeps cookies, CSRF, and transfer-encoding semantics simple.
+### Why a Next.js rewrite, not a fetch proxy or cross-origin CORS
+
+The compose topology runs web on :3000 and api on :3001 — different origins. Auth.js sets the session cookie on the web origin only, so a browser call to `http://localhost:3001/trpc/*` is cross-origin and **will not carry the cookie** (plus would need CORS + `SameSite=None`+`Secure` cookies, which breaks local dev over `http://`).
+
+Rather than add CORS complexity, use Next.js's built-in `rewrites()`: the browser always calls `/trpc/*` on the web origin, and Next.js rewrites the path internally to `${API_INTERNAL_URL}/trpc/*`. Same-origin cookies flow automatically. Server components call the API directly via `API_INTERNAL_URL` without going through the browser at all.
 
 - [ ] **Step 1: Create `packages/api-types`** (exports AppRouter type so `apps/web` doesn't need to reach into `apps/api/src`)
 
@@ -228,9 +232,34 @@ Modify `apps/api/package.json` to export the type:
 pnpm --filter @aide/web add @trpc/client@^11 @trpc/server@^11 @trpc/react-query@^11 @tanstack/react-query@^5 superjson @aide/api-types
 ```
 
-Also add \`NEXT_PUBLIC_API_URL\` env var to `packages/config/src/env.ts` (required; e.g. `http://localhost:3001` in dev, `https://app.example.com` in same-origin prod). The value is read at build time by Next so it must be prefixed \`NEXT_PUBLIC_\` to reach the browser.
+Add the following env vars to `packages/config/src/env.ts`:
+- `API_INTERNAL_URL` (required; `http://api:3001` in compose, `http://localhost:3001` in dev). Used by Next rewrites and RSC caller — server-only, never exposed to the browser.
+- `TEST_SEED_TOKEN` (optional ≥ 32 chars; only read when `NODE_ENV === 'test'`).
 
-- [ ] **Step 3: Create `apps/web/src/lib/trpc/client.ts`**
+No `NEXT_PUBLIC_API_URL` is needed — browser always talks to the web origin.
+
+- [ ] **Step 3: Add Next.js rewrites** — `apps/web/next.config.mjs`
+
+```javascript
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  output: 'standalone',
+  transpilePackages: ['@aide/auth', '@aide/config', '@aide/db', '@aide/api-types'],
+  async rewrites() {
+    const apiInternal = process.env.API_INTERNAL_URL ?? 'http://localhost:3001'
+    return [
+      { source: '/trpc/:path*', destination: `${apiInternal}/trpc/:path*` },
+      { source: '/api/v1/:path*', destination: `${apiInternal}/api/v1/:path*` }
+    ]
+  }
+}
+
+export default nextConfig
+```
+
+This is a Next.js native rewrite — requests to `/trpc/*` on the web origin are transparently proxied to the internal API. The browser sees only one origin, cookies flow naturally, no CORS config needed.
+
+- [ ] **Step 4: Create `apps/web/src/lib/trpc/client.ts`**
 
 ```typescript
 'use client'
@@ -240,7 +269,7 @@ import type { AppRouter } from '@aide/api-types'
 export const trpc = createTRPCReact<AppRouter>()
 ```
 
-- [ ] **Step 4: Create `apps/web/src/lib/trpc/Provider.tsx`**
+- [ ] **Step 5: Create `apps/web/src/lib/trpc/Provider.tsx`**
 
 ```typescript
 'use client'
@@ -250,26 +279,15 @@ import { httpBatchLink } from '@trpc/client'
 import superjson from 'superjson'
 import { trpc } from './client'
 
-function getApiOrigin(): string {
-  // same-origin by default; override via NEXT_PUBLIC_API_URL when api runs on a
-  // separate host.
-  const fromEnv = process.env.NEXT_PUBLIC_API_URL
-  if (fromEnv) return fromEnv
-  if (typeof window !== 'undefined') return window.location.origin
-  return 'http://localhost:3001'
-}
-
 export function TrpcProvider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(() => new QueryClient())
   const [trpcClient] = useState(() =>
     trpc.createClient({
       links: [
         httpBatchLink({
-          url: `${getApiOrigin()}/trpc`,
-          transformer: superjson,
-          fetch(url, opts) {
-            return fetch(url, { ...opts, credentials: 'include' })
-          }
+          // same-origin — Next.js rewrite forwards to the internal API
+          url: '/trpc',
+          transformer: superjson
         })
       ]
     })
@@ -282,9 +300,9 @@ export function TrpcProvider({ children }: { children: ReactNode }) {
 }
 ```
 
-> `credentials: 'include'` forwards the shared session cookie. CORS on the API side must allow the web origin; spec §4.7 assumes same-origin (no CORS) but if operators split the hosts they must configure Fastify CORS.
+> No `credentials: 'include'` needed because the request is same-origin; the session cookie attaches automatically.
 
-- [ ] **Step 5: Create `apps/web/src/lib/trpc/server.ts`** (RSC caller)
+- [ ] **Step 6: Create `apps/web/src/lib/trpc/server.ts`** (RSC caller)
 
 ```typescript
 import 'server-only'
@@ -313,7 +331,7 @@ export async function serverTrpc() {
 
 > `API_INTERNAL_URL` is the Docker-internal hostname (`http://api:3001`). Optional env; defaults to `http://localhost:3001` for dev. RSC calls bypass the browser so they use this internal URL directly.
 
-- [ ] **Step 6: Create `apps/web/src/app/providers.tsx`** and wire into layout
+- [ ] **Step 7: Create `apps/web/src/app/providers.tsx`** and wire into layout
 
 ```typescript
 'use client'
@@ -325,14 +343,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
 Modify `layout.tsx` to wrap `{children}` in `<Providers>`.
 
-- [ ] **Step 7: Typecheck all affected workspaces**
+- [ ] **Step 8: Typecheck all affected workspaces**
 
 ```bash
 pnpm --filter @aide/api-types typecheck
 pnpm --filter @aide/web typecheck
 ```
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add apps/web apps/api packages/api-types packages/config pnpm-lock.yaml
@@ -629,12 +647,16 @@ import type { Database } from '@aide/db'
 import {
   users,
   sessions,
+  accounts,
+  verificationTokens,
   organizations,
   departments,
   teams,
   teamMembers,
   organizationMembers,
-  roleAssignments
+  roleAssignments,
+  invites,
+  auditLogs
 } from '@aide/db'
 
 const payload = z.object({
@@ -669,6 +691,10 @@ export const testSeedRoutes = (opts: TestSeedOpts): FastifyPluginAsync =>
       }
       const data = payload.parse(req.body)
       if (data.reset) {
+        // audit_logs.actor_user_id is ON DELETE SET NULL, so deleting users
+        // leaves orphan audit rows that would pollute E2E audit assertions.
+        // Clear audit first (and accounts/verification_tokens) before users.
+        await opts.db.delete(auditLogs)
         await opts.db.delete(sessions)
         await opts.db.delete(roleAssignments)
         await opts.db.delete(teamMembers)
@@ -676,6 +702,9 @@ export const testSeedRoutes = (opts: TestSeedOpts): FastifyPluginAsync =>
         await opts.db.delete(teams)
         await opts.db.delete(departments)
         await opts.db.delete(organizations)
+        await opts.db.delete(invites)
+        await opts.db.delete(accounts)
+        await opts.db.delete(verificationTokens)
         await opts.db.delete(users)
       }
       // insert provided orgs/users
@@ -1006,7 +1035,6 @@ e2e:
     DATABASE_URL: postgresql://aide:aide_ci@localhost:5432/aide
     AUTH_SECRET: 00000000000000000000000000000000
     NEXTAUTH_URL: http://localhost:3000
-    NEXT_PUBLIC_API_URL: http://localhost:3001
     API_INTERNAL_URL: http://localhost:3001
     GOOGLE_CLIENT_ID: ci
     GOOGLE_CLIENT_SECRET: ci
@@ -1120,7 +1148,7 @@ Update `README.md`:
 **Applied reviewer fixes (from pre-execution code review):**
 
 - Cross-workspace type import resolved by introducing `packages/api-types` that re-exports `AppRouter` via `@aide/api/trpc`. Task 2 rewritten.
-- Next.js proxy route removed — \`httpBatchLink\` hits \`NEXT_PUBLIC_API_URL\` directly, same-origin per spec §4.7.
+- Transport model is now Next.js native `rewrites()` — browser always hits the web origin at `/trpc/*`, Next proxies server-side to `API_INTERNAL_URL`. Same-origin cookies; no CORS needed. This works identically in dev, CI, and compose (web:3000 → api:3001 inside the Docker network).
 - `/test-seed` gated by NODE_ENV=test **AND** `TEST_SEED_TOKEN` constant-time check **AND** Dockerfile strips the file in production image. Task 10 rewritten.
 - Dockerfile uses `/out` instead of `./dist` for \`pnpm deploy\` to avoid collision with tsc output. Task 11 rewritten.
 - CI e2e job explicitly sets \`NODE_ENV=test\` on api and \`NODE_ENV=production\` on web. Task 23 rewritten.
@@ -1128,6 +1156,5 @@ Update `README.md`:
 **Known loose edges (still acceptable):**
 
 - Tasks 18–22 E2E fixtures assume a single Playwright worker. For parallelism, DB isolation per worker is deferred to a follow-up.
-- Audit coverage threshold is 90 (not 95) in Plan 2 Task 18 — `docs/SELF_HOSTING.md` (Task 15) should note the deviation; consider tightening once `can()` matrix reaches 90+ cases.
 
 No spec requirement is uncovered.
