@@ -1,12 +1,16 @@
-import NextAuth, { type NextAuthResult } from "next-auth";
+import NextAuth, { type NextAuthConfig, type NextAuthResult } from "next-auth";
 import { createDb } from "@aide/db";
 import { buildAuthConfig } from "@aide/auth";
-import { env } from "./env.js";
+import { getEnv } from "./env.js";
 
-const { db } = createDb(env.DATABASE_URL);
+type DbHandle = ReturnType<typeof createDb>;
 
-const result: NextAuthResult = NextAuth(
-  buildAuthConfig(db, {
+let cachedDb: DbHandle | null = null;
+
+function resolveAuthConfig(): NextAuthConfig {
+  const env = getEnv();
+  if (!cachedDb) cachedDb = createDb(env.DATABASE_URL);
+  return buildAuthConfig(cachedDb.db, {
     AUTH_SECRET: env.AUTH_SECRET,
     GOOGLE_CLIENT_ID: env.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: env.GOOGLE_CLIENT_SECRET,
@@ -15,8 +19,10 @@ const result: NextAuthResult = NextAuth(
     superAdminEmail: env.BOOTSTRAP_SUPER_ADMIN_EMAIL,
     defaultOrgSlug: env.BOOTSTRAP_DEFAULT_ORG_SLUG,
     defaultOrgName: env.BOOTSTRAP_DEFAULT_ORG_NAME,
-  }),
-);
+  });
+}
+
+const result: NextAuthResult = NextAuth(resolveAuthConfig);
 
 export const handlers: NextAuthResult["handlers"] = result.handlers;
 export const auth: NextAuthResult["auth"] = result.auth;
