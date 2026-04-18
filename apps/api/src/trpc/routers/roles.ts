@@ -1,7 +1,13 @@
 import { z } from "zod";
-import { and, eq, isNull } from "drizzle-orm";
-import { roleAssignments, users } from "@aide/db";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+import {
+  roleAssignments,
+  users,
+  organizationMembers,
+  teamMembers,
+} from "@aide/db";
 import { TRPCError } from "@trpc/server";
+import { can } from "@aide/auth";
 import {
   protectedProcedure,
   permissionProcedure,
@@ -50,22 +56,79 @@ export const rolesRouter = router({
     return grantRole(ctx.db, ctx.user.id, input);
   }),
 
-  revoke: permissionProcedure(z.object({ assignmentId: uuid }), () => ({
-    type: "role.revoke",
-    assignmentOwnerId: "unused",
-  })).mutation(async ({ ctx, input }) => {
-    try {
-      return await revokeRole(ctx.db, ctx.user.id, input.assignmentId);
-    } catch (e) {
-      throw mapServiceError(e);
-    }
-  }),
+  revoke: protectedProcedure
+    .input(z.object({ assignmentId: uuid }))
+    .mutation(async ({ ctx, input }) => {
+      // Load the assignment to know what role/scope we're revoking.
+      const [a] = await ctx.db
+        .select({
+          id: roleAssignments.id,
+          userId: roleAssignments.userId,
+          role: roleAssignments.role,
+          scopeType: roleAssignments.scopeType,
+          scopeId: roleAssignments.scopeId,
+          revokedAt: roleAssignments.revokedAt,
+        })
+        .from(roleAssignments)
+        .where(eq(roleAssignments.id, input.assignmentId))
+        .limit(1);
+      if (!a || a.revokedAt) throw new TRPCError({ code: "NOT_FOUND" });
+
+      // Same-authority check: actor must be able to GRANT this role at this
+      // scope in order to revoke it. Prevents an org_admin in org A from
+      // revoking assignments in org B.
+      const ok = can(ctx.perm, {
+        type: "role.grant",
+        targetUserId: a.userId,
+        role: a.role,
+        scopeType: a.scopeType,
+        scopeId: a.scopeId,
+      });
+      if (!ok) throw new TRPCError({ code: "FORBIDDEN" });
+
+      try {
+        return await revokeRole(ctx.db, ctx.user.id, input.assignmentId);
+      } catch (e) {
+        throw mapServiceError(e);
+      }
+    }),
 
   listForUser: protectedProcedure
     .input(z.object({ userId: uuid }))
     .query(async ({ ctx, input }) => {
       if (input.userId !== ctx.user.id) {
-        throw new TRPCError({ code: "FORBIDDEN" });
+        // Non-self: must have user.read coverage for target. Same walk as
+        // users.get — check shared covered team first, then shared covered org.
+        const teamIds = [...ctx.perm.coveredTeams];
+        const orgIds = [...ctx.perm.coveredOrgs];
+        let ok = ctx.perm.rolesAtGlobal.has("super_admin");
+        if (!ok && teamIds.length > 0) {
+          const shared = await ctx.db
+            .select({ teamId: teamMembers.teamId })
+            .from(teamMembers)
+            .where(
+              and(
+                eq(teamMembers.userId, input.userId),
+                inArray(teamMembers.teamId, teamIds),
+              ),
+            )
+            .limit(1);
+          if (shared.length > 0) ok = true;
+        }
+        if (!ok && orgIds.length > 0) {
+          const sharedOrg = await ctx.db
+            .select({ orgId: organizationMembers.orgId })
+            .from(organizationMembers)
+            .where(
+              and(
+                eq(organizationMembers.userId, input.userId),
+                inArray(organizationMembers.orgId, orgIds),
+              ),
+            )
+            .limit(1);
+          if (sharedOrg.length > 0) ok = true;
+        }
+        if (!ok) throw new TRPCError({ code: "FORBIDDEN" });
       }
       return ctx.db
         .select()

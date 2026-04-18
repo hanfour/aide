@@ -2,6 +2,7 @@ import { z } from "zod";
 import { and, eq, isNull } from "drizzle-orm";
 import { invites } from "@aide/db";
 import { TRPCError } from "@trpc/server";
+import { can } from "@aide/auth";
 import {
   protectedProcedure,
   permissionProcedure,
@@ -54,7 +55,7 @@ export const invitesRouter = router({
   list: protectedProcedure
     .input(z.object({ orgId: uuid }))
     .query(async ({ ctx, input }) => {
-      if (!ctx.perm.coveredOrgs.has(input.orgId)) {
+      if (!can(ctx.perm, { type: "user.invite", orgId: input.orgId })) {
         throw new TRPCError({ code: "FORBIDDEN" });
       }
       return ctx.db
@@ -72,7 +73,7 @@ export const invitesRouter = router({
         .where(eq(invites.id, input.id))
         .limit(1);
       if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
-      if (!ctx.perm.coveredOrgs.has(existing.orgId)) {
+      if (!can(ctx.perm, { type: "user.invite", orgId: existing.orgId })) {
         throw new TRPCError({ code: "FORBIDDEN" });
       }
       try {
