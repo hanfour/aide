@@ -5,6 +5,7 @@ import { departmentsRouter } from "./routers/departments.js";
 import { teamsRouter } from "./routers/teams.js";
 import { usersRouter } from "./routers/users.js";
 import { invitesRouter } from "./routers/invites.js";
+import { rolesRouter } from "./routers/roles.js";
 
 export const appRouter = router({
   me: meRouter,
@@ -13,6 +14,7 @@ export const appRouter = router({
   teams: teamsRouter,
   users: usersRouter,
   invites: invitesRouter,
+  roles: rolesRouter,
 });
 
 export type AppRouter = typeof appRouter;

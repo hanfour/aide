@@ -1,0 +1,72 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { setupTestDb, makeOrg, makeTeam, makeUser, callerFor } from '../../factories/index.js'
+
+let t: Awaited<ReturnType<typeof setupTestDb>>
+
+beforeAll(async () => {
+  t = await setupTestDb()
+})
+afterAll(async () => {
+  await t.stop()
+})
+
+describe('roles router', () => {
+  it('org_admin can grant team_manager on a team', async () => {
+    const org = await makeOrg(t.db)
+    const team = await makeTeam(t.db, org.id)
+    const admin = await makeUser(t.db, {
+      role: 'org_admin',
+      scopeType: 'organization',
+      scopeId: org.id
+    })
+    const target = await makeUser(t.db)
+    const caller = await callerFor(t.db, admin.id)
+    const res = await caller.roles.grant({
+      userId: target.id,
+      role: 'team_manager',
+      scopeType: 'team',
+      scopeId: team.id
+    })
+    expect(res?.role).toBe('team_manager')
+  })
+
+  it('team_manager cannot grant team_manager (no peer escalation)', async () => {
+    const org = await makeOrg(t.db)
+    const team = await makeTeam(t.db, org.id)
+    const mgr = await makeUser(t.db, {
+      role: 'team_manager',
+      scopeType: 'team',
+      scopeId: team.id
+    })
+    const target = await makeUser(t.db)
+    const caller = await callerFor(t.db, mgr.id)
+    await expect(
+      caller.roles.grant({
+        userId: target.id,
+        role: 'team_manager',
+        scopeType: 'team',
+        scopeId: team.id
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('revoke marks assignment revoked', async () => {
+    const org = await makeOrg(t.db)
+    const team = await makeTeam(t.db, org.id)
+    const admin = await makeUser(t.db, {
+      role: 'org_admin',
+      scopeType: 'organization',
+      scopeId: org.id
+    })
+    const target = await makeUser(t.db)
+    const caller = await callerFor(t.db, admin.id)
+    const granted = await caller.roles.grant({
+      userId: target.id,
+      role: 'member',
+      scopeType: 'team',
+      scopeId: team.id
+    })
+    const revoked = await caller.roles.revoke({ assignmentId: granted!.id })
+    expect(revoked.id).toBe(granted!.id)
+  })
+})
