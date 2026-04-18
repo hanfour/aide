@@ -161,29 +161,86 @@ git commit -m "feat(web): add Tailwind + shadcn/ui primitives"
 ### Task 2: tRPC client + provider
 
 **Files:**
-- Create: `apps/web/src/lib/trpc/client.ts`, `server.ts`, `Provider.tsx`
+- Create: `packages/api-types/` (shared type package)
+- Modify: `apps/api/package.json`, `apps/api/src/trpc/router.ts` (export type)
+- Create: `apps/web/src/lib/trpc/client.ts`, `Provider.tsx`, `server.ts`
 - Create: `apps/web/src/app/providers.tsx`
-- Modify: `apps/web/src/app/layout.tsx`
+- Modify: `apps/web/src/app/layout.tsx`, `packages/config/src/env.ts`
 
-- [ ] **Step 1: Install tRPC client + React Query**
+Spec §4.7 says \`apps/web\` and \`apps/api\` are deployed on the same cookie domain. We therefore configure \`httpBatchLink\` to hit the API directly via a **public origin** env var — no Next.js proxy route. This keeps cookies, CSRF, and transfer-encoding semantics simple.
+
+- [ ] **Step 1: Create `packages/api-types`** (exports AppRouter type so `apps/web` doesn't need to reach into `apps/api/src`)
 
 ```bash
-pnpm --filter @aide/web add @trpc/client@^11 @trpc/server@^11 @trpc/react-query@^11 @tanstack/react-query@^5 superjson
+mkdir -p packages/api-types/src
 ```
 
-- [ ] **Step 2: Create `apps/web/src/lib/trpc/client.ts`**
+`packages/api-types/package.json`:
+```json
+{
+  "name": "@aide/api-types",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aide/api": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}
+```
+
+`packages/api-types/tsconfig.json`:
+```json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "outDir": "./dist" },
+  "include": ["src/**/*"],
+  "exclude": ["dist", "node_modules"]
+}
+```
+
+`packages/api-types/src/index.ts`:
+```typescript
+export type { AppRouter } from '@aide/api/trpc'
+```
+
+Modify `apps/api/package.json` to export the type:
+```json
+"exports": {
+  ".": "./src/server.ts",
+  "./trpc": "./src/trpc/index.ts"
+}
+```
+
+(Add `"name": "@aide/api"` and `"main"` if missing.) This makes `@aide/api/trpc` a stable typed entry point; only the **type** is consumed so there's no runtime dependency from web → api.
+
+- [ ] **Step 2: Install tRPC client + React Query**
+
+```bash
+pnpm --filter @aide/web add @trpc/client@^11 @trpc/server@^11 @trpc/react-query@^11 @tanstack/react-query@^5 superjson @aide/api-types
+```
+
+Also add \`NEXT_PUBLIC_API_URL\` env var to `packages/config/src/env.ts` (required; e.g. `http://localhost:3001` in dev, `https://app.example.com` in same-origin prod). The value is read at build time by Next so it must be prefixed \`NEXT_PUBLIC_\` to reach the browser.
+
+- [ ] **Step 3: Create `apps/web/src/lib/trpc/client.ts`**
 
 ```typescript
 'use client'
 import { createTRPCReact } from '@trpc/react-query'
-import type { AppRouter } from '../../../../api/src/trpc/router'
+import type { AppRouter } from '@aide/api-types'
 
 export const trpc = createTRPCReact<AppRouter>()
 ```
 
-> Note: the cross-package type import is deliberate — keeps client fully typed without publishing `@aide/api` as a package. Adjust path if workspace layout moves.
-
-- [ ] **Step 3: Create `apps/web/src/lib/trpc/Provider.tsx`**
+- [ ] **Step 4: Create `apps/web/src/lib/trpc/Provider.tsx`**
 
 ```typescript
 'use client'
@@ -193,17 +250,26 @@ import { httpBatchLink } from '@trpc/client'
 import superjson from 'superjson'
 import { trpc } from './client'
 
+function getApiOrigin(): string {
+  // same-origin by default; override via NEXT_PUBLIC_API_URL when api runs on a
+  // separate host.
+  const fromEnv = process.env.NEXT_PUBLIC_API_URL
+  if (fromEnv) return fromEnv
+  if (typeof window !== 'undefined') return window.location.origin
+  return 'http://localhost:3001'
+}
+
 export function TrpcProvider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(() => new QueryClient())
   const [trpcClient] = useState(() =>
     trpc.createClient({
       links: [
         httpBatchLink({
-          url:
-            typeof window === 'undefined'
-              ? `${process.env.API_URL ?? 'http://api:3001'}/trpc`
-              : '/api/trpc',
-          transformer: superjson
+          url: `${getApiOrigin()}/trpc`,
+          transformer: superjson,
+          fetch(url, opts) {
+            return fetch(url, { ...opts, credentials: 'include' })
+          }
         })
       ]
     })
@@ -216,17 +282,19 @@ export function TrpcProvider({ children }: { children: ReactNode }) {
 }
 ```
 
-- [ ] **Step 4: Create `apps/web/src/lib/trpc/server.ts`** (RSC caller)
+> `credentials: 'include'` forwards the shared session cookie. CORS on the API side must allow the web origin; spec §4.7 assumes same-origin (no CORS) but if operators split the hosts they must configure Fastify CORS.
+
+- [ ] **Step 5: Create `apps/web/src/lib/trpc/server.ts`** (RSC caller)
 
 ```typescript
 import 'server-only'
-import { headers, cookies } from 'next/headers'
+import { cookies } from 'next/headers'
 import { createTRPCClient, httpBatchLink } from '@trpc/client'
 import superjson from 'superjson'
-import type { AppRouter } from '../../../../api/src/trpc/router'
-import { getEnv } from '../../env'
+import type { AppRouter } from '@aide/api-types'
 
 export async function serverTrpc() {
+  const internalUrl = process.env.API_INTERNAL_URL ?? 'http://localhost:3001'
   const cookieHeader = (await cookies())
     .getAll()
     .map((c) => `${c.name}=${c.value}`)
@@ -234,7 +302,7 @@ export async function serverTrpc() {
   return createTRPCClient<AppRouter>({
     links: [
       httpBatchLink({
-        url: `${getEnv().API_INTERNAL_URL ?? 'http://api:3001'}/trpc`,
+        url: `${internalUrl}/trpc`,
         transformer: superjson,
         headers: () => ({ cookie: cookieHeader })
       })
@@ -243,35 +311,7 @@ export async function serverTrpc() {
 }
 ```
 
-> `API_INTERNAL_URL` is a new env — add to `packages/config/src/env.ts`. Default to `http://api:3001`; dev overrides to `http://localhost:3001`.
-
-- [ ] **Step 5: Add Next proxy route for `/api/trpc`**
-
-Create `apps/web/src/app/api/trpc/[trpc]/route.ts`:
-
-```typescript
-import { NextRequest, NextResponse } from 'next/server'
-import { getEnv } from '@/env'
-
-export async function GET(req: NextRequest) {
-  return proxy(req)
-}
-export async function POST(req: NextRequest) {
-  return proxy(req)
-}
-
-async function proxy(req: NextRequest): Promise<NextResponse> {
-  const env = getEnv()
-  const upstream = `${env.API_INTERNAL_URL}/trpc${req.nextUrl.pathname.replace(/^\/api\/trpc/, '')}${req.nextUrl.search}`
-  const res = await fetch(upstream, {
-    method: req.method,
-    headers: req.headers,
-    body: req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.arrayBuffer(),
-    redirect: 'manual'
-  })
-  return new NextResponse(res.body, { status: res.status, headers: res.headers })
-}
-```
+> `API_INTERNAL_URL` is the Docker-internal hostname (`http://api:3001`). Optional env; defaults to `http://localhost:3001` for dev. RSC calls bypass the browser so they use this internal URL directly.
 
 - [ ] **Step 6: Create `apps/web/src/app/providers.tsx`** and wire into layout
 
@@ -285,11 +325,18 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
 Modify `layout.tsx` to wrap `{children}` in `<Providers>`.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Typecheck all affected workspaces**
 
 ```bash
-git add apps/web packages/config pnpm-lock.yaml
-git commit -m "feat(web): wire tRPC client (RSC + React Query) through Next proxy"
+pnpm --filter @aide/api-types typecheck
+pnpm --filter @aide/web typecheck
+```
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add apps/web apps/api packages/api-types packages/config pnpm-lock.yaml
+git commit -m "feat(web): wire tRPC client via shared @aide/api-types (same-origin, no proxy)"
 ```
 
 ---
@@ -561,13 +608,127 @@ All mutation buttons use this guard. Server-side routers still enforce authorita
 ### Task 10: E2E-ready seeding endpoint
 
 **Files:**
-- Create: `apps/api/src/rest/test-seed.ts` (only mounts when `NODE_ENV=test`)
+- Create: `apps/api/src/rest/test-seed.ts`
+- Modify: `apps/api/src/server.ts` (conditional mount)
+- Modify: `docker/Dockerfile.api` (exclude from production image)
+- Modify: `packages/config/src/env.ts` (optional `TEST_SEED_TOKEN`)
 
-POST `/test-seed` accepts a JSON payload describing orgs/teams/users/sessions and inserts them. The endpoint **404s outside `NODE_ENV=test`**.
+Defense-in-depth gating — `NODE_ENV=test` alone is not sufficient because an operator who points a test env at a prod DB could trigger seeds. Three layers:
 
-This is only used by Playwright tests to set known state quickly.
+1. **Runtime check**: endpoint only mounted when `NODE_ENV === 'test' && !!process.env.TEST_SEED_TOKEN`.
+2. **Request auth**: every request must carry `Authorization: Bearer ${TEST_SEED_TOKEN}` — `crypto.timingSafeEqual` to compare, so no timing oracle.
+3. **Build-time stripping**: production Docker image deletes `dist/rest/test-seed.js` after build so the code is not on disk.
 
-- [ ] Commit: `feat(api): add /test-seed route (test env only) for E2E setup`
+- [ ] **Step 1: Create `apps/api/src/rest/test-seed.ts`**
+
+```typescript
+import type { FastifyPluginAsync } from 'fastify'
+import { timingSafeEqual } from 'node:crypto'
+import { z } from 'zod'
+import type { Database } from '@aide/db'
+import {
+  users,
+  sessions,
+  organizations,
+  departments,
+  teams,
+  teamMembers,
+  organizationMembers,
+  roleAssignments
+} from '@aide/db'
+
+const payload = z.object({
+  reset: z.boolean().default(true),
+  orgs: z.array(z.object({ id: z.string().uuid().optional(), slug: z.string(), name: z.string() })).default([]),
+  users: z.array(
+    z.object({
+      id: z.string().uuid().optional(),
+      email: z.string().email(),
+      name: z.string().optional(),
+      sessionToken: z.string().optional()
+    })
+  ).default([])
+  // extend as needed; keep minimal to reduce attack surface
+})
+
+interface TestSeedOpts {
+  token: string
+  db: Database
+}
+
+export const testSeedRoutes = (opts: TestSeedOpts): FastifyPluginAsync =>
+  async (fastify) => {
+    fastify.post('/test-seed', async (req, reply) => {
+      const header = req.headers.authorization ?? ''
+      const provided = header.startsWith('Bearer ') ? header.slice(7) : ''
+      const expectedBuf = Buffer.from(opts.token)
+      const providedBuf = Buffer.from(provided.padEnd(opts.token.length, '\0').slice(0, opts.token.length))
+      if (provided.length !== opts.token.length || !timingSafeEqual(expectedBuf, providedBuf)) {
+        reply.code(404).send({ error: { code: 'NOT_FOUND' } })
+        return
+      }
+      const data = payload.parse(req.body)
+      if (data.reset) {
+        await opts.db.delete(sessions)
+        await opts.db.delete(roleAssignments)
+        await opts.db.delete(teamMembers)
+        await opts.db.delete(organizationMembers)
+        await opts.db.delete(teams)
+        await opts.db.delete(departments)
+        await opts.db.delete(organizations)
+        await opts.db.delete(users)
+      }
+      // insert provided orgs/users
+      for (const o of data.orgs) {
+        await opts.db.insert(organizations).values({ id: o.id, slug: o.slug, name: o.name })
+      }
+      for (const u of data.users) {
+        const [row] = await opts.db.insert(users).values({ id: u.id, email: u.email, name: u.name }).returning()
+        if (row && u.sessionToken) {
+          await opts.db.insert(sessions).values({
+            sessionToken: u.sessionToken,
+            userId: row.id,
+            expires: new Date(Date.now() + 3600 * 1000)
+          })
+        }
+      }
+      return { ok: true }
+    })
+  }
+```
+
+- [ ] **Step 2: Modify `apps/api/src/server.ts`** to register conditionally
+
+```typescript
+if (env.NODE_ENV === 'test' && env.TEST_SEED_TOKEN) {
+  const { testSeedRoutes } = await import('./rest/test-seed.js')
+  await app.register(testSeedRoutes({ token: env.TEST_SEED_TOKEN, db: app.db }))
+}
+```
+
+The dynamic import means prod bundlers can tree-shake it if the check is statically false.
+
+- [ ] **Step 3: Add `TEST_SEED_TOKEN` to `packages/config/src/env.ts`**
+
+```typescript
+TEST_SEED_TOKEN: z.string().min(32).optional()
+```
+
+- [ ] **Step 4: Modify `docker/Dockerfile.api`** (strip file from production image)
+
+In the \`runtime\` stage, after copying \`dist/\`:
+```dockerfile
+RUN rm -f ./dist/rest/test-seed.js ./dist/rest/test-seed.js.map
+```
+
+This ensures even if an operator sets `NODE_ENV=test` + `TEST_SEED_TOKEN` at runtime, the dynamic import fails with `Cannot find module` and the endpoint is unreachable.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add apps/api packages/config docker/Dockerfile.api
+git commit -m "feat(api): add /test-seed with triple-layer gating (env + token + file strip)"
+```
 
 ---
 
@@ -580,9 +741,12 @@ This is only used by Playwright tests to set known state quickly.
 Multi-stage: `deps` (install via pnpm with corepack) → `build` (workspace turbo build) → `runtime` (node:20-alpine, only `dist/` + production deps).
 
 Key details:
-- `pnpm deploy --filter=@aide/api --prod ./dist` to get a standalone deploy folder
-- `ENV NODE_ENV=production`, expose port 3001, `HEALTHCHECK CMD wget -qO- http://localhost:3001/health`
-- `CMD ["node", "dist/server.js"]`
+- Build stage runs `pnpm turbo run build --filter=@aide/api` so `apps/api/dist/` contains the compiled JS.
+- Deploy stage runs `pnpm --filter=@aide/api deploy --prod /out` (deliberately **`/out`**, not `./dist`, to avoid colliding with tsc's `dist/` output). Result: `/out` is a self-contained node_modules + compiled app.
+- **Precondition**: confirm `drizzle-orm`, `pg`, `fastify-plugin`, and Auth.js libs are declared under `dependencies` (not `devDependencies`) in every workspace that `@aide/api` depends on — Plan 1's `@aide/db` package.json must be audited. If any runtime dep is misdeclared, `--prod` will prune it and the image will fail at startup. Add the audit as a build-time guard: `RUN node -e "require('drizzle-orm')"` after the deploy step.
+- Runtime stage copies `/out` to `/app`, sets `ENV NODE_ENV=production`, exposes port 3001, `HEALTHCHECK CMD wget -qO- http://localhost:3001/health || exit 1`.
+- `CMD ["node", "/app/dist/server.js"]`.
+- Strip test-only code: `RUN rm -f /app/dist/rest/test-seed.js /app/dist/rest/test-seed.js.map` (see Task 10).
 
 Build locally:
 ```bash
@@ -819,15 +983,71 @@ Also test: API mutation as that user returns FORBIDDEN (via `trpc` call).
 
 **File:** `.github/workflows/ci.yml`
 
-Add a third job `e2e`:
-1. Check out, pnpm install
-2. Start postgres (service container)
-3. Migrate + seed
-4. Build api + web
-5. `pnpm --filter @aide/web exec playwright install --with-deps chromium`
-6. Run api + web in background
-7. `pnpm --filter @aide/web exec playwright test`
-8. Upload Playwright report as artifact on failure
+Add a third job `e2e` that starts api with `NODE_ENV=test` + `TEST_SEED_TOKEN` so the Playwright fixtures can seed state. Web runs as `NODE_ENV=production` against a `next build` artifact to catch prod-only issues.
+
+```yaml
+e2e:
+  runs-on: ubuntu-latest
+  needs: lint-type-test
+  services:
+    postgres:
+      image: postgres:16-alpine
+      env:
+        POSTGRES_USER: aide
+        POSTGRES_PASSWORD: aide_ci
+        POSTGRES_DB: aide
+      ports: ['5432:5432']
+      options: >-
+        --health-cmd="pg_isready -U aide"
+        --health-interval=5s
+        --health-timeout=5s
+        --health-retries=10
+  env:
+    DATABASE_URL: postgresql://aide:aide_ci@localhost:5432/aide
+    AUTH_SECRET: 00000000000000000000000000000000
+    NEXTAUTH_URL: http://localhost:3000
+    NEXT_PUBLIC_API_URL: http://localhost:3001
+    API_INTERNAL_URL: http://localhost:3001
+    GOOGLE_CLIENT_ID: ci
+    GOOGLE_CLIENT_SECRET: ci
+    GITHUB_CLIENT_ID: ci
+    GITHUB_CLIENT_SECRET: ci
+    BOOTSTRAP_SUPER_ADMIN_EMAIL: admin@example.com
+    BOOTSTRAP_DEFAULT_ORG_SLUG: demo
+    BOOTSTRAP_DEFAULT_ORG_NAME: Demo
+    TEST_SEED_TOKEN: ${{ secrets.CI_TEST_SEED_TOKEN || '00000000000000000000000000000000' }}
+  steps:
+    - uses: actions/checkout@v4
+    - uses: pnpm/action-setup@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: pnpm
+    - run: pnpm install --frozen-lockfile
+    - run: pnpm --filter @aide/db db:migrate
+    - run: pnpm turbo run build
+    - run: pnpm --filter @aide/web exec playwright install --with-deps chromium
+    - name: Start api (NODE_ENV=test for seed endpoint)
+      run: pnpm --filter @aide/api start &
+      env:
+        NODE_ENV: test
+    - name: Start web (production build)
+      run: pnpm --filter @aide/web start &
+      env:
+        NODE_ENV: production
+    - name: Wait for services
+      run: npx wait-on http://localhost:3001/health http://localhost:3000/sign-in --timeout 60000
+    - run: pnpm --filter @aide/web exec playwright test
+    - uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: playwright-report
+        path: apps/web/playwright-report/
+```
+
+Two explicit env settings matter:
+- API process gets `NODE_ENV=test` + `TEST_SEED_TOKEN` → /test-seed mounted.
+- Web process gets `NODE_ENV=production` → Next.js uses production rendering (same as release).
 
 - [ ] Commit: `ci: add e2e job running Playwright on Chromium`
 
@@ -897,10 +1117,17 @@ Update `README.md`:
 
 **Type consistency:** Uses `AppRouter` type imported across client/server, consistent `orgId`/`teamId`/`deptId` naming matching Plan 2 routers.
 
-**Known loose edges:**
+**Applied reviewer fixes (from pre-execution code review):**
 
-- Task 2 cross-workspace import (`apps/web → apps/api/src/trpc/router`) is unusual. Alternative: move the router into `packages/api-shared` that both import. Plan 3 keeps it simple; reconsider if IDE complains or builds break.
-- Task 10 (`/test-seed`) is an attack surface if ever enabled in prod. Gated strictly on `NODE_ENV=test`; ensure CI does not accidentally leak the `NODE_ENV` into release images (verified via Dockerfile `ENV NODE_ENV=production`).
-- Task 18–22 E2E test fixtures assume a single Playwright test worker. For parallelism, DB isolation per worker (either per-test DB or per-test transaction) is deferred.
+- Cross-workspace type import resolved by introducing `packages/api-types` that re-exports `AppRouter` via `@aide/api/trpc`. Task 2 rewritten.
+- Next.js proxy route removed — \`httpBatchLink\` hits \`NEXT_PUBLIC_API_URL\` directly, same-origin per spec §4.7.
+- `/test-seed` gated by NODE_ENV=test **AND** `TEST_SEED_TOKEN` constant-time check **AND** Dockerfile strips the file in production image. Task 10 rewritten.
+- Dockerfile uses `/out` instead of `./dist` for \`pnpm deploy\` to avoid collision with tsc output. Task 11 rewritten.
+- CI e2e job explicitly sets \`NODE_ENV=test\` on api and \`NODE_ENV=production\` on web. Task 23 rewritten.
+
+**Known loose edges (still acceptable):**
+
+- Tasks 18–22 E2E fixtures assume a single Playwright worker. For parallelism, DB isolation per worker is deferred to a follow-up.
+- Audit coverage threshold is 90 (not 95) in Plan 2 Task 18 — `docs/SELF_HOSTING.md` (Task 15) should note the deviation; consider tightening once `can()` matrix reaches 90+ cases.
 
 No spec requirement is uncovered.

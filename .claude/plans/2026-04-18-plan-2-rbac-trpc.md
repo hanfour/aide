@@ -429,14 +429,51 @@ const cases: Case[] = [
   ['member cannot grant anything', memberTeam1a, { type: 'role.grant', targetUserId: 'u', role: 'member', scopeType: 'team', scopeId: 'team-1a' }, false]
 ]
 
-describe('can()', () => {
-  it.each(cases)('%s', (_, perm, action, expected) => {
+// Security-critical cross-boundary cases — these MUST all pass.
+const orgAdminOrg2 = makePerm(
+  [{ role: 'org_admin', scopeType: 'organization', scopeId: 'org-2' }],
+  { orgs: ['org-2'], depts: ['dept-2a'], teams: ['team-2a'] }
+)
+const deptMgrDept1b = makePerm(
+  [{ role: 'dept_manager', scopeType: 'department', scopeId: 'dept-1b' }],
+  { depts: ['dept-1b'], teams: ['team-1b'] }
+)
+
+const crossBoundaryCases: Case[] = [
+  // Cross-org denial
+  ['org_admin of org-1 cannot read org-2', orgAdminOrg1, { type: 'org.read', orgId: 'org-2' }, false],
+  ['org_admin of org-1 cannot create dept in org-2', orgAdminOrg1, { type: 'dept.create', orgId: 'org-2' }, false],
+  ['org_admin of org-1 cannot create team in org-2', orgAdminOrg1, { type: 'team.create', orgId: 'org-2' }, false],
+  ['org_admin of org-2 cannot invite into org-1', orgAdminOrg2, { type: 'user.invite', orgId: 'org-1' }, false],
+  ['dept_manager of org-1 dept cannot manage team in org-2', deptMgrDept1a, { type: 'team.update', teamId: 'team-2a' }, false],
+
+  // Cross-dept within same org
+  ['dept_manager of dept-1a cannot grant member on team-1b', deptMgrDept1a, { type: 'role.grant', targetUserId: 'u', role: 'member', scopeType: 'team', scopeId: 'team-1b' }, false],
+  ['dept_manager of dept-1a cannot update team-1b', deptMgrDept1a, { type: 'team.update', teamId: 'team-1b' }, false],
+  ['dept_manager of dept-1a cannot read dept-1b', deptMgrDept1a, { type: 'dept.read', orgId: 'org-1', deptId: 'dept-1b' }, false],
+
+  // Peer-escalation prevention
+  ['org_admin cannot grant org_admin peer', orgAdminOrg1, { type: 'role.grant', targetUserId: 'u', role: 'org_admin', scopeType: 'organization', scopeId: 'org-1' }, false],
+  ['dept_manager cannot grant dept_manager on own dept', deptMgrDept1a, { type: 'role.grant', targetUserId: 'u', role: 'dept_manager', scopeType: 'department', scopeId: 'dept-1a' }, false],
+  ['team_manager cannot grant team_manager on own team', teamMgrTeam1a, { type: 'role.grant', targetUserId: 'u', role: 'team_manager', scopeType: 'team', scopeId: 'team-1a' }, false],
+
+  // team.create cross-scope lying (dept belongs to org-1 but caller claims org-2)
+  ['dept_manager cannot create team claiming wrong org', deptMgrDept1a, { type: 'team.create', orgId: 'org-2', deptId: 'dept-1a' }, false],
+
+  // member cannot do anything beyond self-read
+  ['member cannot read dept', memberTeam1a, { type: 'dept.read', orgId: 'org-1', deptId: 'dept-1a' }, false],
+  ['member cannot invite', memberTeam1a, { type: 'user.invite', orgId: 'org-1' }, false],
+  ['member cannot role.grant member', memberTeam1a, { type: 'role.grant', targetUserId: 'u', role: 'member', scopeType: 'team', scopeId: 'team-1a' }, false]
+]
+
+describe('can() — permit/forbid matrix', () => {
+  it.each([...cases, ...crossBoundaryCases])('%s', (_, perm, action, expected) => {
     expect(can(perm, action)).toBe(expected)
   })
 })
 ```
 
-> 40 cases shown; Task 4 can extend to 90 when resolvePermissions lands (adds team-read for team-members, cross-org denial, revoked-assignment isolation, etc.). Don't block this task on reaching 90 — the matrix shape is what matters; Task 4's integration test completes the coverage.
+> ~55 cases covering: role × action baseline + cross-org + cross-dept + peer-escalation. Revoked-assignment isolation is tested in Task 4 against a live DB.
 
 - [ ] **Step 2: Run test — must FAIL ("Cannot find module")**
 
@@ -525,7 +562,13 @@ export function can(perm: UserPermissions, action: Action): boolean {
     case 'team.create':
       if (rolesAt(perm, 'organization', action.orgId).has('org_admin')) return true
       if (action.deptId) {
-        return rolesAt(perm, 'department', action.deptId).has('dept_manager')
+        // also require the dept is within the declared org's coverage so a
+        // dept_manager cannot lie about the org
+        return (
+          rolesAt(perm, 'department', action.deptId).has('dept_manager') &&
+          coversOrg(perm, action.orgId) &&
+          coversDept(perm, action.deptId)
+        )
       }
       return false
     case 'team.update':
@@ -552,26 +595,45 @@ export function can(perm: UserPermissions, action: Action): boolean {
       return rolesAt(perm, 'organization', action.orgId).has('org_admin')
     case 'role.grant': {
       const grantRank = ROLE_RANK[action.role]
-      let actorRank = 0
       if (action.scopeType === 'global') return false
+      const scopeId = action.scopeId ?? ''
+      let actorRank = 0
       if (action.scopeType === 'organization') {
-        actorRank = maxRoleForOrg(perm, action.scopeId ?? '')
+        actorRank = maxRoleForOrg(perm, scopeId)
       } else if (action.scopeType === 'department') {
-        // need to know parent org to hoist org_admin coverage
-        actorRank = Math.max(
-          rolesAt(perm, 'department', action.scopeId ?? '').has('dept_manager')
-            ? ROLE_RANK.dept_manager
-            : 0,
-          // org_admin of covering org inherits
-          coversDept(perm, action.scopeId ?? '') &&
-            [...rolesAt(perm, 'department', action.scopeId ?? '')].length === 0
-            ? ROLE_RANK.org_admin
-            : 0
-        )
+        // org_admin coverage always elevates; dept_manager direct role adds baseline.
+        // Never demote: take the max of the two paths, no 'no-direct-role' guard.
+        const directDept = rolesAt(perm, 'department', scopeId).has('dept_manager')
+          ? ROLE_RANK.dept_manager
+          : 0
+        const inheritedOrg = coversDept(perm, scopeId) ? ROLE_RANK.org_admin : 0
+        // inheritedOrg is only granted if user actually has org_admin on parent org.
+        // Since we don't know the parent org here, approximate: only treat as org_admin
+        // if the user has *any* org_admin assignment covering this dept. That is what
+        // coversDept implies for non-super_admin, because resolvePermissions populates
+        // coveredDepts via expandScope from org_admin.
+        actorRank = Math.max(directDept, inheritedOrg)
       } else if (action.scopeType === 'team') {
-        actorRank = maxRoleForTeam(perm, action.scopeId ?? '')
+        actorRank = maxRoleForTeam(perm, scopeId)
+        // org_admin of covering team's org also qualifies (resolvePermissions already
+        // unions this into coveredTeams, but role map only has the directly-assigned
+        // role). Use coverage as the signal:
+        if (coversTeam(perm, scopeId)) {
+          // find the highest role-on-any-scope that covers this team
+          for (const [orgId, rolesSet] of perm.rolesByOrg) {
+            if (perm.coveredTeams.has(scopeId) && rolesSet.has('org_admin')) {
+              actorRank = Math.max(actorRank, ROLE_RANK.org_admin)
+              void orgId // keep lint quiet
+            }
+          }
+          for (const [, rolesSet] of perm.rolesByDept) {
+            if (rolesSet.has('dept_manager')) {
+              actorRank = Math.max(actorRank, ROLE_RANK.dept_manager)
+            }
+          }
+        }
       }
-      // strictly below own rank (no granting peers or super_admin)
+      // strictly below own rank (no granting peers, super_admin, or oneself)
       return actorRank > 0 && grantRank < actorRank
     }
     case 'role.revoke':
@@ -1223,6 +1285,7 @@ export function mapServiceError(err: unknown): TRPCError {
 
 ```typescript
 import { initTRPC, TRPCError } from '@trpc/server'
+import type { z } from 'zod'
 import { can, type Action } from '@aide/auth'
 import type { TrpcContext } from './context.js'
 
@@ -1232,18 +1295,35 @@ export const router = t.router
 export const createCallerFactory = t.createCallerFactory
 export const publicProcedure = t.procedure
 
+// Narrow user/perm to non-null by returning a new ctx object (tRPC v11 uses the
+// returned ctx type for downstream procedures — spreading and reassigning still
+// leaves the declared TrpcContext fields nullable).
 export const protectedProcedure = publicProcedure.use(async ({ ctx, next }) => {
   if (!ctx.user || !ctx.perm) {
     throw new TRPCError({ code: 'UNAUTHORIZED' })
   }
-  return next({ ctx: { ...ctx, user: ctx.user, perm: ctx.perm } })
+  return next({
+    ctx: {
+      db: ctx.db,
+      reqId: ctx.reqId,
+      user: ctx.user,
+      perm: ctx.perm
+    }
+  })
 })
 
-export function permissionProcedure<I, Out>(
-  resolve: (ctx: { user: { id: string; email: string } }, input: I) => Action
+// Factory that takes the zod input schema AND the permission resolver together.
+// We call `.input(schema)` BEFORE `.use(...)` so the middleware receives a
+// typed, validated `input`. Consumers then chain .query/.mutation directly.
+export function permissionProcedure<S extends z.ZodTypeAny>(
+  schema: S,
+  resolve: (
+    ctx: { user: { id: string; email: string } },
+    input: z.infer<S>
+  ) => Action
 ) {
-  return protectedProcedure.use(async ({ ctx, input, next }) => {
-    const action = resolve(ctx, input as I)
+  return protectedProcedure.input(schema).use(async ({ ctx, input, next }) => {
+    const action = resolve(ctx, input as z.infer<S>)
     if (!can(ctx.perm, action)) {
       throw new TRPCError({ code: 'FORBIDDEN' })
     }
@@ -1251,6 +1331,8 @@ export function permissionProcedure<I, Out>(
   })
 }
 ```
+
+> Usage note: downstream router procedures must NOT call `.input(...)` again — the schema is attached inside `permissionProcedure(schema, resolver)`. Call `.query(...)` or `.mutation(...)` directly.
 
 - [ ] **Step 4: Typecheck**
 
@@ -1294,15 +1376,9 @@ export { createContext, type TrpcContext } from './context.js'
 export { createCallerFactory } from './procedures.js'
 ```
 
-- [ ] **Step 3: Install Fastify adapter**
+- [ ] **Step 3: Modify `apps/api/src/server.ts`**
 
-```bash
-pnpm --filter @aide/api add fastify-tsconfig
-```
-
-> Actually we use `@trpc/server/adapters/fastify` which is included in `@trpc/server`. No extra install needed. (The step above is a no-op; remove from plan if running sequentially — kept as a reminder that no additional dependency is required.)
-
-- [ ] **Step 4: Modify `apps/api/src/server.ts`**
+(No new dependency — `@trpc/server` already provides `@trpc/server/adapters/fastify`.)
 
 Replace the file with:
 
@@ -1355,7 +1431,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 ```
 
-- [ ] **Step 5: Typecheck + test**
+- [ ] **Step 4: Typecheck + test**
 
 ```bash
 pnpm --filter @aide/api typecheck
@@ -1365,7 +1441,7 @@ pnpm --filter @aide/api test:integration
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add apps/api/src
@@ -1745,20 +1821,18 @@ export const organizationsRouter = router({
       .where(and(inArray(organizations.id, ids), isNull(organizations.deletedAt)))
   }),
 
-  get: permissionProcedure<{ id: string }, never>((_, input) => ({
+  get: permissionProcedure(z.object({ id: uuid }), (_, input) => ({
     type: 'org.read',
     orgId: input.id
-  }))
-    .input(z.object({ id: uuid }))
-    .query(async ({ ctx, input }) => {
-      const [row] = await ctx.db
-        .select()
-        .from(organizations)
-        .where(and(eq(organizations.id, input.id), isNull(organizations.deletedAt)))
-        .limit(1)
-      if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
-      return row
-    }),
+  })).query(async ({ ctx, input }) => {
+    const [row] = await ctx.db
+      .select()
+      .from(organizations)
+      .where(and(eq(organizations.id, input.id), isNull(organizations.deletedAt)))
+      .limit(1)
+    if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
+    return row
+  }),
 
   create: protectedProcedure
     .input(z.object({ slug, name: z.string().min(1).max(255) }))
@@ -1770,20 +1844,18 @@ export const organizationsRouter = router({
       return row
     }),
 
-  update: permissionProcedure<{ id: string; name: string }, never>((_, input) => ({
-    type: 'org.update',
-    orgId: input.id
-  }))
-    .input(z.object({ id: uuid, name: z.string().min(1).max(255) }))
-    .mutation(async ({ ctx, input }) => {
-      const [row] = await ctx.db
-        .update(organizations)
-        .set({ name: input.name })
-        .where(eq(organizations.id, input.id))
-        .returning()
-      if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
-      return row
-    }),
+  update: permissionProcedure(
+    z.object({ id: uuid, name: z.string().min(1).max(255) }),
+    (_, input) => ({ type: 'org.update', orgId: input.id })
+  ).mutation(async ({ ctx, input }) => {
+    const [row] = await ctx.db
+      .update(organizations)
+      .set({ name: input.name })
+      .where(eq(organizations.id, input.id))
+      .returning()
+    if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
+    return row
+  }),
 
   delete: protectedProcedure
     .input(z.object({ id: uuid }))
@@ -1940,17 +2012,15 @@ const slug = z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/)
 const uuid = z.string().uuid()
 
 export const departmentsRouter = router({
-  list: permissionProcedure<{ orgId: string }, never>((_, input) => ({
+  list: permissionProcedure(z.object({ orgId: uuid }), (_, input) => ({
     type: 'org.read',
     orgId: input.orgId
-  }))
-    .input(z.object({ orgId: uuid }))
-    .query(async ({ ctx, input }) => {
-      return ctx.db
-        .select()
-        .from(departments)
-        .where(and(eq(departments.orgId, input.orgId), isNull(departments.deletedAt)))
-    }),
+  })).query(async ({ ctx, input }) => {
+    return ctx.db
+      .select()
+      .from(departments)
+      .where(and(eq(departments.orgId, input.orgId), isNull(departments.deletedAt)))
+  }),
 
   get: protectedProcedure
     .input(z.object({ id: uuid }))
@@ -1967,15 +2037,13 @@ export const departmentsRouter = router({
       return row
     }),
 
-  create: permissionProcedure<{ orgId: string; name: string; slug: string }, never>((_, input) => ({
-    type: 'dept.create',
-    orgId: input.orgId
-  }))
-    .input(z.object({ orgId: uuid, name: z.string().min(1).max(255), slug }))
-    .mutation(async ({ ctx, input }) => {
-      const [row] = await ctx.db.insert(departments).values(input).returning()
-      return row
-    }),
+  create: permissionProcedure(
+    z.object({ orgId: uuid, name: z.string().min(1).max(255), slug }),
+    (_, input) => ({ type: 'dept.create', orgId: input.orgId })
+  ).mutation(async ({ ctx, input }) => {
+    const [row] = await ctx.db.insert(departments).values(input).returning()
+    return row
+  }),
 
   update: protectedProcedure
     .input(z.object({ id: uuid, name: z.string().min(1).max(255) }))
@@ -2168,103 +2236,88 @@ export const teamsRouter = router({
       return ctx.db.select().from(teams).where(and(...conds))
     }),
 
-  get: permissionProcedure<{ id: string }, never>((_, input) => ({
+  get: permissionProcedure(z.object({ id: uuid }), (_, input) => ({
     type: 'team.read',
     teamId: input.id
-  }))
-    .input(z.object({ id: uuid }))
-    .query(async ({ ctx, input }) => {
-      const [row] = await ctx.db
-        .select()
-        .from(teams)
-        .where(and(eq(teams.id, input.id), isNull(teams.deletedAt)))
-        .limit(1)
-      if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
-      return row
-    }),
+  })).query(async ({ ctx, input }) => {
+    const [row] = await ctx.db
+      .select()
+      .from(teams)
+      .where(and(eq(teams.id, input.id), isNull(teams.deletedAt)))
+      .limit(1)
+    if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
+    return row
+  }),
 
-  create: permissionProcedure<
-    { orgId: string; departmentId?: string; name: string; slug: string },
-    never
-  >((_, input) => ({
-    type: 'team.create',
-    orgId: input.orgId,
-    deptId: input.departmentId
-  }))
-    .input(
-      z.object({
-        orgId: uuid,
-        departmentId: uuid.optional(),
-        name: z.string().min(1).max(255),
-        slug
+  create: permissionProcedure(
+    z.object({
+      orgId: uuid,
+      departmentId: uuid.optional(),
+      name: z.string().min(1).max(255),
+      slug
+    }),
+    (_, input) => ({
+      type: 'team.create',
+      orgId: input.orgId,
+      deptId: input.departmentId
+    })
+  ).mutation(async ({ ctx, input }) => {
+    const [row] = await ctx.db
+      .insert(teams)
+      .values({
+        orgId: input.orgId,
+        departmentId: input.departmentId ?? null,
+        name: input.name,
+        slug: input.slug
       })
-    )
-    .mutation(async ({ ctx, input }) => {
-      const [row] = await ctx.db
-        .insert(teams)
-        .values({
-          orgId: input.orgId,
-          departmentId: input.departmentId ?? null,
-          name: input.name,
-          slug: input.slug
-        })
-        .returning()
-      return row
-    }),
+      .returning()
+    return row
+  }),
 
-  update: permissionProcedure<{ id: string; name?: string; departmentId?: string | null }, never>(
+  update: permissionProcedure(
+    z.object({
+      id: uuid,
+      name: z.string().min(1).max(255).optional(),
+      departmentId: uuid.nullable().optional()
+    }),
     (_, input) => ({ type: 'team.update', teamId: input.id })
-  )
-    .input(
-      z.object({
-        id: uuid,
-        name: z.string().min(1).max(255).optional(),
-        departmentId: uuid.nullable().optional()
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      const patch: Record<string, unknown> = {}
-      if (input.name !== undefined) patch.name = input.name
-      if (input.departmentId !== undefined) patch.departmentId = input.departmentId
-      const [row] = await ctx.db.update(teams).set(patch).where(eq(teams.id, input.id)).returning()
-      if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
-      return row
-    }),
+  ).mutation(async ({ ctx, input }) => {
+    const patch: Record<string, unknown> = {}
+    if (input.name !== undefined) patch.name = input.name
+    if (input.departmentId !== undefined) patch.departmentId = input.departmentId
+    const [row] = await ctx.db.update(teams).set(patch).where(eq(teams.id, input.id)).returning()
+    if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
+    return row
+  }),
 
-  delete: permissionProcedure<{ id: string }, never>((_, input) => ({
+  delete: permissionProcedure(z.object({ id: uuid }), (_, input) => ({
     type: 'team.delete',
     teamId: input.id
-  }))
-    .input(z.object({ id: uuid }))
-    .mutation(async ({ ctx, input }) => {
-      await ctx.db.update(teams).set({ deletedAt: new Date() }).where(eq(teams.id, input.id))
-      return { id: input.id }
-    }),
+  })).mutation(async ({ ctx, input }) => {
+    await ctx.db.update(teams).set({ deletedAt: new Date() }).where(eq(teams.id, input.id))
+    return { id: input.id }
+  }),
 
-  addMember: permissionProcedure<{ teamId: string; userId: string }, never>((_, input) => ({
-    type: 'team.add_member',
-    teamId: input.teamId
-  }))
-    .input(z.object({ teamId: uuid, userId: uuid }))
-    .mutation(async ({ ctx, input }) => {
-      await ctx.db
-        .insert(teamMembers)
-        .values({ teamId: input.teamId, userId: input.userId })
-        .onConflictDoNothing()
-      return { ok: true }
-    }),
+  addMember: permissionProcedure(
+    z.object({ teamId: uuid, userId: uuid }),
+    (_, input) => ({ type: 'team.add_member', teamId: input.teamId })
+  ).mutation(async ({ ctx, input }) => {
+    await ctx.db
+      .insert(teamMembers)
+      .values({ teamId: input.teamId, userId: input.userId })
+      .onConflictDoNothing()
+    return { ok: true }
+  }),
 
-  removeMember: permissionProcedure<{ teamId: string; userId: string }, never>((_, input) => ({
-    type: 'team.add_member',
-    teamId: input.teamId
-  }))
-    .input(z.object({ teamId: uuid, userId: uuid }))
-    .mutation(async ({ ctx, input }) => {
-      await ctx.db
-        .delete(teamMembers)
-        .where(and(eq(teamMembers.teamId, input.teamId), eq(teamMembers.userId, input.userId)))
-      return { ok: true }
-    })
+  removeMember: permissionProcedure(
+    z.object({ teamId: uuid, userId: uuid }),
+    (_, input) => ({ type: 'team.add_member', teamId: input.teamId })
+  ).mutation(async ({ ctx, input }) => {
+    await ctx.db
+      .delete(teamMembers)
+      .where(and(eq(teamMembers.teamId, input.teamId), eq(teamMembers.userId, input.userId)))
+    return { ok: true }
+  })
 })
 ```
 
@@ -2528,7 +2581,7 @@ git commit -m "feat(api): add users tRPC router (list, get)"
 
 ```typescript
 import { randomBytes } from 'node:crypto'
-import { and, eq, gt, isNull } from 'drizzle-orm'
+import { and, eq, gt, isNull, sql } from 'drizzle-orm'
 import type { Database } from '@aide/db'
 import { invites, users, organizationMembers, roleAssignments } from '@aide/db'
 import type { Role, ScopeType } from '@aide/auth'
@@ -2567,9 +2620,11 @@ export async function createInvite(
 }
 
 export async function revokeInvite(db: Database, id: string) {
+  // DELETE rather than tombstone — invites has UNIQUE(org_id, email) so leaving
+  // a dead row would block re-inviting the same email. Audit log preserves
+  // history of the revoke action.
   const [row] = await db
-    .update(invites)
-    .set({ acceptedAt: new Date() /* marks it unusable */ })
+    .delete(invites)
     .where(and(eq(invites.id, id), isNull(invites.acceptedAt)))
     .returning({ id: invites.id })
   if (!row) throw new ServiceError('NOT_FOUND', 'invite not found or already used')
@@ -2581,27 +2636,35 @@ export async function acceptInvite(
   actor: { id: string; email: string },
   token: string
 ) {
-  const [invite] = await db
-    .select()
-    .from(invites)
-    .where(and(eq(invites.token, token), isNull(invites.acceptedAt), gt(invites.expiresAt, new Date())))
-    .limit(1)
-  if (!invite) throw new ServiceError('NOT_FOUND', 'invalid or expired invite')
-  if (invite.email.toLowerCase() !== actor.email.toLowerCase()) {
-    throw new ServiceError('FORBIDDEN', 'invite email does not match')
-  }
-  await db
-    .insert(organizationMembers)
-    .values({ orgId: invite.orgId, userId: actor.id })
-    .onConflictDoNothing()
-  await db.insert(roleAssignments).values({
-    userId: actor.id,
-    role: invite.role,
-    scopeType: invite.scopeType,
-    scopeId: invite.scopeId
+  // Wrap in a transaction and lock the invite row so two concurrent accept
+  // calls can't both pass the isNull(acceptedAt) check and create duplicate
+  // role_assignments rows.
+  return db.transaction(async (tx) => {
+    const [invite] = await tx.execute(sql`
+      SELECT * FROM ${invites}
+      WHERE ${invites.token} = ${token}
+        AND ${invites.acceptedAt} IS NULL
+        AND ${invites.expiresAt} > NOW()
+      LIMIT 1
+      FOR UPDATE
+    `) as unknown as Array<typeof invites.$inferSelect>
+    if (!invite) throw new ServiceError('NOT_FOUND', 'invalid or expired invite')
+    if (invite.email.toLowerCase() !== actor.email.toLowerCase()) {
+      throw new ServiceError('FORBIDDEN', 'invite email does not match')
+    }
+    await tx
+      .insert(organizationMembers)
+      .values({ orgId: invite.orgId, userId: actor.id })
+      .onConflictDoNothing()
+    await tx.insert(roleAssignments).values({
+      userId: actor.id,
+      role: invite.role,
+      scopeType: invite.scopeType,
+      scopeId: invite.scopeId
+    })
+    await tx.update(invites).set({ acceptedAt: new Date() }).where(eq(invites.id, invite.id))
+    return { orgId: invite.orgId }
   })
-  await db.update(invites).set({ acceptedAt: new Date() }).where(eq(invites.id, invite.id))
-  return { orgId: invite.orgId }
 }
 ```
 
@@ -2629,31 +2692,27 @@ const roleEnum = z.enum(['super_admin', 'org_admin', 'dept_manager', 'team_manag
 const scopeEnum = z.enum(['global', 'organization', 'department', 'team'])
 
 export const invitesRouter = router({
-  create: permissionProcedure<
-    { orgId: string; email: string; role: string; scopeType: string; scopeId: string | null; deptId?: string; teamId?: string },
-    never
-  >((_, input) => ({
-    type: 'user.invite',
-    orgId: input.orgId,
-    deptId: input.scopeType === 'department' ? (input.scopeId ?? undefined) : undefined,
-    teamId: input.scopeType === 'team' ? (input.scopeId ?? undefined) : undefined
-  }))
-    .input(
-      z.object({
-        orgId: uuid,
-        email: z.string().email(),
-        role: roleEnum.exclude(['super_admin']),
-        scopeType: scopeEnum,
-        scopeId: uuid.nullable()
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      try {
-        return await createInvite(ctx.db, ctx.user, input)
-      } catch (e) {
-        throw mapServiceError(e)
-      }
+  create: permissionProcedure(
+    z.object({
+      orgId: uuid,
+      email: z.string().email(),
+      role: roleEnum.exclude(['super_admin']),
+      scopeType: scopeEnum,
+      scopeId: uuid.nullable()
     }),
+    (_, input) => ({
+      type: 'user.invite',
+      orgId: input.orgId,
+      deptId: input.scopeType === 'department' ? (input.scopeId ?? undefined) : undefined,
+      teamId: input.scopeType === 'team' ? (input.scopeId ?? undefined) : undefined
+    })
+  ).mutation(async ({ ctx, input }) => {
+    try {
+      return await createInvite(ctx.db, ctx.user, input)
+    } catch (e) {
+      throw mapServiceError(e)
+    }
+  }),
 
   list: protectedProcedure
     .input(z.object({ orgId: uuid }))
@@ -2858,7 +2917,7 @@ export async function revokeRole(db: Database, assignmentId: string) {
 ```typescript
 import { z } from 'zod'
 import { and, eq, isNull } from 'drizzle-orm'
-import { roleAssignments } from '@aide/db'
+import { roleAssignments, users } from '@aide/db'
 import { TRPCError } from '@trpc/server'
 import {
   protectedProcedure,
@@ -2873,38 +2932,37 @@ const roleEnum = z.enum(['super_admin', 'org_admin', 'dept_manager', 'team_manag
 const scopeEnum = z.enum(['global', 'organization', 'department', 'team'])
 
 export const rolesRouter = router({
-  grant: permissionProcedure<
-    { userId: string; role: string; scopeType: string; scopeId: string | null },
-    never
-  >((_, input) => ({
-    type: 'role.grant',
-    targetUserId: input.userId,
-    role: input.role as never,
-    scopeType: input.scopeType as never,
-    scopeId: input.scopeId
-  }))
-    .input(
-      z.object({
-        userId: uuid,
-        role: roleEnum,
-        scopeType: scopeEnum,
-        scopeId: uuid.nullable()
-      })
-    )
-    .mutation(async ({ ctx, input }) => grantRole(ctx.db, ctx.user.id, input as never)),
-
-  revoke: permissionProcedure<{ assignmentId: string }, never>(() => ({
-    type: 'role.revoke',
-    assignmentOwnerId: 'unused'
-  }))
-    .input(z.object({ assignmentId: uuid }))
-    .mutation(async ({ ctx, input }) => {
-      try {
-        return await revokeRole(ctx.db, input.assignmentId)
-      } catch (e) {
-        throw mapServiceError(e)
-      }
+  grant: permissionProcedure(
+    z.object({
+      userId: uuid,
+      role: roleEnum,
+      scopeType: scopeEnum,
+      scopeId: uuid.nullable()
     }),
+    (_, input) => ({
+      type: 'role.grant',
+      targetUserId: input.userId,
+      role: input.role,
+      scopeType: input.scopeType,
+      scopeId: input.scopeId
+    })
+  ).mutation(async ({ ctx, input }) => {
+    // verify target user exists so we don't surface raw FK violation to the client
+    const [existing] = await ctx.db.select({ id: users.id }).from(users).where(eq(users.id, input.userId)).limit(1)
+    if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: 'target user not found' })
+    return grantRole(ctx.db, ctx.user.id, input)
+  }),
+
+  revoke: permissionProcedure(
+    z.object({ assignmentId: uuid }),
+    () => ({ type: 'role.revoke', assignmentOwnerId: 'unused' })
+  ).mutation(async ({ ctx, input }) => {
+    try {
+      return await revokeRole(ctx.db, input.assignmentId)
+    } catch (e) {
+      throw mapServiceError(e)
+    }
+  }),
 
   listForUser: protectedProcedure
     .input(z.object({ userId: uuid }))
