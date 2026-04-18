@@ -3,43 +3,29 @@
   "version": "0.1.0",
   "description": "aide — AI Development Performance Evaluator. Analyze Claude Code & Codex usage for technical performance review.",
   "type": "module",
-  "bin": {
-    "aide": "./dist/cli.js"
-  },
-  "files": [
-    "dist",
-    "templates",
-    "README.md"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/hanfour/aide.git"
-  },
+  "private": false,
+  "bin": { "aide": "./dist/cli.js" },
+  "files": ["dist", "templates", "README.md"],
+  "repository": { "type": "git", "url": "git+https://github.com/hanfour/aide.git" },
   "homepage": "https://hanfour.github.io/aide/",
-  "bugs": {
-    "url": "https://github.com/hanfour/aide/issues"
-  },
-  "engines": {
-    "node": ">=18"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
+  "bugs": { "url": "https://github.com/hanfour/aide/issues" },
+  "engines": { "node": ">=20", "pnpm": ">=9" },
+  "packageManager": "pnpm@9.15.0",
+  "publishConfig": { "access": "public" },
   "scripts": {
-    "build": "rm -rf dist && tsc",
+    "build": "rm -rf dist && tsc -p tsconfig.json",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
-    "test": "npm run build && vitest run",
+    "test": "pnpm build && vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run build && npm run test"
+    "prepublishOnly": "pnpm build && pnpm test",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "ws:build": "turbo run build",
+    "ws:test": "turbo run test",
+    "ws:dev": "turbo run dev --parallel"
   },
-  "keywords": [
-    "claude-code",
-    "codex",
-    "ai",
-    "evaluation",
-    "performance"
-  ],
+  "keywords": ["claude-code", "codex", "ai", "evaluation", "performance"],
   "license": "MIT",
   "dependencies": {
     "better-sqlite3": "^11.7.0",
@@ -51,6 +37,7 @@
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.0",
+    "turbo": "^2.3.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.4"
   }
