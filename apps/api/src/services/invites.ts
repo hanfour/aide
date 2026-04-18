@@ -4,6 +4,7 @@ import type { Database } from '@aide/db'
 import { invites, organizationMembers, roleAssignments } from '@aide/db'
 import type { Role, ScopeType } from '@aide/auth'
 import { ServiceError } from '../trpc/errors.js'
+import { writeAudit } from './audit.js'
 
 function newToken() {
   return randomBytes(32).toString('base64url')
@@ -35,6 +36,19 @@ export async function createInvite(
       })
       .returning()
     if (!row) throw new ServiceError('CONFLICT', 'invite already exists')
+    await writeAudit(db, {
+      actorUserId: inviter.id,
+      action: 'invite.created',
+      targetType: 'invite',
+      targetId: row.id,
+      orgId: row.orgId,
+      metadata: {
+        email: row.email,
+        role: row.role,
+        scopeType: row.scopeType,
+        scopeId: row.scopeId
+      }
+    })
     return row
   } catch (err) {
     // Postgres unique_violation → surface as CONFLICT so router maps to 409.
@@ -50,15 +64,43 @@ export async function createInvite(
   }
 }
 
-export async function revokeInvite(db: Database, id: string) {
+export async function revokeInvite(db: Database, actorUserId: string, id: string) {
   // DELETE rather than tombstone — invites has UNIQUE(org_id, email) so leaving
   // a dead row would block re-inviting the same email. Audit log preserves
-  // history of the revoke action.
+  // history of the revoke action. Capture orgId/email BEFORE delete so the
+  // audit entry can record them.
+  const [existing] = await db
+    .select({
+      id: invites.id,
+      orgId: invites.orgId,
+      email: invites.email,
+      role: invites.role,
+      scopeType: invites.scopeType,
+      scopeId: invites.scopeId
+    })
+    .from(invites)
+    .where(eq(invites.id, id))
+    .limit(1)
   const [row] = await db
     .delete(invites)
     .where(and(eq(invites.id, id), isNull(invites.acceptedAt)))
     .returning({ id: invites.id })
   if (!row) throw new ServiceError('NOT_FOUND', 'invite not found or already used')
+  await writeAudit(db, {
+    actorUserId,
+    action: 'invite.revoked',
+    targetType: 'invite',
+    targetId: row.id,
+    orgId: existing?.orgId ?? null,
+    metadata: existing
+      ? {
+          email: existing.email,
+          role: existing.role,
+          scopeType: existing.scopeType,
+          scopeId: existing.scopeId
+        }
+      : {}
+  })
   return { id: row.id }
 }
 
@@ -101,6 +143,19 @@ export async function acceptInvite(
       .update(invites)
       .set({ acceptedAt: new Date() })
       .where(eq(invites.id, invite.id))
+    await writeAudit(tx, {
+      actorUserId: actor.id,
+      action: 'invite.accepted',
+      targetType: 'invite',
+      targetId: invite.id,
+      orgId: invite.orgId,
+      metadata: {
+        email: invite.email,
+        role: invite.role,
+        scopeType: invite.scopeType,
+        scopeId: invite.scopeId
+      }
+    })
     return { orgId: invite.orgId }
   })
 }

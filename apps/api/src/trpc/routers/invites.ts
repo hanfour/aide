@@ -1,50 +1,53 @@
-import { z } from 'zod'
-import { and, eq, isNull } from 'drizzle-orm'
-import { invites } from '@aide/db'
-import { TRPCError } from '@trpc/server'
+import { z } from "zod";
+import { and, eq, isNull } from "drizzle-orm";
+import { invites } from "@aide/db";
+import { TRPCError } from "@trpc/server";
 import {
   protectedProcedure,
   permissionProcedure,
-  router
-} from '../procedures.js'
+  router,
+} from "../procedures.js";
 import {
   createInvite,
   revokeInvite,
-  acceptInvite
-} from '../../services/invites.js'
-import { mapServiceError } from '../errors.js'
+  acceptInvite,
+} from "../../services/invites.js";
+import { mapServiceError } from "../errors.js";
 
-const uuid = z.string().uuid()
+const uuid = z.string().uuid();
 const roleEnum = z.enum([
-  'super_admin',
-  'org_admin',
-  'dept_manager',
-  'team_manager',
-  'member'
-])
-const scopeEnum = z.enum(['global', 'organization', 'department', 'team'])
+  "super_admin",
+  "org_admin",
+  "dept_manager",
+  "team_manager",
+  "member",
+]);
+const scopeEnum = z.enum(["global", "organization", "department", "team"]);
 
 export const invitesRouter = router({
   create: permissionProcedure(
     z.object({
       orgId: uuid,
       email: z.string().email(),
-      role: roleEnum.exclude(['super_admin']),
+      role: roleEnum.exclude(["super_admin"]),
       scopeType: scopeEnum,
-      scopeId: uuid.nullable()
+      scopeId: uuid.nullable(),
     }),
     (_, input) => ({
-      type: 'user.invite',
+      type: "user.invite",
       orgId: input.orgId,
       deptId:
-        input.scopeType === 'department' ? (input.scopeId ?? undefined) : undefined,
-      teamId: input.scopeType === 'team' ? (input.scopeId ?? undefined) : undefined
-    })
+        input.scopeType === "department"
+          ? (input.scopeId ?? undefined)
+          : undefined,
+      teamId:
+        input.scopeType === "team" ? (input.scopeId ?? undefined) : undefined,
+    }),
   ).mutation(async ({ ctx, input }) => {
     try {
-      return await createInvite(ctx.db, ctx.user, input)
+      return await createInvite(ctx.db, ctx.user, input);
     } catch (e) {
-      throw mapServiceError(e)
+      throw mapServiceError(e);
     }
   }),
 
@@ -52,12 +55,12 @@ export const invitesRouter = router({
     .input(z.object({ orgId: uuid }))
     .query(async ({ ctx, input }) => {
       if (!ctx.perm.coveredOrgs.has(input.orgId)) {
-        throw new TRPCError({ code: 'FORBIDDEN' })
+        throw new TRPCError({ code: "FORBIDDEN" });
       }
       return ctx.db
         .select()
         .from(invites)
-        .where(and(eq(invites.orgId, input.orgId), isNull(invites.acceptedAt)))
+        .where(and(eq(invites.orgId, input.orgId), isNull(invites.acceptedAt)));
     }),
 
   revoke: protectedProcedure
@@ -67,15 +70,15 @@ export const invitesRouter = router({
         .select({ orgId: invites.orgId })
         .from(invites)
         .where(eq(invites.id, input.id))
-        .limit(1)
-      if (!existing) throw new TRPCError({ code: 'NOT_FOUND' })
+        .limit(1);
+      if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
       if (!ctx.perm.coveredOrgs.has(existing.orgId)) {
-        throw new TRPCError({ code: 'FORBIDDEN' })
+        throw new TRPCError({ code: "FORBIDDEN" });
       }
       try {
-        return await revokeInvite(ctx.db, input.id)
+        return await revokeInvite(ctx.db, ctx.user.id, input.id);
       } catch (e) {
-        throw mapServiceError(e)
+        throw mapServiceError(e);
       }
     }),
 
@@ -83,9 +86,9 @@ export const invitesRouter = router({
     .input(z.object({ token: z.string().min(10).max(512) }))
     .mutation(async ({ ctx, input }) => {
       try {
-        return await acceptInvite(ctx.db, ctx.user, input.token)
+        return await acceptInvite(ctx.db, ctx.user, input.token);
       } catch (e) {
-        throw mapServiceError(e)
+        throw mapServiceError(e);
       }
-    })
-})
+    }),
+});
