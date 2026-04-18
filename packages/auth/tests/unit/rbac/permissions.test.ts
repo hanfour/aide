@@ -131,6 +131,79 @@ describe("resolvePermissions", () => {
     expect(can(perm, { type: "org.update", orgId: org!.id })).toBe(false);
   });
 
+  it("global scope assignment populates rolesAtGlobal", async () => {
+    const [user] = await db
+      .insert(users)
+      .values({ email: "super@x.com" })
+      .returning();
+    await db.insert(roleAssignments).values({
+      userId: user!.id,
+      role: "super_admin",
+      scopeType: "global",
+      scopeId: null,
+    });
+
+    const perm = await resolvePermissions(db as never, user!.id);
+    expect(perm.rolesAtGlobal.has("super_admin")).toBe(true);
+    // Global scope also expands to cover all orgs/depts/teams.
+    expect(can(perm, { type: "org.update", orgId: "any-org" })).toBe(true);
+  });
+
+  it("multi-role on same scope accumulates in the same set", async () => {
+    const [user] = await db
+      .insert(users)
+      .values({ email: "multi@x.com" })
+      .returning();
+    const [org] = await db
+      .insert(organizations)
+      .values({ slug: "o-multi", name: "Multi" })
+      .returning();
+    await db.insert(roleAssignments).values([
+      {
+        userId: user!.id,
+        role: "org_admin",
+        scopeType: "organization",
+        scopeId: org!.id,
+      },
+      {
+        userId: user!.id,
+        role: "member",
+        scopeType: "organization",
+        scopeId: org!.id,
+      },
+    ]);
+
+    const perm = await resolvePermissions(db as never, user!.id);
+    const rolesForOrg = perm.rolesByOrg.get(org!.id);
+    expect(rolesForOrg?.has("org_admin")).toBe(true);
+    expect(rolesForOrg?.has("member")).toBe(true);
+  });
+
+  it("team-scope assignment propagates to coveredOrgs via parent org index", async () => {
+    const [user] = await db
+      .insert(users)
+      .values({ email: "team-prop@x.com" })
+      .returning();
+    const [org] = await db
+      .insert(organizations)
+      .values({ slug: "o-tp", name: "TP" })
+      .returning();
+    const [team] = await db
+      .insert(teams)
+      .values({ orgId: org!.id, name: "T", slug: "t-tp" })
+      .returning();
+    await db.insert(roleAssignments).values({
+      userId: user!.id,
+      role: "team_manager",
+      scopeType: "team",
+      scopeId: team!.id,
+    });
+
+    const perm = await resolvePermissions(db as never, user!.id);
+    expect(perm.coveredOrgs.has(org!.id)).toBe(true);
+    expect(perm.coveredTeams.has(team!.id)).toBe(true);
+  });
+
   it("multi-scope user unions coverage", async () => {
     const [user] = await db
       .insert(users)

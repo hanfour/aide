@@ -503,8 +503,150 @@ const crossBoundaryCases: Case[] = [
   ],
 ];
 
+const extraCoverageCases: Case[] = [
+  // team.read — coversTeam true/false paths
+  [
+    "member can read own team via coverage",
+    memberTeam1a,
+    { type: "team.read", teamId: "team-1a" },
+    true,
+  ],
+  [
+    "member cannot read team outside coverage",
+    memberTeam1a,
+    { type: "team.read", teamId: "team-other" },
+    false,
+  ],
+  // user.invite with deptId (no teamId) — hits line 117
+  [
+    "dept_manager can invite at dept scope",
+    deptMgrDept1a,
+    { type: "user.invite", orgId: "org-1", deptId: "dept-1a" },
+    true,
+  ],
+  [
+    "dept_manager cannot invite at another dept",
+    deptMgrDept1a,
+    { type: "user.invite", orgId: "org-1", deptId: "dept-1b" },
+    false,
+  ],
+  // role.revoke — requires any assignment to be truthy
+  [
+    "actor with any org role can revoke",
+    orgAdminOrg1,
+    { type: "role.revoke", assignmentOwnerId: "u" },
+    true,
+  ],
+  [
+    "actor with any dept role can revoke",
+    deptMgrDept1a,
+    { type: "role.revoke", assignmentOwnerId: "u" },
+    true,
+  ],
+  [
+    "actor with only team role cannot revoke",
+    teamMgrTeam1a,
+    { type: "role.revoke", assignmentOwnerId: "u" },
+    false,
+  ],
+  [
+    "super_admin can revoke via global short-circuit",
+    superAdmin,
+    { type: "role.revoke", assignmentOwnerId: "u" },
+    true,
+  ],
+  // role.grant with scopeType=global (direct, not super_admin) — returns false
+  [
+    "non-super_admin cannot grant at global scope",
+    orgAdminOrg1,
+    {
+      type: "role.grant",
+      targetUserId: "u",
+      role: "member",
+      scopeType: "global",
+      scopeId: null,
+    },
+    false,
+  ],
+  // role.grant department with inherited org_admin coverage — hits inheritedOrg branch
+  [
+    "org_admin can grant member at department via inheritance",
+    orgAdminOrg1,
+    {
+      type: "role.grant",
+      targetUserId: "u",
+      role: "member",
+      scopeType: "department",
+      scopeId: "dept-1a",
+    },
+    true,
+  ],
+  // role.grant team with inherited org_admin — hits org_admin inheritance
+  // branch inside the team case (lines 141-144)
+  [
+    "org_admin inheritance elevates rank for team role.grant",
+    orgAdminOrg1,
+    {
+      type: "role.grant",
+      targetUserId: "u",
+      role: "team_manager",
+      scopeType: "team",
+      scopeId: "team-1a",
+    },
+    true,
+  ],
+  // role.grant team with inherited dept_manager — hits dept_manager
+  // inheritance branch (lines 146-150)
+  [
+    "dept_manager inheritance elevates rank for team role.grant",
+    deptMgrDept1a,
+    {
+      type: "role.grant",
+      targetUserId: "u",
+      role: "member",
+      scopeType: "team",
+      scopeId: "team-1a",
+    },
+    true,
+  ],
+  // user.read non-self
+  [
+    "non-admin cannot read another user",
+    memberTeam1a,
+    { type: "user.read", targetUserId: "someone-else" },
+    false,
+  ],
+  [
+    "super_admin can read any user",
+    superAdmin,
+    { type: "user.read", targetUserId: "anyone" },
+    true,
+  ],
+  // audit.read org-only branch when no deptId supplied
+  [
+    "org_admin can read org audit",
+    orgAdminOrg1,
+    { type: "audit.read", orgId: "org-1" },
+    true,
+  ],
+  // Unused orgAdminOrg2 reference, silence unused-var linter via one more case
+  [
+    "orgAdminOrg2 sanity: can update org-2",
+    orgAdminOrg2,
+    { type: "org.update", orgId: "org-2" },
+    true,
+  ],
+  // Use deptMgrDept1b too
+  [
+    "dept_manager of dept-1b can update team-1b",
+    deptMgrDept1b,
+    { type: "team.update", teamId: "team-1b" },
+    true,
+  ],
+];
+
 describe("can() — permit/forbid matrix", () => {
-  it.each([...cases, ...crossBoundaryCases])(
+  it.each([...cases, ...crossBoundaryCases, ...extraCoverageCases])(
     "%s",
     (_, perm, action, expected) => {
       expect(can(perm, action)).toBe(expected);
