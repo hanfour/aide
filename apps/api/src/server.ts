@@ -1,4 +1,5 @@
 import Fastify from 'fastify'
+import rateLimit from '@fastify/rate-limit'
 import { fastifyTRPCPlugin } from '@trpc/server/adapters/fastify'
 import { parseServerEnv } from '@aide/config/env'
 import { healthRoutes } from './rest/health.js'
@@ -21,13 +22,25 @@ export async function buildServer() {
   await app.register(cookiesPlugin)
   await app.register(authPlugin, { env })
   await app.register(healthRoutes)
-  await app.register(fastifyTRPCPlugin, {
-    prefix: '/trpc',
-    trpcOptions: {
-      router: appRouter,
-      createContext
-    }
-  })
+
+  // /trpc with rate limit 600/min/user (fall back to IP if no user)
+  await app.register(
+    async (scope) => {
+      await scope.register(rateLimit, {
+        max: 600,
+        timeWindow: '1 minute',
+        keyGenerator: (req) => req.user?.id ?? req.ip
+      })
+      await scope.register(fastifyTRPCPlugin, {
+        prefix: '',
+        trpcOptions: {
+          router: appRouter,
+          createContext
+        }
+      })
+    },
+    { prefix: '/trpc' }
+  )
 
   return app
 }
