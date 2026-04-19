@@ -20,6 +20,10 @@ export const serverEnvSchema = z.object({
     .default(false),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   API_INTERNAL_URL: z.string().url().optional(),
+  ENABLE_TEST_SEED: z
+    .union([z.boolean(), z.string()])
+    .transform((v) => (typeof v === "string" ? v === "true" : v))
+    .default(false),
   TEST_SEED_TOKEN: z.string().min(32).optional(),
 });
 
