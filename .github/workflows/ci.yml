@@ -90,6 +90,8 @@ jobs:
       BOOTSTRAP_DEFAULT_ORG_SLUG: demo
       BOOTSTRAP_DEFAULT_ORG_NAME: Demo
       TEST_SEED_TOKEN: ${{ secrets.CI_TEST_SEED_TOKEN || 'e2e-test-token-0000000000000000000000' }}
+      # Auth.js v5 rejects non-AUTH_URL hosts by default; CI runs on localhost.
+      AUTH_TRUST_HOST: "true"
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v5
