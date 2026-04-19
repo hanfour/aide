@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { and, desc, eq, gte, lte, type SQL } from 'drizzle-orm'
-import { auditLogs } from '@aide/db'
+import { and, desc, eq, gte, lte, sql, type SQL } from 'drizzle-orm'
+import { auditLogs, users } from '@aide/db'
 import { TRPCError } from '@trpc/server'
 import { protectedProcedure, router } from '../procedures.js'
 
@@ -29,8 +29,19 @@ export const auditLogsRouter = router({
       if (input.since) conds.push(gte(auditLogs.createdAt, input.since))
       if (input.until) conds.push(lte(auditLogs.createdAt, input.until))
       return ctx.db
-        .select()
+        .select({
+          id: sql<string>`cast(${auditLogs.id} as text)`.as('id'),
+          actorUserId: auditLogs.actorUserId,
+          actorEmail: users.email,
+          action: auditLogs.action,
+          targetType: auditLogs.targetType,
+          targetId: auditLogs.targetId,
+          orgId: auditLogs.orgId,
+          metadata: auditLogs.metadata,
+          createdAt: auditLogs.createdAt
+        })
         .from(auditLogs)
+        .leftJoin(users, eq(users.id, auditLogs.actorUserId))
         .where(and(...conds))
         .orderBy(desc(auditLogs.createdAt))
         .limit(input.limit)

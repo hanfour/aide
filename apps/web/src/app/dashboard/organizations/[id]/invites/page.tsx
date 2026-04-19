@@ -182,6 +182,12 @@ export default function InvitesTab() {
                       )}
                     </Button>
                   </div>
+                  <a
+                    href={inviteUrl}
+                    className="block break-all font-mono text-xs text-primary hover:underline"
+                  >
+                    {inviteUrl}
+                  </a>
                   <p className="text-xs text-muted-foreground">
                     Email delivery is not wired yet — copy the link and send it manually.
                   </p>

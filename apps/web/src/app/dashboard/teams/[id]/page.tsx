@@ -1,24 +1,40 @@
 'use client'
 
-import { useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, UserPlus, Trash2 } from 'lucide-react'
+import { ArrowLeft, Pencil, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { trpc } from '@/lib/trpc/client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Label } from '@/components/ui/label'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger
+} from '@/components/ui/dialog'
 
 export default function TeamDetailPage() {
   const params = useParams()
+  const router = useRouter()
   const teamId = params?.id as string
   const [searchEmail, setSearchEmail] = useState('')
+  const [editOpen, setEditOpen] = useState(false)
+  const [draftName, setDraftName] = useState('')
   const utils = trpc.useUtils()
   const { data: team } = trpc.teams.get.useQuery({ id: teamId })
   const { data: members, isLoading } = trpc.users.list.useQuery({ teamId })
   const { data: session } = trpc.me.session.useQuery()
+
+  useEffect(() => {
+    if (team?.name) setDraftName(team.name)
+  }, [team?.name])
 
   const canManage =
     session?.assignments.some(
@@ -42,6 +58,29 @@ export default function TeamDetailPage() {
     onSuccess: () => {
       toast.success('Member removed')
       utils.users.list.invalidate({ teamId })
+    },
+    onError: (e) => toast.error(e.message)
+  })
+
+  const updateTeam = trpc.teams.update.useMutation({
+    onSuccess: async (updated) => {
+      toast.success(`Team "${updated.name}" updated`)
+      setEditOpen(false)
+      await utils.teams.get.invalidate({ id: teamId })
+      await utils.teams.list.invalidate({ orgId: updated.orgId })
+    },
+    onError: (e) => toast.error(e.message)
+  })
+
+  const deleteTeam = trpc.teams.delete.useMutation({
+    onSuccess: async () => {
+      toast.success('Team deleted')
+      if (team?.orgId) {
+        await utils.teams.list.invalidate({ orgId: team.orgId })
+        router.push(`/dashboard/organizations/${team.orgId}/teams`)
+      } else {
+        router.push('/dashboard')
+      }
     },
     onError: (e) => toast.error(e.message)
   })
@@ -72,6 +111,67 @@ export default function TeamDetailPage() {
         <h2 className="text-2xl font-semibold tracking-tight">{team?.name ?? '…'}</h2>
         <p className="mt-0.5 text-xs text-muted-foreground">/{team?.slug ?? '…'}</p>
       </div>
+
+      {canManage && (
+        <Card className="shadow-card p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-medium">Team settings</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Rename or remove this team.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Dialog open={editOpen} onOpenChange={setEditOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" className="gap-1.5">
+                    <Pencil className="h-4 w-4" />
+                    Edit team
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Edit team</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="team-name">Name</Label>
+                    <Input
+                      id="team-name"
+                      value={draftName}
+                      onChange={(e) => setDraftName(e.target.value)}
+                    />
+                  </div>
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => updateTeam.mutate({ id: teamId, name: draftName.trim() })}
+                      disabled={!draftName.trim() || updateTeam.isPending}
+                    >
+                      Save
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+              <Button
+                variant="destructive"
+                className="gap-1.5"
+                disabled={deleteTeam.isPending}
+                onClick={() => {
+                  if (!team?.name) return
+                  if (!window.confirm(`Delete team "${team.name}"?`)) return
+                  deleteTeam.mutate({ id: teamId })
+                }}
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete team
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {canManage && (
         <Card className="shadow-card p-4">

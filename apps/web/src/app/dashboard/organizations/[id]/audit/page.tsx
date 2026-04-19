@@ -74,7 +74,7 @@ export default function AuditTab() {
                     {new Date(l.createdAt).toLocaleString()}
                   </td>
                   <td className="px-4 py-2 font-mono text-xs">
-                    {l.actorUserId ? l.actorUserId.slice(0, 8) : "—"}
+                    {l.actorEmail ?? (l.actorUserId ? l.actorUserId.slice(0, 8) : "—")}
                   </td>
                   <td className="px-4 py-2">
                     <Badge
