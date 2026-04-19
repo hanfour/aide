@@ -6,13 +6,13 @@ type MockExecute = (..._args: unknown[]) => Promise<unknown>;
 
 function appWith(dbExecute: MockExecute | undefined) {
   const app = Fastify();
-  // Mirror the decoration that authPlugin would add in production.
-  app.decorate(
-    "db",
-    dbExecute
-      ? ({ execute: dbExecute } as unknown as Record<string, unknown>)
-      : undefined,
-  );
+  // Mirror the decoration that authPlugin would add in production. The cast
+  // to `never` is deliberate — we only exercise the .execute method, not the
+  // full NodePgDatabase surface the module augmentation promises.
+  const mock = dbExecute
+    ? ({ execute: dbExecute } as unknown as never)
+    : (undefined as unknown as never);
+  app.decorate("db", mock);
   return app;
 }
 
