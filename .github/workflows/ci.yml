@@ -33,6 +33,8 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Build workspace packages (needed by tests that import @aide/db)
+        run: pnpm turbo run build --filter=@aide/db --filter=@aide/auth --filter=@aide/config
       - name: Run API integration tests (testcontainers)
         run: pnpm --filter @aide/api test:integration
 
@@ -47,6 +49,8 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Build workspace packages (needed by tests that import @aide/db)
+        run: pnpm turbo run build --filter=@aide/db --filter=@aide/auth --filter=@aide/config
       - name: Coverage gate (packages/{auth,config} ≥ 80%)
         run: pnpm test:coverage
       - name: Upload coverage HTML report on failure
