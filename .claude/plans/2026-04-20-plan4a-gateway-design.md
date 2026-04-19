@@ -107,7 +107,6 @@ name                      text NOT NULL
 notes                     text
 platform                  text NOT NULL        -- 4A: 'anthropic' only; widen to enum in 4C
 type                      text NOT NULL        -- 'api_key' | 'oauth'
-credential_vault_id       uuid NOT NULL → credential_vault.id  (1:1 with row below)
 -- Scheduling
 schedulable               boolean NOT NULL default true
 priority                  int NOT NULL default 50          -- lower = higher priority
@@ -142,7 +141,7 @@ deleted_at                timestamptz                       -- soft delete
 
 ```
 id                uuid PK
-account_id        uuid NOT NULL → accounts.id ON DELETE CASCADE
+account_id        uuid NOT NULL UNIQUE → accounts.id ON DELETE CASCADE
 nonce             bytea NOT NULL     -- 12 bytes GCM nonce
 ciphertext        bytea NOT NULL
 auth_tag          bytea NOT NULL     -- 16 bytes GCM auth tag
@@ -151,13 +150,15 @@ created_at        timestamptz NOT NULL default now()
 rotated_at        timestamptz
 ```
 
+**Single one-way FK** — `credential_vault.account_id → accounts.id ON DELETE CASCADE` with a `UNIQUE(account_id)` constraint enforces 1:1. There is no `accounts.credential_vault_id` back-reference (that would create a circular FK dependency preventing insert). Gateway looks up vault via `SELECT … WHERE account_id = ?`.
+
 **Why isolated from `accounts`:**
-- Reduced surface for credential leaks (selecting from `accounts` never yields plaintext ciphertext paths)
-- Rotate credentials without changing `accounts.id` → `usage_logs` FK stable
-- Historical credential snapshots (future: keep rotated rows with `rotated_at IS NOT NULL`)
+- Reduced surface for credential leaks (selecting from `accounts` never yields ciphertext by accident)
+- Rotate credentials by inserting new vault row + flipping active pointer (future 4D) without touching `accounts.id` → `usage_logs` FK stable
+- Historical credential snapshots (future: keep rotated rows with `rotated_at IS NOT NULL`, drop UNIQUE constraint)
 
 **Indexes:**
-- `(account_id)` — lookup on request
+- `(account_id)` UNIQUE — lookup on request (1:1 in 4A)
 - `(oauth_expires_at) WHERE oauth_expires_at IS NOT NULL` — refresh worker poll
 
 ### 2.3 `api_keys` (platform-issued keys for users)
@@ -177,6 +178,12 @@ ip_blacklist        text[]                  -- CIDRs blocked
 quota_usd           decimal(20,8) NOT NULL default 0        -- 0 = unlimited
 quota_used_usd      decimal(20,8) NOT NULL default 0
 rate_limit_1d_usd   decimal(20,8) NOT NULL default 0
+-- Reveal-tracking (one-time URL flow for admin-issued keys; see Section 6.2)
+issued_by_user_id   uuid NULL → users.id     -- NULL if self-issued; set if admin-issued
+reveal_token_hash   text NULL                -- HMAC-SHA256(pepper, one_time_token) for admin-issued
+reveal_token_expires_at timestamptz NULL     -- 24h from creation
+revealed_at         timestamptz NULL         -- when target user first opened reveal URL
+revealed_by_ip      inet NULL                -- IP that opened reveal URL
 -- Lifecycle
 last_used_at        timestamptz
 expires_at          timestamptz
@@ -185,10 +192,17 @@ updated_at          timestamptz NOT NULL default now()
 revoked_at          timestamptz
 ```
 
+**Reveal flow invariants:**
+- `issued_by_user_id IS NOT NULL` ⟹ admin-issued; `reveal_token_hash` populated at create time
+- `issued_by_user_id IS NULL` ⟹ self-issued; the raw key is shown once in the create dialog (no URL needed)
+- Admin-issued key is NOT usable until revealed (gateway checks `revealed_at IS NOT NULL OR issued_by_user_id IS NULL` at auth time). Prevents admin from secretly using the key before delivery.
+- After `revealed_at`, `reveal_token_hash` and `reveal_token_expires_at` are nulled out (single-use).
+
 **Indexes:**
 - `(user_id) WHERE revoked_at IS NULL`
 - `(org_id) WHERE revoked_at IS NULL`
 - `(key_hash)` — already UNIQUE
+- `(reveal_token_hash) WHERE reveal_token_hash IS NOT NULL` — reveal URL lookup
 
 ### 2.4 `usage_logs` (append-only, one row per gateway request)
 
@@ -328,10 +342,16 @@ created_at               timestamptz NOT NULL default now()  (immutable)
                          buffered before flushing to client; errors in window → failover
     - Error           → classify → failover or fatal (see 3.2)
 
-10. Usage log emission (async)
-    - Enqueue job to BullMQ: aide:gw:usage-log
-    - job id = request_id (idempotent)
-    - Worker batch inserts 100 rows / 1s flush interval (see Section 5)
+10. Usage log emission (async, with inline fallback)
+    - Try enqueue job to BullMQ: aide:gw:usage-log
+      - job id = request_id (idempotent)
+      - Worker batch inserts 100 rows / 1s flush interval (see Section 5)
+    - **Enqueue failure path** (Redis timeout / BullMQ add rejection):
+      - Emit metric gw_usage_enqueue_fallback_total
+      - Inline synchronous fallback: open short DB txn → INSERT usage_logs + UPDATE api_keys.quota_used_usd — same as worker's batched path, but for one row
+      - Adds ~10–30ms to response close on the rare failure case; preserves billing integrity (no silent loss)
+      - If inline fallback ALSO fails (e.g. Postgres down): write structured log line `gw_usage_persist_lost` to pino at `error` level with full payload so operator can replay from logs → alert `gw_usage_persist_lost_total`
+    - Response is NOT retroactively failed — client already received success; we only backfill accounting on a best-effort chain (queue → inline → log)
 
 11. Slot release
     - ZREM per-account slot, then per-user slot
@@ -412,7 +432,7 @@ Unit tests: `packages/gateway-core/test/fixtures/streams/` holds paired request 
 - **Request body size limit** — Fastify middleware, default 10MB (`GATEWAY_MAX_BODY_BYTES`)
 - **Idempotency** — Client `X-Request-Id` header deduped via Redis for 5 minutes; non-stream responses cached; stream responses stored as `{ status: "in_progress" }` marker with duplicate → `409 Conflict + Retry-After`
 - **Client disconnect propagation** — `AbortSignal` piped to undici; client TCP close → upstream TCP close → stop billing
-- **Error passthrough rules** — admin-configurable (schema: `error_passthrough_rules` table, UI deferred to 4D but schema in 4A)
+- **Error passthrough rules** — deferred in full (schema + UI + runtime) to Plan 4D. 4A always applies the built-in classification table in 3.2; no admin overrides.
 
 ### 3.7 Explicitly skipped in 4A
 
@@ -554,6 +574,7 @@ DB transaction:
 - **Dead letter** — after 3 failures, row written to `usage_log_failed` + pino error logged → admin surfaced via alert.
 - **Billing integrity** — `usage_logs` insert and `api_keys.quota_used_usd` update in the *same* transaction. Not two-step eventually-consistent: billing cannot diverge.
 - **Idempotency** — job id = `request_id`. BullMQ refuses duplicate ids — replay-safe.
+- **Enqueue failure fallback** — if `queue.add()` throws (Redis timeout, BullMQ rejection), gateway executes the same INSERT + UPDATE inline in a short DB txn (see Section 3.1 Step 10). This keeps billing integrity even when Redis is in a degraded state. If the inline fallback also fails, structured error log (`gw_usage_persist_lost`) captures the full payload for manual replay; metric `gw_usage_persist_lost_total` pages on-call.
 
 **Rate-limit window counters (5h/1d/7d) are not maintained in 4A**. Read-time on-demand aggregation:
 
@@ -653,6 +674,8 @@ Under normal operation drift is always 0 (same-txn update). Non-zero drift indic
 | Billing monotonicity violation | `gw_billing_monotonicity_violation_total` | any non-zero | critical |
 | Pricing miss | `gw_pricing_miss_total{model=...}` | > 100/h per model | medium |
 | OAuth dead | `gw_oauth_refresh_dead_total` | any non-zero | high |
+| Usage enqueue fallback (frequent) | `gw_usage_enqueue_fallback_total` | > 100/min | medium |
+| **Usage persist lost** (queue AND inline both failed) | `gw_usage_persist_lost_total` | any non-zero | **critical — page on-call** |
 
 Thresholds configurable via env (`GATEWAY_ALERT_*`). Plan 4A exposes metrics only; self-host admins wire Alertmanager / Grafana themselves (documented in SELF_HOSTING.md).
 
@@ -765,12 +788,13 @@ store (nonce, ciphertext, auth_tag) → credential_vault row
 
 **What HKDF actually protects (corrected from earlier draft):**
 
-| Protection | Provided by HKDF? |
-|---|---|
-| Memory leak of master key → partial isolation | ❌ NOT provided (HKDF is deterministic — master leak = all sub-keys derivable; mitigate via envelope encryption + external KMS, out of 4A scope) |
-| Domain separation when master is shared across uses | ✅ via `info` parameter |
-| Ciphertext uniqueness (same plaintext in different accounts → different ciphertext) | ✅ via `salt=account_id` |
-| Key stretching when master entropy is irregular | ✅ standard HKDF property |
+| Protection | Provided by HKDF? | Notes |
+|---|---|---|
+| Memory leak of master key → partial isolation | ❌ NOT provided | HKDF is deterministic — master leak = all sub-keys derivable. Mitigate via envelope encryption + external KMS (out of 4A scope). |
+| Key domain separation when master is shared across uses | ✅ via `info` parameter | E.g. same master key used for this and an unrelated system can't produce colliding sub-keys. |
+| Per-account sub-key independence | ✅ via `salt=account_id` | Each account's ciphertext is encrypted with a different derived key; cross-account decryption is impossible without knowing the master. |
+| Ciphertext uniqueness for the same plaintext | ❌ NOT from HKDF — **AES-GCM random nonce provides this** | The 12-byte random nonce per encryption guarantees unique ciphertext even if two accounts encrypted identical plaintext with the same sub-key. HKDF's salt is not involved. |
+| Key stretching when master entropy is irregular | ✅ standard HKDF property | Useful if master is not already uniform 256-bit random. |
 
 **Master key protection responsibility:**
 - Injected via Docker secret mount or Kubernetes secret
@@ -1075,7 +1099,7 @@ Every decision the user approved during brainstorming:
 | 15 | Alerting | Billing drift + monotonicity violation + queue lag + DLQ + pricing miss + OAuth dead | User additions |
 | 16 | Admin UX | 3 page groups (accounts / api-keys / usage); self-service + admin-on-behalf | User approval |
 | 17 | API key reveal | One-time URL (24h expiry, single-use, audit-logged) | User choice B |
-| 18 | HKDF narrative | Corrected: HKDF does NOT protect against master key leak; protects domain separation + ciphertext uniqueness | User correction |
+| 18 | HKDF narrative | Corrected: HKDF provides **key domain separation** (`info`) and **per-account sub-key independence** (`salt=account_id`). It does NOT protect against master key leak, and it does NOT provide ciphertext uniqueness (that comes from the AES-GCM random nonce, not from HKDF). | User correction |
 | 19 | API key hashing | HMAC-SHA256 with `API_KEY_HASH_PEPPER` (not raw SHA-256) | User correction |
 | 20 | IP allowlist | At gateway layer (data plane) | User approval |
 | 21 | Testing | Three-layer pyramid + real fake Anthropic server for streaming verification (not just nock) | User refinement |
@@ -1099,14 +1123,14 @@ Before invoking `superpowers:writing-plans` to break 4A into tasks:
    - Part 3: `apps/gateway` scaffolding + auth middleware + `/health` + `/metrics`
    - Part 4: Redis layer (slots, wait queue, idempotency, sticky)
    - Part 5: Account selection + credential decrypt + upstream passthrough (non-stream)
-   - Part 6: Streaming + smart buffer window + OpenAI-compat translation
-   - Part 7: Failover + state machine + OAuth refresh worker
-   - Part 8: Usage log worker (BullMQ) + billing txn
-   - Part 9: `apps/api` admin tRPC routers (accounts, apiKeys, usage)
-   - Part 10: `apps/web` admin UI (accounts, keys, usage pages + one-time URL reveal)
-   - Part 11: Docker + compose + release.yml + CI integration job
-   - Part 12: Documentation (GATEWAY.md, SELF_HOSTING.md update)
-   - Part 13: E2E + smoke + tag v0.3.0
+   - Part 6: Streaming + smart buffer window + OpenAI-compat translation **+ failover state machine + OAuth refresh worker** (merged — buffer window semantics are tightly coupled with failover; splitting yielded incoherent task boundaries)
+   - Part 7: Usage log worker (BullMQ) + billing txn + inline fallback
+   - Part 8: `apps/api` admin tRPC routers (accounts, apiKeys, usage)
+   - Part 9: `apps/web` admin UI (accounts, keys, usage pages + one-time URL reveal)
+   - Part 10: Docker + compose + release.yml + CI integration job
+   - Part 11: Documentation (GATEWAY.md, SELF_HOSTING.md update)
+   - Part 12: E2E + smoke
+   - Part 13: Tag v0.3.0 (isolated — release gate runs only after 1–12 all green)
 3. **Scope confirmation** — is the "quality > complexity" stance still active? All decisions were made under that directive; if budget shifts, some items (smart buffer, incremental tool_calls, OAuth in 4A) could be dropped back to Plan 4C.
 
 ---
