@@ -62,6 +62,8 @@ COPY --from=build --chown=aide:aide /repo/apps/web/public /app/apps/web/public
 
 USER aide
 EXPOSE 3000
+# Probe /sign-in because "/" returns a 307 redirect and busybox wget doesn't
+# follow redirects by default. /sign-in is a static 200 regardless of env.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -qO- http://localhost:3000/ >/dev/null 2>&1 || exit 1
+  CMD wget -qO- http://localhost:3000/sign-in >/dev/null 2>&1 || exit 1
 CMD ["node", "apps/web/server.js"]

@@ -1,0 +1,78 @@
+# Shared app env — both api and web call parseServerEnv() at runtime, so they
+# need the full server schema. Keep one source of truth via a YAML anchor.
+x-app-env: &app-env
+  NODE_ENV: production
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DATABASE_URL: postgresql://${DB_USER:-aide}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-aide}
+  AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required}
+  NEXTAUTH_URL: ${NEXTAUTH_URL:?NEXTAUTH_URL is required}
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?GOOGLE_CLIENT_ID is required}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?GOOGLE_CLIENT_SECRET is required}
+  GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID is required}
+  GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:?GITHUB_CLIENT_SECRET is required}
+  BOOTSTRAP_SUPER_ADMIN_EMAIL: ${BOOTSTRAP_SUPER_ADMIN_EMAIL:?required}
+  BOOTSTRAP_DEFAULT_ORG_SLUG: ${BOOTSTRAP_DEFAULT_ORG_SLUG:?required}
+  BOOTSTRAP_DEFAULT_ORG_NAME: ${BOOTSTRAP_DEFAULT_ORG_NAME:?required}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-aide}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_DB: ${DB_NAME:-aide}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-aide} -d ${DB_NAME:-aide}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Intentionally not publishing 5432 — api reaches postgres via the
+    # internal compose network only.
+
+  migrate:
+    image: ghcr.io/hanfour/aide-api:${VERSION:?VERSION is required}
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${DB_USER:-aide}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-aide}
+    command: ["node", "/app/dist/migrate.js"]
+
+  api:
+    image: ghcr.io/hanfour/aide-api:${VERSION}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *app-env
+      PORT: 3001
+    # Port 3001 stays internal — web proxies through the compose network.
+    expose:
+      - "3001"
+
+  web:
+    image: ghcr.io/hanfour/aide-web:${VERSION}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      <<: *app-env
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      # Web proxies /trpc and /api/v1 to this internal URL via Next rewrites.
+      # Browser only ever talks to the web origin, so cookies stay same-origin.
+      API_INTERNAL_URL: http://api:3001
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+
+volumes:
+  pg_data:
