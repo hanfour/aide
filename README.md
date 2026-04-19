@@ -34,6 +34,28 @@ Engineering managers need evidence-based data to evaluate how effectively their 
 
 ---
 
+## Platform mode / 平台模式
+
+Starting with **v0.2.0** aide also ships as a self-hostable web platform with
+organization-scoped RBAC, invites, and an audit log. Use this mode if you want
+a shared workspace for a team rather than a per-engineer CLI report.
+
+Quick start:
+```sh
+cd docker
+cp .env.example .env   # fill in OAuth + bootstrap email
+docker compose up -d
+```
+
+Images are published to `ghcr.io/hanfour/aide-api` and `ghcr.io/hanfour/aide-web`
+on every `v*` tag. The full self-hosting guide — including OAuth setup, env
+reference, updating, and backup — lives at
+[`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
+
+CLI mode and platform mode share no runtime state; pick whichever fits.
+
+---
+
 ## Data Sources / 資料來源
 
 | Source | Path | Data |
