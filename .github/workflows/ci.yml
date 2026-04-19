@@ -13,9 +13,9 @@ jobs:
   lint-type-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: pnpm
@@ -26,9 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint-type-test
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: pnpm
@@ -40,9 +40,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint-type-test
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: pnpm
@@ -51,7 +51,7 @@ jobs:
         run: pnpm test:coverage
       - name: Upload coverage HTML report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage/
@@ -87,9 +87,9 @@ jobs:
       BOOTSTRAP_DEFAULT_ORG_NAME: Demo
       TEST_SEED_TOKEN: ${{ secrets.CI_TEST_SEED_TOKEN || 'e2e-test-token-0000000000000000000000' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: pnpm
@@ -116,7 +116,7 @@ jobs:
         run: pnpm --filter @aide/web exec playwright test --config e2e/playwright.config.ts
       - name: Upload Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: |
@@ -125,7 +125,7 @@ jobs:
           retention-days: 7
       - name: Upload api + web logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: server-logs
           path: |
