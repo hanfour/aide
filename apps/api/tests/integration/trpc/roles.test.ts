@@ -120,4 +120,22 @@ describe("roles router", () => {
     const list = await caller.roles.listForUser({ userId: member.id });
     expect(Array.isArray(list)).toBe(true);
   });
+
+  it("team_manager cannot listForUser for an org-peer outside their team", async () => {
+    const org = await makeOrg(t.db);
+    const teamA = await makeTeam(t.db, org.id);
+    const teamB = await makeTeam(t.db, org.id);
+    const mgr = await makeUser(t.db, {
+      role: "team_manager",
+      scopeType: "team",
+      scopeId: teamA.id,
+    });
+    const peer = await makeUser(t.db, { orgId: org.id, teamId: teamB.id });
+    const caller = await callerFor(t.db, mgr.id);
+    await expect(
+      caller.roles.listForUser({ userId: peer.id }),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+  });
 });

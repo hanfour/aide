@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   setupTestDb,
   makeOrg,
+  makeDept,
   makeTeam,
   makeUser,
   callerFor,
@@ -86,6 +87,38 @@ describe("users router", () => {
     });
     const caller = await callerFor(t.db, user.id);
     await expect(caller.users.list({ orgId: org.id })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+  });
+
+  it("dept_manager cannot get org-peer who is not on a team in the dept", async () => {
+    const org = await makeOrg(t.db);
+    const dept = await makeDept(t.db, org.id);
+    const otherTeam = await makeTeam(t.db, org.id); // NOT inside dept
+    const mgr = await makeUser(t.db, {
+      role: "dept_manager",
+      scopeType: "department",
+      scopeId: dept.id,
+    });
+    const peer = await makeUser(t.db, { orgId: org.id, teamId: otherTeam.id });
+    const caller = await callerFor(t.db, mgr.id);
+    await expect(caller.users.get({ id: peer.id })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+  });
+
+  it("team_manager cannot get member of same org not on their team", async () => {
+    const org = await makeOrg(t.db);
+    const teamA = await makeTeam(t.db, org.id);
+    const teamB = await makeTeam(t.db, org.id);
+    const mgr = await makeUser(t.db, {
+      role: "team_manager",
+      scopeType: "team",
+      scopeId: teamA.id,
+    });
+    const peer = await makeUser(t.db, { orgId: org.id, teamId: teamB.id });
+    const caller = await callerFor(t.db, mgr.id);
+    await expect(caller.users.get({ id: peer.id })).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
   });

@@ -98,9 +98,11 @@ export const rolesRouter = router({
     .query(async ({ ctx, input }) => {
       if (input.userId !== ctx.user.id) {
         // Non-self: must have user.read coverage for target. Same walk as
-        // users.get — check shared covered team first, then shared covered org.
+        // users.get — check shared covered team first, then org_admin path.
+        // Dept/team managers are intentionally excluded from the org path
+        // because their coveredOrgs contains the parent org solely for scope
+        // inheritance (spec §5.1 dept/team are team-bounded).
         const teamIds = [...ctx.perm.coveredTeams];
-        const orgIds = [...ctx.perm.coveredOrgs];
         let ok = ctx.perm.rolesAtGlobal.has("super_admin");
         if (!ok && teamIds.length > 0) {
           const shared = await ctx.db
@@ -115,18 +117,23 @@ export const rolesRouter = router({
             .limit(1);
           if (shared.length > 0) ok = true;
         }
-        if (!ok && orgIds.length > 0) {
-          const sharedOrg = await ctx.db
-            .select({ orgId: organizationMembers.orgId })
-            .from(organizationMembers)
-            .where(
-              and(
-                eq(organizationMembers.userId, input.userId),
-                inArray(organizationMembers.orgId, orgIds),
-              ),
-            )
-            .limit(1);
-          if (sharedOrg.length > 0) ok = true;
+        if (!ok) {
+          const orgAdminOrgIds = [...ctx.perm.rolesByOrg.entries()]
+            .filter(([, roles]) => roles.has("org_admin"))
+            .map(([orgId]) => orgId);
+          if (orgAdminOrgIds.length > 0) {
+            const sharedOrg = await ctx.db
+              .select({ orgId: organizationMembers.orgId })
+              .from(organizationMembers)
+              .where(
+                and(
+                  eq(organizationMembers.userId, input.userId),
+                  inArray(organizationMembers.orgId, orgAdminOrgIds),
+                ),
+              )
+              .limit(1);
+            if (sharedOrg.length > 0) ok = true;
+          }
         }
         if (!ok) throw new TRPCError({ code: "FORBIDDEN" });
       }
