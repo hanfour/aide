@@ -1,0 +1,35 @@
+# Never copy local node_modules into the build context. pnpm symlinks point
+# at the host's content-addressable store (~/.local/share/pnpm/store); those
+# targets don't exist inside the image, so the symlinks break tsc resolution.
+# The deps stage runs `pnpm install` and produces the correct layout itself.
+node_modules
+**/node_modules
+
+# Build + cache outputs — always regenerated from source in the image.
+dist
+**/dist
+.next
+**/.next
+.turbo
+**/.turbo
+
+# Test / coverage artifacts
+coverage
+**/coverage
+playwright-report
+**/playwright-report
+.playwright
+**/.playwright
+
+# Local env + editor + git metadata
+.env
+.env.*
+!.env.example
+.DS_Store
+.git
+.github
+*.log
+
+# Keep the Docker context lean — these aren't needed to build api/web.
+docs
+templates

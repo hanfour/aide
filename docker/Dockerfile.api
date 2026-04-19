@@ -40,51 +40,6 @@ COPY packages/db packages/db
 RUN pnpm turbo run build --filter=@aide/api...
 RUN pnpm --filter=@aide/api deploy --prod /out
 
-# Rewrite workspace package.json pointers from ./src/*.ts → ./dist/src/*.js
-# so Node resolves the compiled JS, not raw TypeScript sources. The `src/`
-# segment is preserved because workspace tsconfigs infer rootDir from
-# src+tests, so tsc emits dist/src/*.js (not dist/*.js). Dev mode is
-# unaffected because this rewrite only runs against the deployed /out copy.
-RUN node <<'EOF'
-const fs = require('node:fs');
-const path = require('node:path');
-const root = '/out/node_modules/@aide';
-if (!fs.existsSync(root)) process.exit(0);
-const remap = (s) => typeof s === 'string'
-  ? s.replace('./src/', './dist/src/').replace(/\.ts$/, '.js')
-  : s;
-const remapTypes = (s) => typeof s === 'string'
-  ? s.replace('./src/', './dist/src/').replace(/\.ts$/, '.d.ts')
-  : s;
-const remapExport = (v) => {
-  if (typeof v === 'string') return remap(v);
-  if (v && typeof v === 'object') {
-    const out = {};
-    for (const [k, val] of Object.entries(v)) {
-      out[k] = k === 'types' ? remapTypes(val) : remapExport(val);
-    }
-    return out;
-  }
-  return v;
-};
-for (const name of fs.readdirSync(root)) {
-  const pjPath = path.join(root, name, 'package.json');
-  if (!fs.existsSync(pjPath)) continue;
-  const pj = JSON.parse(fs.readFileSync(pjPath, 'utf8'));
-  if (pj.main) pj.main = remap(pj.main);
-  if (pj.module) pj.module = remap(pj.module);
-  if (pj.types) pj.types = remapTypes(pj.types);
-  if (pj.exports && typeof pj.exports === 'object') {
-    const out = {};
-    for (const [k, v] of Object.entries(pj.exports)) {
-      out[k] = k === './package.json' ? v : remapExport(v);
-    }
-    pj.exports = out;
-  }
-  fs.writeFileSync(pjPath, JSON.stringify(pj, null, 2) + '\n');
-}
-EOF
-
 # Strip the test-only seed endpoint from the production image. testSeed.ts
 # is already gated by NODE_ENV + ENABLE_TEST_SEED + TEST_SEED_TOKEN, but
 # removing the compiled output is a third layer of defense.

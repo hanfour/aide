@@ -11,6 +11,6 @@
       "dependsOn": ["^build"],
       "outputs": ["coverage/**"]
     },
-    "dev": { "cache": false, "persistent": true }
+    "dev": { "dependsOn": ["^build"], "cache": false, "persistent": true }
   }
 }
