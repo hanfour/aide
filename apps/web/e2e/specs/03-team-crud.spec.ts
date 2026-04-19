@@ -39,18 +39,20 @@ test("org_admin can create, rename, and delete a team through the UI", async ({
   await page.getByLabel(/slug/i).fill("qa-" + Date.now());
   await page.getByRole("button", { name: /^create$|^save$/i }).click();
 
-  await expect(page.getByText(teamName)).toBeVisible();
+  const teamRow = page.locator("tbody tr", { hasText: teamName }).first();
+  await expect(teamRow).toBeVisible();
 
   // Rename — open the team row, edit, save.
-  await page.getByText(teamName).click();
+  await teamRow.getByRole("link", { name: /open/i }).click();
   const renamed = teamName + " v2";
-  await page.getByRole("button", { name: /edit|rename/i }).first().click();
+  await page.getByRole("button", { name: /edit team|rename/i }).click();
   await page.getByLabel(/name/i).fill(renamed);
   await page.getByRole("button", { name: /save|update/i }).click();
-  await expect(page.getByText(renamed)).toBeVisible();
+  await expect(page.getByRole("heading", { name: renamed })).toBeVisible();
 
   // Delete — accept the confirm dialog.
   page.on("dialog", (d) => d.accept());
-  await page.getByRole("button", { name: /delete|remove/i }).click();
-  await expect(page.getByText(renamed)).toHaveCount(0);
+  await page.getByRole("button", { name: /delete team|remove/i }).click();
+  await expect(page).toHaveURL(new RegExp(`/dashboard/organizations/${orgId}/teams`));
+  await expect(page.locator("tbody tr", { hasText: renamed })).toHaveCount(0);
 });
