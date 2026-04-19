@@ -3,7 +3,6 @@ import rateLimit from "@fastify/rate-limit";
 import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
 import { parseServerEnv } from "@aide/config/env";
 import { healthRoutes } from "./rest/health.js";
-import { testSeedRoutes } from "./rest/testSeed.js";
 import { cookiesPlugin } from "./plugins/cookies.js";
 import { authPlugin } from "./plugins/auth.js";
 import { appRouter } from "./trpc/router.js";
@@ -24,7 +23,18 @@ export async function buildServer() {
   await app.register(cookiesPlugin);
   await app.register(authPlugin, { env });
   await app.register(healthRoutes);
-  await app.register(testSeedRoutes(env));
+
+  // Dynamically load /test-seed only when all gating conditions hold. This
+  // lets production images strip dist/rest/testSeed.js entirely — defense in
+  // depth on top of the env + token checks inside the plugin itself.
+  if (
+    env.NODE_ENV !== "production" &&
+    env.ENABLE_TEST_SEED === true &&
+    !!env.TEST_SEED_TOKEN
+  ) {
+    const { testSeedRoutes } = await import("./rest/testSeed.js");
+    await app.register(testSeedRoutes(env));
+  }
 
   // /trpc with rate limit 600/min/user (fall back to IP if no user)
   await app.register(

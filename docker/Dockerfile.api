@@ -1,0 +1,114 @@
+# syntax=docker/dockerfile:1.7
+
+###############################################################################
+# Base: Node 20 alpine with pnpm via corepack
+###############################################################################
+FROM node:20-alpine AS base
+RUN apk add --no-cache libc6-compat wget \
+  && corepack enable
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+WORKDIR /repo
+
+###############################################################################
+# Stage 1 — deps: install all workspace deps using only the manifests
+# (keeps cache hits when source changes but manifests don't)
+###############################################################################
+FROM base AS deps
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json tsconfig.base.json tsconfig.json ./
+COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY packages/api-types/package.json packages/api-types/package.json
+COPY packages/auth/package.json packages/auth/package.json
+COPY packages/config/package.json packages/config/package.json
+COPY packages/core/package.json packages/core/package.json
+COPY packages/db/package.json packages/db/package.json
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+  pnpm install --frozen-lockfile
+
+###############################################################################
+# Stage 2 — build: compile @aide/api and its workspace deps with turbo,
+# then pnpm-deploy a self-contained prod bundle into /out
+###############################################################################
+FROM deps AS build
+COPY apps/api apps/api
+COPY packages/api-types packages/api-types
+COPY packages/auth packages/auth
+COPY packages/config packages/config
+COPY packages/core packages/core
+COPY packages/db packages/db
+RUN pnpm turbo run build --filter=@aide/api...
+RUN pnpm --filter=@aide/api deploy --prod /out
+
+# Rewrite workspace package.json pointers from ./src/*.ts → ./dist/src/*.js
+# so Node resolves the compiled JS, not raw TypeScript sources. The `src/`
+# segment is preserved because workspace tsconfigs infer rootDir from
+# src+tests, so tsc emits dist/src/*.js (not dist/*.js). Dev mode is
+# unaffected because this rewrite only runs against the deployed /out copy.
+RUN node <<'EOF'
+const fs = require('node:fs');
+const path = require('node:path');
+const root = '/out/node_modules/@aide';
+if (!fs.existsSync(root)) process.exit(0);
+const remap = (s) => typeof s === 'string'
+  ? s.replace('./src/', './dist/src/').replace(/\.ts$/, '.js')
+  : s;
+const remapTypes = (s) => typeof s === 'string'
+  ? s.replace('./src/', './dist/src/').replace(/\.ts$/, '.d.ts')
+  : s;
+const remapExport = (v) => {
+  if (typeof v === 'string') return remap(v);
+  if (v && typeof v === 'object') {
+    const out = {};
+    for (const [k, val] of Object.entries(v)) {
+      out[k] = k === 'types' ? remapTypes(val) : remapExport(val);
+    }
+    return out;
+  }
+  return v;
+};
+for (const name of fs.readdirSync(root)) {
+  const pjPath = path.join(root, name, 'package.json');
+  if (!fs.existsSync(pjPath)) continue;
+  const pj = JSON.parse(fs.readFileSync(pjPath, 'utf8'));
+  if (pj.main) pj.main = remap(pj.main);
+  if (pj.module) pj.module = remap(pj.module);
+  if (pj.types) pj.types = remapTypes(pj.types);
+  if (pj.exports && typeof pj.exports === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(pj.exports)) {
+      out[k] = k === './package.json' ? v : remapExport(v);
+    }
+    pj.exports = out;
+  }
+  fs.writeFileSync(pjPath, JSON.stringify(pj, null, 2) + '\n');
+}
+EOF
+
+# Strip the test-only seed endpoint from the production image. testSeed.ts
+# is already gated by NODE_ENV + ENABLE_TEST_SEED + TEST_SEED_TOKEN, but
+# removing the compiled output is a third layer of defense.
+RUN rm -f /out/dist/rest/testSeed.js /out/dist/rest/testSeed.js.map
+
+# Sanity: confirm runtime resolution — pg, drizzle-orm, and @aide/db all
+# reachable. If deploy --prod pruned anything load-bearing, this fails here
+# rather than at container start.
+RUN cd /out \
+  && node -e "require('drizzle-orm'); require('pg'); require('@aide/db'); require('@aide/auth'); require('@aide/config')"
+
+###############################################################################
+# Stage 3 — runtime: minimal image, non-root user, healthcheck
+###############################################################################
+FROM node:20-alpine AS runtime
+RUN apk add --no-cache wget
+ENV NODE_ENV=production \
+    PORT=3001
+WORKDIR /app
+# Non-root user (node image ships 1000:1000 already, but use a named pair)
+RUN addgroup -g 1001 -S aide && adduser -u 1001 -S aide -G aide
+COPY --from=build --chown=aide:aide /out /app
+USER aide
+EXPOSE 3001
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -qO- http://localhost:3001/health >/dev/null 2>&1 || exit 1
+CMD ["node", "/app/dist/server.js"]
