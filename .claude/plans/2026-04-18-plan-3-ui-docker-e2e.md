@@ -8,6 +8,17 @@
 
 **Tech Stack:** Next.js 15 App Router + React 19 + Tailwind + shadcn/ui; `@trpc/client` + `@trpc/react-query` + `@tanstack/react-query` v5; Playwright 1.49; Docker 27; GitHub Actions with ghcr.io.
 
+**Design reference:** Lark Suite (larksuite.com). Key characteristics to mirror:
+- Primary brand color **`#3370FF`** (Lark blue) — overrides shadcn's default slate/neutral primary.
+- **Left sidebar nav** (icon + label; collapsible) + **top bar** (workspace switcher on left, search center, notifications + avatar on right).
+- **Card-based content** with soft shadow (`shadow-sm`) and subtle border (`border-border/60`), 8px radius corners (`rounded-lg`).
+- Typography: **Inter** sans-serif (fallback system-ui). Tight line-height, medium letter-spacing.
+- Data density: prefer dense tables over sparse cards for lists. Avatar + name + role badge rows for user lists.
+- Status indicators: pill-style badges (e.g. `active`, `revoked`, `pending`).
+- Dark mode: slate-950 background, muted foreground. Lark defaults to light mode — provide both via `next-themes`.
+- Spacing grid: 4px base, 8/16/24/32 consistent jumps.
+- Empty states: centered icon + headline + sub-text + primary CTA (no decorative illustrations).
+
 **Covers spec milestones:** M6 (Web UI) + M7 (Docker + release) + M8 (E2E acceptance).
 
 **Reference spec:** `.claude/plans/2026-04-17-foundation-auth-design.md` §7 (deployment), §8 (testing).
@@ -103,13 +114,59 @@ pnpm --filter @aide/web add tailwindcss@^4 @tailwindcss/postcss clsx class-varia
 pnpm --filter @aide/web add @radix-ui/react-dialog @radix-ui/react-label @radix-ui/react-slot @radix-ui/react-dropdown-menu
 ```
 
-- [ ] **Step 2: Init shadcn**
+- [ ] **Step 2: Init shadcn (Lark-inspired theme)**
 
 ```bash
-pnpm --filter @aide/web dlx shadcn@latest init -d
+pnpm --filter @aide/web dlx shadcn@latest init
 ```
 
-Accept defaults: style=default, base color=slate, CSS variables=yes.
+Interactive answers:
+- Style: **new-york**（更精緻、邊緣更 subtle，貼近 Lark）
+- Base color: **slate**（中性基底，主色由 CSS vars 覆蓋）
+- CSS variables: **yes**
+
+After init, override `apps/web/src/app/globals.css` `:root` and `.dark` primary variables with Lark blue:
+
+```css
+:root {
+  --primary: 221 100% 60%;          /* #3370FF ≈ hsl(221, 100%, 60%) */
+  --primary-foreground: 0 0% 100%;
+  --ring: 221 100% 60%;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --primary: 221 100% 65%;
+  --primary-foreground: 222 47% 11%;
+  --ring: 221 100% 65%;
+}
+```
+
+Also load Inter:
+
+`apps/web/src/app/layout.tsx`:
+```tsx
+import { Inter } from 'next/font/google'
+const inter = Inter({ subsets: ['latin'], variable: '--font-sans' })
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
+      <body className="min-h-screen bg-background text-foreground antialiased font-sans">
+        {children}
+        <Toaster />
+      </body>
+    </html>
+  )
+}
+```
+
+And extend `tailwind.config.ts`:
+```ts
+fontFamily: {
+  sans: ['var(--font-sans)', ...defaultTheme.fontFamily.sans]
+}
+```
 
 - [ ] **Step 3: Add baseline UI primitives**
 
