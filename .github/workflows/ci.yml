@@ -35,3 +35,84 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Run API integration tests (testcontainers)
         run: pnpm --filter @aide/api test:integration
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: lint-type-test
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: aide
+          POSTGRES_PASSWORD: aide_ci
+          POSTGRES_DB: aide
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U aide -d aide"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://aide:aide_ci@localhost:5432/aide
+      AUTH_SECRET: ci-00000000000000000000000000000000
+      NEXTAUTH_URL: http://localhost:3000
+      API_INTERNAL_URL: http://localhost:3001
+      GOOGLE_CLIENT_ID: ci
+      GOOGLE_CLIENT_SECRET: ci
+      GITHUB_CLIENT_ID: ci
+      GITHUB_CLIENT_SECRET: ci
+      BOOTSTRAP_SUPER_ADMIN_EMAIL: admin@example.com
+      BOOTSTRAP_DEFAULT_ORG_SLUG: demo
+      BOOTSTRAP_DEFAULT_ORG_NAME: Demo
+      TEST_SEED_TOKEN: ${{ secrets.CI_TEST_SEED_TOKEN || 'e2e-test-token-0000000000000000000000' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Apply migrations
+        run: pnpm --filter @aide/db db:migrate
+      - name: Build workspaces
+        run: pnpm turbo run build --filter=@aide/api --filter=@aide/web
+      - name: Install Playwright browsers
+        run: pnpm --filter @aide/web exec playwright install --with-deps chromium
+      - name: Start api (NODE_ENV=test + test-seed gate active)
+        run: |
+          ENABLE_TEST_SEED=true NODE_ENV=test nohup \
+            pnpm --filter @aide/api start > api.log 2>&1 &
+          echo $! > api.pid
+      - name: Start web (production build)
+        run: |
+          NODE_ENV=production nohup \
+            pnpm --filter @aide/web start > web.log 2>&1 &
+          echo $! > web.pid
+      - name: Wait for api + web
+        run: npx wait-on http://localhost:3001/health http://localhost:3000/sign-in --timeout 60000
+      - name: Playwright
+        run: pnpm --filter @aide/web exec playwright test --config e2e/playwright.config.ts
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report/
+            apps/web/e2e/.playwright/
+          retention-days: 7
+      - name: Upload api + web logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-logs
+          path: |
+            api.log
+            web.log
+          retention-days: 7
+      - name: Stop background servers
+        if: always()
+        run: |
+          kill $(cat api.pid) 2>/dev/null || true
+          kill $(cat web.pid) 2>/dev/null || true
