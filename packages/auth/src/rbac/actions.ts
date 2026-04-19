@@ -1,0 +1,42 @@
+export type Role =
+  | 'super_admin'
+  | 'org_admin'
+  | 'dept_manager'
+  | 'team_manager'
+  | 'member'
+
+export type ScopeType = 'global' | 'organization' | 'department' | 'team'
+
+export const ROLE_RANK: Record<Role, number> = {
+  super_admin: 50,
+  org_admin: 40,
+  dept_manager: 30,
+  team_manager: 20,
+  member: 10
+}
+
+export type Action =
+  | { type: 'org.read'; orgId: string }
+  | { type: 'org.update'; orgId: string }
+  | { type: 'org.create' }
+  | { type: 'org.delete'; orgId: string }
+  | { type: 'dept.read'; orgId: string; deptId: string }
+  | { type: 'dept.create'; orgId: string }
+  | { type: 'dept.update'; orgId: string; deptId: string }
+  | { type: 'dept.delete'; orgId: string; deptId: string }
+  | { type: 'team.read'; teamId: string }
+  | { type: 'team.create'; orgId: string; deptId?: string }
+  | { type: 'team.update'; teamId: string }
+  | { type: 'team.delete'; teamId: string }
+  | { type: 'team.add_member'; teamId: string }
+  | { type: 'user.read'; targetUserId: string }
+  | { type: 'user.invite'; orgId: string; deptId?: string; teamId?: string }
+  | {
+      type: 'role.grant'
+      targetUserId: string
+      role: Role
+      scopeType: ScopeType
+      scopeId: string | null
+    }
+  | { type: 'role.revoke'; assignmentOwnerId: string }
+  | { type: 'audit.read'; orgId: string; deptId?: string }

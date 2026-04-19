@@ -1,0 +1,72 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { setupTestDb, makeOrg, makeTeam, makeUser, callerFor } from '../../factories/index.js'
+
+let t: Awaited<ReturnType<typeof setupTestDb>>
+
+beforeAll(async () => {
+  t = await setupTestDb()
+})
+afterAll(async () => {
+  await t.stop()
+})
+
+describe('teams router', () => {
+  it('team_manager sees only their own team in list', async () => {
+    const org = await makeOrg(t.db)
+    const teamA = await makeTeam(t.db, org.id)
+    await makeTeam(t.db, org.id) // teamB, invisible
+    const user = await makeUser(t.db, {
+      role: 'team_manager',
+      scopeType: 'team',
+      scopeId: teamA.id
+    })
+    const caller = await callerFor(t.db, user.id)
+    const result = await caller.teams.list({})
+    expect(result.map((r) => r.id)).toEqual([teamA.id])
+  })
+
+  it('team_manager can update own team but not another', async () => {
+    const org = await makeOrg(t.db)
+    const teamA = await makeTeam(t.db, org.id)
+    const teamB = await makeTeam(t.db, org.id)
+    const user = await makeUser(t.db, {
+      role: 'team_manager',
+      scopeType: 'team',
+      scopeId: teamA.id
+    })
+    const caller = await callerFor(t.db, user.id)
+    const ok = await caller.teams.update({ id: teamA.id, name: 'new-a' })
+    expect(ok?.name).toBe('new-a')
+    await expect(
+      caller.teams.update({ id: teamB.id, name: 'new-b' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('team_manager can addMember', async () => {
+    const org = await makeOrg(t.db)
+    const team = await makeTeam(t.db, org.id)
+    const mgr = await makeUser(t.db, {
+      role: 'team_manager',
+      scopeType: 'team',
+      scopeId: team.id
+    })
+    const newb = await makeUser(t.db)
+    const caller = await callerFor(t.db, mgr.id)
+    const res = await caller.teams.addMember({ teamId: team.id, userId: newb.id })
+    expect(res.ok).toBe(true)
+  })
+
+  it('member cannot create team', async () => {
+    const org = await makeOrg(t.db)
+    const team = await makeTeam(t.db, org.id)
+    const user = await makeUser(t.db, {
+      role: 'member',
+      scopeType: 'team',
+      scopeId: team.id
+    })
+    const caller = await callerFor(t.db, user.id)
+    await expect(
+      caller.teams.create({ orgId: org.id, name: 'x', slug: 'xteam' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+})

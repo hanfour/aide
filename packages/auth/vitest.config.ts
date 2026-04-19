@@ -5,6 +5,12 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.ts'],
     testTimeout: 60_000,
-    hookTimeout: 60_000
+    hookTimeout: 60_000,
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.ts'],
+      // Spec §8.1 / §14 DoD: packages/auth ≥ 95%.
+      thresholds: { lines: 95, functions: 95, branches: 90, statements: 95 }
+    }
   }
 })
