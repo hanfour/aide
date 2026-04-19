@@ -1,10 +1,8 @@
 import type { ReactNode } from 'react'
-import { Inter } from 'next/font/google'
 import './globals.css'
 import { Toaster } from '@/components/ui/sonner'
 import { Providers } from './providers'
-
-const inter = Inter({ subsets: ['latin'], variable: '--font-sans' })
+import { ThemeProvider } from '@/components/theme-provider'
 
 export const metadata = {
   title: 'aide',
@@ -13,10 +11,12 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={inter.variable} suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen bg-background text-foreground antialiased font-sans">
-        <Providers>{children}</Providers>
-        <Toaster />
+        <ThemeProvider>
+          <Providers>{children}</Providers>
+          <Toaster />
+        </ThemeProvider>
       </body>
     </html>
   )
