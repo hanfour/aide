@@ -1,6 +1,15 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  // In a pnpm monorepo Next.js can't auto-detect the repo root for standalone
+  // tracing (the nearest lockfile is two levels up). Pin it explicitly so the
+  // standalone bundle contains the full workspace node_modules it needs.
+  outputFileTracingRoot: path.join(here, '..', '..'),
   transpilePackages: ['@aide/auth', '@aide/config', '@aide/db', '@aide/api-types'],
   async rewrites() {
     const apiInternal = process.env.API_INTERNAL_URL ?? 'http://localhost:3001'
