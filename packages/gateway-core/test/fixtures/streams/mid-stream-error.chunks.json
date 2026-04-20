@@ -1,0 +1,20 @@
+[
+  {
+    "id": "msg_err_001",
+    "object": "chat.completion.chunk",
+    "created": 1704067200,
+    "model": "claude-3-5-sonnet-20241022",
+    "choices": [
+      { "index": 0, "delta": { "role": "assistant", "content": "" }, "finish_reason": null }
+    ]
+  },
+  {
+    "id": "msg_err_001",
+    "object": "chat.completion.chunk",
+    "created": 1704067200,
+    "model": "claude-3-5-sonnet-20241022",
+    "choices": [
+      { "index": 0, "delta": { "content": "Starting to answer..." }, "finish_reason": null }
+    ]
+  }
+]
