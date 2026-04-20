@@ -1,5 +1,5 @@
 import fp from "fastify-plugin";
-import { Redis, type RedisOptions } from "ioredis";
+import { Redis } from "ioredis";
 import type { ServerEnv } from "@aide/config";
 
 declare module "fastify" {
@@ -19,13 +19,12 @@ export const redisPlugin = fp<RedisPluginOptions>(async (fastify, opts) => {
     throw new Error("REDIS_URL required when gateway is enabled");
   }
 
-  const redisOptions: RedisOptions = {
+  const url = opts.env.REDIS_URL!;
+  const client: Redis = opts.client ?? new Redis(url, {
     enableAutoPipelining: true,
     maxRetriesPerRequest: 3,
-    lazyConnect: false,
-  };
-
-  const client: Redis = opts.client ?? new Redis(opts.env.REDIS_URL!, redisOptions);
+    keyPrefix: "aide:gw:",
+  });
 
   client.on("reconnecting", (delayMs: number) => {
     fastify.log.warn({ delayMs }, "redis reconnecting");
@@ -36,8 +35,8 @@ export const redisPlugin = fp<RedisPluginOptions>(async (fastify, opts) => {
   });
 
   fastify.addHook("onClose", async () => {
-    await client.quit().catch(() => {
-      // ioredis throws if already closed; ignore
+    await client.quit().catch((err: Error) => {
+      fastify.log.debug({ err: err.message }, "redis quit failed (likely already closed)");
     });
   });
 

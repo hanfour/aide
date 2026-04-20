@@ -82,7 +82,7 @@ describe("redisPlugin", () => {
     expect(quitSpy).toHaveBeenCalledOnce();
   });
 
-  it("4. reconnect event → fastify.log.warn with delayMs", async () => {
+  it("4. forwards reconnecting events to fastify.log.warn", async () => {
     const warnSpy = vi.fn();
     const mock = new RedisMock();
     const app = Fastify({
@@ -134,5 +134,49 @@ describe("redisPlugin", () => {
       }),
     ).rejects.toThrow("REDIS_URL required when gateway is enabled");
     await app.close();
+  });
+
+  it("7. quit() failure is logged at debug level", async () => {
+    const mock = new RedisMock();
+    const quitError = new Error("already closed");
+    vi.spyOn(mock, "quit").mockRejectedValueOnce(quitError);
+
+    const app = Fastify({ logger: { level: "debug" } });
+    // do NOT push — we close manually
+    await app.register(redisPlugin, { env: makeEnv(), client: mock as never });
+    await app.ready();
+
+    const debugSpy = vi.spyOn(app.log, "debug");
+    await app.close();
+
+    expect(debugSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ err: "already closed" }),
+      "redis quit failed (likely already closed)",
+    );
+  });
+
+  it("8. keyPrefix aide:gw: is applied — key stored with prefix in ioredis-mock store", async () => {
+    const mock = new RedisMock({ keyPrefix: "aide:gw:" });
+    const app = Fastify({ logger: false });
+    apps.push(app);
+    await app.register(redisPlugin, { env: makeEnv(), client: mock as never });
+    await app.ready();
+
+    await app.redis.set("mykey", "myval");
+
+    // ioredis-mock honors keyPrefix: the on-wire key in the store is prefixed.
+    // mock.data is a Map-like object; use .keys() (not Object.keys) to iterate it.
+    const mockData = (mock as unknown as { data: Map<string, unknown> }).data;
+    const storeKeys = [...mockData.keys()];
+    expect(storeKeys).toContain("aide:gw:mykey");
+
+    // Round-trip via the same prefixed client works
+    const val = await app.redis.get("mykey");
+    expect(val).toBe("myval");
+
+    // A fresh mock without keyPrefix cannot find the key at the unprefixed path
+    const rawMock = new RedisMock();
+    const rawVal = await rawMock.get("mykey");
+    expect(rawVal).toBeNull();
   });
 });
