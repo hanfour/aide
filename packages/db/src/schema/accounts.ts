@@ -14,9 +14,7 @@ import { organizations, teams } from "./org.js";
 export const upstreamAccounts = pgTable(
   "upstream_accounts",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`uuidv7()`),
+    id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),

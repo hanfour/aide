@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS "upstream_accounts" (
-	"id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"org_id" uuid NOT NULL,
 	"team_id" uuid,
 	"name" text NOT NULL,
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS "upstream_accounts" (
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "credential_vault" (
-	"id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"account_id" uuid NOT NULL,
 	"nonce" "bytea" NOT NULL,
 	"ciphertext" "bytea" NOT NULL,
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS "credential_vault" (
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "api_keys" (
-	"id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"org_id" uuid NOT NULL,
 	"team_id" uuid,

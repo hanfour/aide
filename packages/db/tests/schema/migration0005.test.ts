@@ -3,13 +3,19 @@ import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
 
 describe("gateway schema migration", () => {
-  // drizzle-kit generates 0001_* on top of the existing 0000_* baseline.
-  // (Plan document originally said "0005" — that number assumed Plans 1-3 had
-  // generated 0001-0004; in reality Plan 1 emitted only 0000, so this is 0001.)
+  // drizzle-kit generates migrations on top of the existing baseline.
+  // The 0001_* migration contains the table creation (this is what we check).
+  // A 0002_* migration may also exist if schema was regenerated (e.g., fixing defaults).
   const drizzleDir = join(__dirname, "../../drizzle");
-  const file = readdirSync(drizzleDir).find(
-    (f) => f.startsWith("0001_") && f.endsWith(".sql"),
+  const files = readdirSync(drizzleDir).filter(
+    (f) => /^\d{4}_/.test(f) && f.endsWith(".sql"),
   );
+  if (files.length === 0)
+    throw new Error(
+      "No migration files found — run pnpm -F @aide/db db:generate",
+    );
+  // Find the 0001_* file which has the table creation
+  const file = files.find((f) => f.startsWith("0001_"));
   if (!file)
     throw new Error(
       "Migration 0001_* not found — run pnpm -F @aide/db db:generate",
