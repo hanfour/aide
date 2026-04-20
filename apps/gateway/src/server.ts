@@ -74,7 +74,7 @@ export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
   if (opts.redis === undefined) {
     await wireUsageLogPipeline(app, opts.env);
   } else {
-    app.log.info(
+    app.log.debug(
       "buildServer: opts.redis injected — skipping BullMQ queue/worker/audit (test mode)",
     );
   }
@@ -152,6 +152,12 @@ async function wireUsageLogPipeline(
   //   4. bullmqRedis.quit() — close the dedicated ioredis connection last so
   //                            BullMQ's own close() above can still issue Redis
   //                            commands during shutdown
+  //
+  // The try/catch wrappers below catch thrown errors only — a step that hangs
+  // (e.g. worker.stop() blocked on a wedged batch) will still stall shutdown
+  // because its `await` never settles. For hard-deadline shutdown we'd need
+  // Promise.race with a timeout; not added here because Fastify's close() has
+  // a server-level grace and a hung BullMQ Worker indicates a deeper bug.
   app.addHook("onClose", async () => {
     audit.stop();
     try {
@@ -170,6 +176,9 @@ async function wireUsageLogPipeline(
         "usage log queue close failed",
       );
     }
+    // Required: BullMQ treats the passed-in ioredis instance as shared and
+    // skips quit() inside Worker.close() / Queue.close(). Without this line
+    // the TCP connection leaks until process exit.
     await bullmqRedis.quit().catch((err: Error) => {
       app.log.debug(
         { err: err.message },

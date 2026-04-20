@@ -131,25 +131,11 @@ describe("gateway server", () => {
     await app.close();
   });
 
-  it("decorates fastify.usageLogQueue when enabled and no test redis injected", async () => {
-    // No opts.redis -> production wiring path.  BullMQ Queue construction is
-    // lazy w.r.t. actual Redis I/O (no command issued until enqueue), so this
-    // test runs without a real Redis available — the decoration itself is
-    // synchronous after createUsageLogQueue() returns.
-    const app = await buildServer({
-      env: makeEnv({
-        ENABLE_GATEWAY: "true",
-        GATEWAY_BASE_URL: "http://localhost:3002",
-        REDIS_URL: "redis://localhost:6379",
-        CREDENTIAL_ENCRYPTION_KEY: "a".repeat(64),
-        API_KEY_HASH_PEPPER: "b".repeat(64),
-      }),
-      db: {} as never,
-    });
-    expect(app.usageLogQueue).toBeDefined();
-    expect(app.hasDecorator("usageLogQueue")).toBe(true);
-    await app.close();
-  });
+  // NOTE: The "production wiring decorates fastify.usageLogQueue" assertion
+  // lives in tests/server.integration.test.ts — it requires a real Redis
+  // because `new Worker(...)` opens a live ioredis connection at construction
+  // time and would hang in CI without it. Keeping that case unit-side caused
+  // a hidden localhost:6379 dependency.
 
   it("app.close() is idempotent / does not throw when BullMQ wiring is skipped", async () => {
     // Regression guard: the onClose hook only fires when wireUsageLogPipeline()
