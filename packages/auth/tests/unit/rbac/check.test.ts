@@ -653,3 +653,38 @@ describe("can() — permit/forbid matrix", () => {
     },
   );
 });
+
+describe("api_key.revoke — ownership and org_admin policy", () => {
+  const revokeAction = (ownerUserId: string, orgId = "org-1"): Action => ({
+    type: "api_key.revoke",
+    apiKeyId: "key-abc",
+    orgId,
+    ownerUserId,
+  });
+
+  it("random user (no role, not owner) → false", () => {
+    const randomUser = makePerm([], {});
+    expect(can(randomUser, revokeAction("someone-else"))).toBe(false);
+  });
+
+  it("owner user (ownerUserId === perm.userId) → true", () => {
+    // makePerm sets userId to "actor-1"
+    const owner = makePerm([], {});
+    expect(can(owner, revokeAction("actor-1"))).toBe(true);
+  });
+
+  it("org_admin at the same orgId → true", () => {
+    expect(can(orgAdminOrg1, revokeAction("someone-else", "org-1"))).toBe(true);
+  });
+
+  it("org_admin at a DIFFERENT orgId → false", () => {
+    // orgAdminOrg1 is admin of org-1, not org-2
+    expect(can(orgAdminOrg1, revokeAction("someone-else", "org-2"))).toBe(
+      false,
+    );
+  });
+
+  it("super_admin → true (global short-circuit)", () => {
+    expect(can(superAdmin, revokeAction("someone-else", "org-1"))).toBe(true);
+  });
+});

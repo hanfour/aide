@@ -1,0 +1,8 @@
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    { "role": "user", "content": "Write a hello world function." }
+  ],
+  "system": "You are a code assistant.\nAlways respond in TypeScript.",
+  "max_tokens": 512
+}

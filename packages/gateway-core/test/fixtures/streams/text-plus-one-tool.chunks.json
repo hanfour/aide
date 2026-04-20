@@ -1,0 +1,87 @@
+[
+  {
+    "id": "msg_tool_001",
+    "object": "chat.completion.chunk",
+    "created": 1704067200,
+    "model": "claude-3-5-sonnet-20241022",
+    "choices": [
+      { "index": 0, "delta": { "role": "assistant", "content": "" }, "finish_reason": null }
+    ]
+  },
+  {
+    "id": "msg_tool_001",
+    "object": "chat.completion.chunk",
+    "created": 1704067200,
+    "model": "claude-3-5-sonnet-20241022",
+    "choices": [
+      { "index": 0, "delta": { "content": "Let me look that up." }, "finish_reason": null }
+    ]
+  },
+  {
+    "id": "msg_tool_001",
+    "object": "chat.completion.chunk",
+    "created": 1704067200,
+    "model": "claude-3-5-sonnet-20241022",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "tool_calls": [
+            { "index": 0, "id": "toolu_abc123", "type": "function", "function": { "name": "get_weather", "arguments": "" } }
+          ]
+        },
+        "finish_reason": null
+      }
+    ]
+  },
+  {
+    "id": "msg_tool_001",
+    "object": "chat.completion.chunk",
+    "created": 1704067200,
+    "model": "claude-3-5-sonnet-20241022",
+    "choices": [
+      {
+        "index": 0,
+        "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": "{\"loc" } }] },
+        "finish_reason": null
+      }
+    ]
+  },
+  {
+    "id": "msg_tool_001",
+    "object": "chat.completion.chunk",
+    "created": 1704067200,
+    "model": "claude-3-5-sonnet-20241022",
+    "choices": [
+      {
+        "index": 0,
+        "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": "ation\": \"" } }] },
+        "finish_reason": null
+      }
+    ]
+  },
+  {
+    "id": "msg_tool_001",
+    "object": "chat.completion.chunk",
+    "created": 1704067200,
+    "model": "claude-3-5-sonnet-20241022",
+    "choices": [
+      {
+        "index": 0,
+        "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": "Paris\"}" } }] },
+        "finish_reason": null
+      }
+    ]
+  },
+  {
+    "id": "msg_tool_001",
+    "object": "chat.completion.chunk",
+    "created": 1704067200,
+    "model": "claude-3-5-sonnet-20241022",
+    "choices": [
+      { "index": 0, "delta": {}, "finish_reason": "tool_calls" }
+    ],
+    "usage": { "prompt_tokens": 20, "completion_tokens": 30, "total_tokens": 50 }
+  },
+  "[DONE]"
+]
