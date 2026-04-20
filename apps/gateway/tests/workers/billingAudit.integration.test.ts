@@ -324,9 +324,11 @@ describe("BillingAudit.runOnce", () => {
     expect(mono.value).toBe(0);
   });
 
-  it("5. revoked api_keys are excluded from the sample", async () => {
-    // One active key + one revoked key.  Both would drift if scanned, but
-    // the revoked one must be skipped by the WHERE clause.
+  it("5. revoked api_keys ARE included in the sample (drift stays visible)", async () => {
+    // One active key + one revoked key, both drifted.  An earlier version
+    // of this audit filtered revoked keys out, which created a blind spot
+    // an admin could exploit by revoking a drifted key.  The audit now
+    // samples every key and surfaces drift regardless of revocation state.
     const active = await seedApiKey({ quotaUsedUsd: "0" });
     await seedUsageLog(active.id, "1.0000000000", 0);
     const revoked = await seedApiKey({
@@ -335,12 +337,50 @@ describe("BillingAudit.runOnce", () => {
     });
     await seedUsageLog(revoked.id, "5.0000000000", 0);
 
-    const audit = makeAudit();
+    const drift = recordingCounter();
+    const mono = recordingCounter();
+    const logger = recordingLogger();
+    const audit = makeAudit({ metrics: { drift, mono }, logger });
     const result = await audit.runOnce();
 
-    // Only the active key is in the sample; its drift is detected.
+    // Both keys sampled; both drifted; both surface as drift events.
+    expect(result.sampled).toBe(2);
+    expect(result.drifted).toBe(2);
+    expect(drift.value).toBe(2);
+
+    const warnApiKeyIds = logger.warns
+      .map((w) => (w.obj as { apiKeyId?: string }).apiKeyId)
+      .filter((id): id is string => typeof id === "string");
+    expect(warnApiKeyIds).toContain(active.id);
+    expect(warnApiKeyIds).toContain(revoked.id);
+  });
+
+  it("5b. monotonicity violation on a revoked api_key still surfaces", async () => {
+    // A revoked key with quota charged but no matching usage_logs must
+    // still bump the monotonicity counter — hiding this signal would let
+    // an admin erase billing-integrity issues by revoking the key.
+    const revoked = await seedApiKey({
+      quotaUsedUsd: "1.00000000",
+      revokedAt: new Date(),
+    });
+
+    const drift = recordingCounter();
+    const mono = recordingCounter();
+    const logger = recordingLogger();
+    const audit = makeAudit({ metrics: { drift, mono }, logger });
+
+    const result = await audit.runOnce();
+
     expect(result.sampled).toBe(1);
     expect(result.drifted).toBe(1);
+    expect(result.monotonicityViolations).toBe(1);
+    expect(drift.value).toBe(1);
+    expect(mono.value).toBe(1);
+    expect(logger.errors).toHaveLength(1);
+    expect(logger.errors[0]?.obj).toMatchObject({
+      type: "gw_billing_monotonicity_violation",
+      apiKeyId: revoked.id,
+    });
   });
 
   it("6. Bernoulli sampling: sampleRatio=10 over 200 keys yields ~20 sampled (loose range)", async () => {

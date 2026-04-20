@@ -109,11 +109,11 @@ export interface BillingAuditResult {
 // ── Worker ───────────────────────────────────────────────────────────────────
 
 /**
- * NOTE: Revoked api_keys (revoked_at IS NOT NULL) are excluded from sampling.
- * Drift that existed at the moment of revocation is permanently invisible to
- * this audit. Plan 4D may add a one-time reconciliation at revocation time;
- * until then, operators should manually verify quota_used_usd matches
- * SUM(usage_logs.total_cost) before revoking any high-volume key.
+ * Samples ALL api_keys (active + revoked). Revoked keys don't accumulate
+ * new charges, so their drift signal is stable post-revocation — but it
+ * MUST remain visible in the audit so an admin cannot silently hide a
+ * drifted key by revoking it. Drift found on a revoked key implies a prior
+ * billing-integrity issue and should be reconciled manually.
  */
 export class BillingAudit {
   readonly #db: Database;
@@ -197,7 +197,6 @@ export class BillingAudit {
             0
           ) AS actual_sum
         FROM api_keys ak TABLESAMPLE BERNOULLI(${this.#sampleRatioLiteral})
-        WHERE ak.revoked_at IS NULL
       )
       SELECT
         id::text AS api_key_id,
