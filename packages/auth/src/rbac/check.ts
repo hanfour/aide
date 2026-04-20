@@ -174,8 +174,10 @@ export function can(perm: UserPermissions, action: Action): boolean {
       return rolesAt(perm, "organization", action.orgId).has("org_admin");
     case "api_key.issue_own":
     case "api_key.list_own":
-    case "api_key.revoke":
       return true;
+    case "api_key.revoke":
+      if (action.ownerUserId === perm.userId) return true; // self-revoke
+      return rolesAt(perm, "organization", action.orgId).has("org_admin");
     case "api_key.issue_for_user":
     case "api_key.list_all":
       return rolesAt(perm, "organization", action.orgId).has("org_admin");

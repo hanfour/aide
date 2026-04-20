@@ -49,7 +49,12 @@ export type Action =
   | { type: "api_key.issue_for_user"; orgId: string; targetUserId: string }
   | { type: "api_key.list_own" }
   | { type: "api_key.list_all"; orgId: string }
-  | { type: "api_key.revoke"; apiKeyId: string }
+  | {
+      type: "api_key.revoke";
+      apiKeyId: string;
+      orgId: string;
+      ownerUserId: string;
+    }
   | { type: "usage.read_own" }
   | { type: "usage.read_user"; orgId: string; targetUserId: string }
   | { type: "usage.read_team"; orgId: string; teamId: string }
