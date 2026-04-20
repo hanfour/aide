@@ -19,6 +19,8 @@ export interface GatewayMetrics {
   queueDepth: Gauge<string>;
   queueDlqCount: Gauge<string>;
   usagePersistLostTotal: Counter<string>;
+  billingDriftTotal: Counter<string>;
+  billingMonotonicityViolationTotal: Counter<string>;
 }
 
 declare module "fastify" {
@@ -121,6 +123,25 @@ export const metricsPlugin = fp(async (fastify) => {
     registers: [register],
   });
 
+  // Hourly billing audit (Plan 4A Part 7, Task 7.4) samples 1% of api_keys
+  // and compares SUM(usage_logs.total_cost) against api_keys.quota_used_usd.
+  // Drift > 0.01 USD (in either direction) bumps the drift counter; the
+  // sub-case where quota_used_usd > sum-of-logs (i.e., quota was charged
+  // for a row that no longer exists in usage_logs) is a monotonicity
+  // violation and bumps a separate counter.  Both should stay flat in
+  // steady-state; any non-zero rate is a billing-integrity signal.
+  const billingDriftTotal = new Counter({
+    name: "gw_billing_drift_total",
+    help: "API keys whose |SUM(usage_logs.total_cost) - quota_used_usd| > $0.01",
+    registers: [register],
+  });
+
+  const billingMonotonicityViolationTotal = new Counter({
+    name: "gw_billing_monotonicity_violation_total",
+    help: "API keys where SUM(usage_logs.total_cost) < quota_used_usd (monotonicity violation)",
+    registers: [register],
+  });
+
   // Materialize zero values so unlabeled metrics appear in scrape output
   waitQueueDepth.set(0);
   idempotencyHitTotal.inc(0);
@@ -128,6 +149,8 @@ export const metricsPlugin = fp(async (fastify) => {
   queueDepth.set(0);
   queueDlqCount.set(0);
   usagePersistLostTotal.inc(0);
+  billingDriftTotal.inc(0);
+  billingMonotonicityViolationTotal.inc(0);
   // Histograms appear as _count/_sum=0 without an explicit observation
 
   fastify.decorate("gwMetrics", {
@@ -143,5 +166,7 @@ export const metricsPlugin = fp(async (fastify) => {
     queueDepth,
     queueDlqCount,
     usagePersistLostTotal,
+    billingDriftTotal,
+    billingMonotonicityViolationTotal,
   });
 });
