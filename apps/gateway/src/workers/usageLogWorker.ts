@@ -29,16 +29,22 @@
  *   we don't pull in the dependency.
  */
 
-import { eq, sql, type SQL } from "drizzle-orm";
 import { Worker, type Job, type RedisOptions } from "bullmq";
 import type { Redis } from "ioredis";
-import { apiKeys, usageLogs } from "@aide/db";
 import type { Database } from "@aide/db";
 import {
   USAGE_LOG_QUEUE_NAME,
   USAGE_LOG_QUEUE_PREFIX,
   type UsageLogJobPayload,
 } from "./usageLogQueue.js";
+import { writeUsageLogBatch } from "./writeUsageLogBatch.js";
+
+// Re-export the SQL helpers so existing callers / tests that import them
+// from this module keep working after the Task 7.3 extraction.
+export {
+  groupTotalCostByApiKey,
+  buildNumericSumExpr,
+} from "./writeUsageLogBatch.js";
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
 
@@ -348,121 +354,11 @@ export class UsageLogWorker {
   }
 
   /**
-   * Single-transaction batch write.
-   *
-   * Insert step: one multi-row INSERT INTO usage_logs.  We map every payload
-   * field 1:1 to its column.
-   *
-   * Update step: group payloads by api_key_id, sum totalCost as a string
-   * (concatenated into a SQL fragment), and issue ONE UPDATE per group:
-   *
-   *   UPDATE api_keys
-   *      SET quota_used_usd = quota_used_usd + <sum>::numeric,
-   *          last_used_at   = NOW(),
-   *          updated_at     = NOW()
-   *    WHERE id = <api_key_id>
-   *
-   * Sum-as-string rationale: cost decimals can be up to 10 fractional digits.
-   * Summing in JS via Number() loses precision past ~15 significant digits.
-   * Building `(c1 + c2 + ... + cN)::numeric` lets Postgres do exact-decimal
-   * arithmetic.  We pass each value as a parameterised `sql.placeholder`
-   * equivalent (`${value}`) so injection is impossible.
+   * Single-transaction batch write.  Delegates to the shared
+   * `writeUsageLogBatch` helper so this path and the inline-fallback path
+   * (Task 7.3, in `enqueueUsageLog`) issue identical SQL.
    */
   async #runTxn(payloads: UsageLogJobPayload[]): Promise<void> {
-    await this.#db.transaction(async (tx) => {
-      // 1. Multi-row INSERT into usage_logs.
-      // NOTE: no .onConflictDoNothing() on request_id — if BullMQ misses the
-      // ACK after commit, retry hits UNIQUE(request_id) and the entire retry
-      // batch fails. Plan 4A Task 7.3 (inline fallback) will revisit.
-      await tx.insert(usageLogs).values(
-        payloads.map((p) => ({
-          requestId: p.requestId,
-          userId: p.userId,
-          apiKeyId: p.apiKeyId,
-          accountId: p.accountId,
-          orgId: p.orgId,
-          teamId: p.teamId,
-          requestedModel: p.requestedModel,
-          upstreamModel: p.upstreamModel,
-          platform: p.platform,
-          surface: p.surface,
-          inputTokens: p.inputTokens,
-          outputTokens: p.outputTokens,
-          cacheCreationTokens: p.cacheCreationTokens,
-          cacheReadTokens: p.cacheReadTokens,
-          inputCost: p.inputCost,
-          outputCost: p.outputCost,
-          cacheCreationCost: p.cacheCreationCost,
-          cacheReadCost: p.cacheReadCost,
-          totalCost: p.totalCost,
-          rateMultiplier: p.rateMultiplier,
-          accountRateMultiplier: p.accountRateMultiplier,
-          stream: p.stream,
-          statusCode: p.statusCode,
-          durationMs: p.durationMs,
-          firstTokenMs: p.firstTokenMs,
-          bufferReleasedAtMs: p.bufferReleasedAtMs,
-          upstreamRetries: p.upstreamRetries,
-          failedAccountIds: p.failedAccountIds,
-          userAgent: p.userAgent,
-          ipAddress: p.ipAddress,
-        })),
-      );
-
-      // 2. One UPDATE per distinct api_key_id with the SUMmed totalCost.
-      const grouped = groupTotalCostByApiKey(payloads);
-      for (const [apiKeyId, totals] of grouped.entries()) {
-        const sumExpr = buildNumericSumExpr(totals);
-        await tx
-          .update(apiKeys)
-          .set({
-            quotaUsedUsd: sql`${apiKeys.quotaUsedUsd} + ${sumExpr}`,
-            lastUsedAt: sql`NOW()`,
-            updatedAt: sql`NOW()`,
-          })
-          .where(eq(apiKeys.id, apiKeyId));
-      }
-    });
+    await writeUsageLogBatch(this.#db, payloads);
   }
-}
-
-// ── Internal helpers (exported for unit testing) ─────────────────────────────
-
-/**
- * Group payloads by `apiKeyId`, returning a Map of api_key_id → list of
- * `totalCost` strings to add.  Map iteration order is insertion order, so
- * the resulting UPDATEs are deterministic per batch.
- */
-export function groupTotalCostByApiKey(
-  payloads: UsageLogJobPayload[],
-): Map<string, string[]> {
-  const out = new Map<string, string[]>();
-  for (const p of payloads) {
-    out.set(p.apiKeyId, [...(out.get(p.apiKeyId) ?? []), p.totalCost]);
-  }
-  return out;
-}
-
-/**
- * Build an `sql` fragment of the form `(v1 + v2 + ... + vN)::numeric` where
- * each vᵢ is parameterised. Decimal sums computed in Postgres preserve full
- * `decimal(20,8)` precision; doing the sum in JS via Number addition loses
- * precision past ~15 significant digits.
- *
- * Single-element batches collapse to `(v1)::numeric`, which Postgres folds.
- */
-export function buildNumericSumExpr(values: string[]): SQL<unknown> {
-  if (values.length === 0) {
-    // Defensive — shouldn't happen because groupTotalCostByApiKey only
-    // produces non-empty arrays — but a 0::numeric add is a safe no-op.
-    return sql`0::numeric`;
-  }
-  // Build the expression incrementally so each value is its own parameter.
-  // sql.join would let us interpose ' + ' but using reduce keeps the
-  // parameters explicit and easy to audit.
-  let acc = sql`${values[0]}::numeric`;
-  for (let i = 1; i < values.length; i++) {
-    acc = sql`${acc} + ${values[i]}::numeric`;
-  }
-  return sql`(${acc})`;
 }

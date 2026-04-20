@@ -18,6 +18,7 @@ export interface GatewayMetrics {
   oauthRefreshDeadTotal: Counter<"account_id">;
   queueDepth: Gauge<string>;
   queueDlqCount: Gauge<string>;
+  usagePersistLostTotal: Counter<string>;
 }
 
 declare module "fastify" {
@@ -110,12 +111,23 @@ export const metricsPlugin = fp(async (fastify) => {
     registers: [register],
   });
 
+  // Rare event: BOTH the BullMQ enqueue AND the inline DB fallback failed,
+  // so the usage_logs row was dropped.  Surfaces in dashboards as a
+  // monotonic counter; any non-zero rate should page (Plan 4A Part 7
+  // Section 5.1).
+  const usagePersistLostTotal = new Counter({
+    name: "gw_usage_persist_lost_total",
+    help: "Usage log rows dropped after BullMQ + inline DB write both failed",
+    registers: [register],
+  });
+
   // Materialize zero values so unlabeled metrics appear in scrape output
   waitQueueDepth.set(0);
   idempotencyHitTotal.inc(0);
   stickyHitTotal.inc(0);
   queueDepth.set(0);
   queueDlqCount.set(0);
+  usagePersistLostTotal.inc(0);
   // Histograms appear as _count/_sum=0 without an explicit observation
 
   fastify.decorate("gwMetrics", {
@@ -130,5 +142,6 @@ export const metricsPlugin = fp(async (fastify) => {
     oauthRefreshDeadTotal,
     queueDepth,
     queueDlqCount,
+    usagePersistLostTotal,
   });
 });

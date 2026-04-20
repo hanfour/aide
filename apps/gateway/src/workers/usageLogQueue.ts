@@ -25,6 +25,8 @@
 import { Queue, type JobsOptions, type RedisOptions } from "bullmq";
 import type { Redis } from "ioredis";
 import { z } from "zod";
+import type { Database } from "@aide/db";
+import { writeUsageLogBatch } from "./writeUsageLogBatch.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -211,6 +213,48 @@ export function createUsageLogQueue(
 export interface EnqueueUsageLogResult {
   /** The BullMQ job ID — equals `payload.requestId` for dedup. */
   jobId: string;
+  /**
+   * How the row was persisted.  `"queued"` is the normal happy path
+   * (handed off to BullMQ).  `"inline"` means `queue.add` failed and the
+   * fallback wrote the row directly inside this call.
+   */
+  persistence: "queued" | "inline";
+}
+
+/**
+ * Pino-style logger surface used by the fallback.  Mirrors the shape used by
+ * `UsageLogWorker` so callers can pass `fastify.log` directly.
+ */
+export interface UsageLogFallbackLogger {
+  error: (obj: unknown, msg?: string) => void;
+}
+
+/**
+ * Subset of `prom-client.Counter` we touch in the fallback's "lost" branch.
+ * Concrete counter is `gw_usage_persist_lost_total` in `plugins/metrics.ts`;
+ * tests can pass any object that satisfies this shape.  Optional so callers
+ * that don't care about metrics (e.g., tests) can skip wiring one up.
+ */
+export interface UsageLogFallbackMetrics {
+  persistLostInc: () => void;
+}
+
+/**
+ * Inline-DB fallback wiring (Plan 4A Part 7, Task 7.3).
+ *
+ * When provided, `enqueueUsageLog` will catch BullMQ enqueue failures and
+ * write the validated payload directly to Postgres inside a fresh
+ * transaction (via `writeUsageLogBatch`).  When omitted, the original
+ * behaviour holds — `queue.add` rejections propagate to the caller.
+ *
+ * Callers that want fallback behaviour MUST supply both `db` and `logger`.
+ * `metrics` is optional (the persistLost counter is rare-event telemetry,
+ * not load-bearing for correctness).
+ */
+export interface UsageLogEnqueueFallback {
+  db: Database;
+  logger: UsageLogFallbackLogger;
+  metrics?: UsageLogFallbackMetrics;
 }
 
 export interface EnqueueUsageLogOptions {
@@ -224,6 +268,13 @@ export interface EnqueueUsageLogOptions {
    * fallback paths; production callers should pass nothing.
    */
   jobOptions?: JobsOptions;
+  /**
+   * Inline-DB fallback wiring.  When provided, `queue.add` failures are
+   * caught and the row is written via `writeUsageLogBatch` instead.  When
+   * omitted, `queue.add` errors propagate (backward compatible with the
+   * Task 7.1 callsite that doesn't have a DB handle).
+   */
+  fallback?: UsageLogEnqueueFallback;
 }
 
 /**
@@ -237,10 +288,19 @@ export interface EnqueueUsageLogOptions {
  *   retention.
  * - On Zod validation failure this throws — callers should treat that as a
  *   programmer error (the route assembled a bad payload), not a transient
- *   condition. Surface the ZodError details in logs.
- * - On Redis-side failure the underlying `queue.add` rejection bubbles out.
- *   The future Task 7.3 inline-DB-fallback path is the right place to catch
- *   that and write the row directly.
+ *   condition. Surface the ZodError details in logs.  Validation runs
+ *   BEFORE the `queue.add` attempt so a bad payload never triggers the
+ *   fallback path.
+ * - On Redis-side failure (`queue.add` rejects):
+ *     * If `opts.fallback` is provided, the validated payload is written
+ *       directly via `writeUsageLogBatch` in a fresh txn.  Success returns
+ *       `{ persistence: "inline" }`.  Inline failure logs a structured
+ *       `gw_usage_persist_lost` error, increments the optional metric, and
+ *       re-throws the ORIGINAL BullMQ enqueue error (the inline error is
+ *       attached as the log entry's `persistError` field — callers see the
+ *       proximate Redis cause, not the secondary DB cause, which keeps
+ *       upstream classification stable).
+ *     * If `opts.fallback` is omitted, the rejection propagates unchanged.
  */
 export async function enqueueUsageLog(
   queue: QueueLike,
@@ -252,6 +312,45 @@ export async function enqueueUsageLog(
     ...(opts.jobOptions ?? {}),
     jobId: validated.requestId,
   };
-  await queue.add(USAGE_LOG_JOB_NAME, validated, jobOptions);
-  return { jobId: validated.requestId };
+
+  try {
+    await queue.add(USAGE_LOG_JOB_NAME, validated, jobOptions);
+    return { jobId: validated.requestId, persistence: "queued" };
+  } catch (enqueueError) {
+    // No fallback configured — preserve the original Task 7.1 behaviour and
+    // let the caller deal with the enqueue failure.
+    if (opts.fallback === undefined) {
+      throw enqueueError;
+    }
+
+    const { db, logger, metrics } = opts.fallback;
+    try {
+      await writeUsageLogBatch(db, [validated]);
+      return { jobId: validated.requestId, persistence: "inline" };
+    } catch (persistError) {
+      // Both BullMQ AND the inline DB write failed — the row is lost.  Emit
+      // a structured log so an operator can replay from the request log if
+      // necessary, bump the rare-event counter, and re-throw the original
+      // enqueue error.  Re-throwing the BullMQ error (rather than a wrapped
+      // "persist lost" error) keeps the caller's error-classification logic
+      // stable: callers already handle Redis-side failures of this call.
+      logger.error(
+        {
+          type: "gw_usage_persist_lost",
+          payload: validated,
+          enqueueError:
+            enqueueError instanceof Error
+              ? enqueueError.message
+              : String(enqueueError),
+          persistError:
+            persistError instanceof Error
+              ? persistError.message
+              : String(persistError),
+        },
+        "usage log persist lost",
+      );
+      metrics?.persistLostInc?.();
+      throw enqueueError;
+    }
+  }
 }

@@ -232,12 +232,17 @@ describe("enqueueUsageLog", () => {
     expect(opts.removeOnFail).toBeUndefined();
   });
 
-  it("returns { jobId } matching payload.requestId", async () => {
+  it("returns { jobId, persistence: 'queued' } on the happy path", async () => {
+    // persistence='queued' is the Task 7.3 marker that the row was handed
+    // off to BullMQ (vs written inline by the fallback path).
     const result = await enqueueUsageLog(
       fake.queue,
       validPayload({ requestId: "req_returned_id" }),
     );
-    expect(result).toEqual({ jobId: "req_returned_id" });
+    expect(result).toEqual({
+      jobId: "req_returned_id",
+      persistence: "queued",
+    });
   });
 
   it("rejects payloads missing required fields (Zod validation)", async () => {
@@ -247,7 +252,9 @@ describe("enqueueUsageLog", () => {
   });
 
   it("rejects payloads with non-decimal cost strings", async () => {
-    const bad = validPayload({ totalCost: "not-a-number" as unknown as string });
+    const bad = validPayload({
+      totalCost: "not-a-number" as unknown as string,
+    });
     await expect(enqueueUsageLog(fake.queue, bad)).rejects.toThrow(
       /decimal-formatted/,
     );
@@ -283,6 +290,7 @@ describe("enqueueUsageLog", () => {
     });
     await expect(enqueueUsageLog(fake.queue, payload)).resolves.toEqual({
       jobId: payload.requestId,
+      persistence: "queued",
     });
   });
 
@@ -290,9 +298,9 @@ describe("enqueueUsageLog", () => {
     const failing: QueueLike = {
       add: vi.fn().mockRejectedValue(new Error("ECONNREFUSED")),
     };
-    await expect(
-      enqueueUsageLog(failing, validPayload()),
-    ).rejects.toThrow(/ECONNREFUSED/);
+    await expect(enqueueUsageLog(failing, validPayload())).rejects.toThrow(
+      /ECONNREFUSED/,
+    );
   });
 
   it("per-call jobOptions are passed through verbatim, but jobId is always derived from payload.requestId", async () => {
