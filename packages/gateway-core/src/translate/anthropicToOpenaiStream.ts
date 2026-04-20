@@ -1,123 +1,42 @@
 // Anthropic SSE → OpenAI SSE streaming translator.
 // Consumes parsed Anthropic SSE events and yields OpenAI-compatible chunks.
 
-// ---------------------------------------------------------------------------
-// Anthropic SSE event types
-// ---------------------------------------------------------------------------
+import type { AnthropicSSEEvent } from "../stream/anthropicSseParser.js";
 
-interface MessageStartUsage {
-  input_tokens: number
-  output_tokens: number
-  cache_creation_input_tokens?: number
-  cache_read_input_tokens?: number
-}
-
-interface MessageStartEvent {
-  type: 'message_start'
-  message: {
-    id: string
-    model: string
-    role: 'assistant'
-    content: []
-    stop_reason: null
-    stop_sequence: null
-    usage: MessageStartUsage
-  }
-}
-
-interface ContentBlockStartTextEvent {
-  type: 'content_block_start'
-  index: number
-  content_block: { type: 'text'; text: '' }
-}
-
-interface ContentBlockStartToolUseEvent {
-  type: 'content_block_start'
-  index: number
-  content_block: { type: 'tool_use'; id: string; name: string; input: Record<string, never> }
-}
-
-type ContentBlockStartEvent = ContentBlockStartTextEvent | ContentBlockStartToolUseEvent
-
-interface ContentBlockDeltaTextEvent {
-  type: 'content_block_delta'
-  index: number
-  delta: { type: 'text_delta'; text: string }
-}
-
-interface ContentBlockDeltaJsonEvent {
-  type: 'content_block_delta'
-  index: number
-  delta: { type: 'input_json_delta'; partial_json: string }
-}
-
-type ContentBlockDeltaEvent = ContentBlockDeltaTextEvent | ContentBlockDeltaJsonEvent
-
-interface ContentBlockStopEvent {
-  type: 'content_block_stop'
-  index: number
-}
-
-interface MessageDeltaEvent {
-  type: 'message_delta'
-  delta: {
-    stop_reason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use'
-    stop_sequence: string | null
-  }
-  usage: { output_tokens: number }
-}
-
-interface MessageStopEvent {
-  type: 'message_stop'
-}
-
-interface ErrorEvent {
-  type: 'error'
-  error: { type: string; message: string }
-}
-
-interface PingEvent {
-  type: 'ping'
-}
-
-export type AnthropicSSEEvent =
-  | MessageStartEvent
-  | ContentBlockStartEvent
-  | ContentBlockDeltaEvent
-  | ContentBlockStopEvent
-  | MessageDeltaEvent
-  | MessageStopEvent
-  | ErrorEvent
-  | PingEvent
+export type { AnthropicSSEEvent };
 
 // ---------------------------------------------------------------------------
 // OpenAI stream chunk type
 // ---------------------------------------------------------------------------
 
 interface ToolCallDelta {
-  index: number
-  id?: string
-  type?: 'function'
-  function?: { name?: string; arguments?: string }
+  index: number;
+  id?: string;
+  type?: "function";
+  function?: { name?: string; arguments?: string };
 }
 
 interface StreamDelta {
-  role?: 'assistant'
-  content?: string | null
-  tool_calls?: ToolCallDelta[]
+  role?: "assistant";
+  content?: string | null;
+  tool_calls?: ToolCallDelta[];
 }
 
 export interface OpenAIStreamChunk {
-  id: string
-  object: 'chat.completion.chunk'
-  created: number
-  model: string
+  id: string;
+  object: "chat.completion.chunk";
+  created: number;
+  model: string;
   choices: Array<{
-    index: 0
-    delta: StreamDelta
-    finish_reason: null | 'stop' | 'length' | 'tool_calls' | 'content_filter'
-  }>
-  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
+    index: 0;
+    delta: StreamDelta;
+    finish_reason: null | "stop" | "length" | "tool_calls" | "content_filter";
+  }>;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -126,28 +45,28 @@ export interface OpenAIStreamChunk {
 // ---------------------------------------------------------------------------
 
 interface TranslatorState {
-  id: string
-  model: string
-  inputTokens: number
-  cacheCreationInputTokens: number
-  cacheReadInputTokens: number
-  outputTokens: number
+  id: string;
+  model: string;
+  inputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  outputTokens: number;
   /** Anthropic block index → OpenAI tool_calls array index */
-  toolCallIndexByBlock: Map<number, number>
-  nextToolCallIndex: number
-  stopReason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | null
+  toolCallIndexByBlock: Map<number, number>;
+  nextToolCallIndex: number;
+  stopReason: "end_turn" | "max_tokens" | "stop_sequence" | "tool_use" | null;
 }
 
 // ---------------------------------------------------------------------------
 // Finish reason mapping
 // ---------------------------------------------------------------------------
 
-const FINISH_REASON_MAP: Record<string, 'stop' | 'length' | 'tool_calls'> = {
-  end_turn: 'stop',
-  stop_sequence: 'stop',
-  max_tokens: 'length',
-  tool_use: 'tool_calls',
-}
+const FINISH_REASON_MAP: Record<string, "stop" | "length" | "tool_calls"> = {
+  end_turn: "stop",
+  stop_sequence: "stop",
+  max_tokens: "length",
+  tool_use: "tool_calls",
+};
 
 // ---------------------------------------------------------------------------
 // Main generator
@@ -165,12 +84,12 @@ const FINISH_REASON_MAP: Record<string, 'stop' | 'length' | 'tool_calls'> = {
 export async function* translateAnthropicStreamToOpenAI(
   events: AsyncIterable<AnthropicSSEEvent>,
   opts: { now?: () => number } = {},
-): AsyncGenerator<OpenAIStreamChunk | '[DONE]', void, void> {
-  const now = opts.now ?? (() => Math.floor(Date.now() / 1000))
+): AsyncGenerator<OpenAIStreamChunk | "[DONE]", void, void> {
+  const now = opts.now ?? (() => Math.floor(Date.now() / 1000));
 
   const state: TranslatorState = {
-    id: '',
-    model: '',
+    id: "",
+    model: "",
     inputTokens: 0,
     cacheCreationInputTokens: 0,
     cacheReadInputTokens: 0,
@@ -178,29 +97,31 @@ export async function* translateAnthropicStreamToOpenAI(
     toolCallIndexByBlock: new Map(),
     nextToolCallIndex: 0,
     stopReason: null,
-  }
+  };
 
   for await (const event of events) {
     switch (event.type) {
-      case 'message_start': {
-        state.id = event.message.id
-        state.model = event.message.model
-        state.inputTokens = event.message.usage.input_tokens
-        state.cacheCreationInputTokens = event.message.usage.cache_creation_input_tokens ?? 0
-        state.cacheReadInputTokens = event.message.usage.cache_read_input_tokens ?? 0
+      case "message_start": {
+        state.id = event.message.id;
+        state.model = event.message.model;
+        state.inputTokens = event.message.usage.input_tokens;
+        state.cacheCreationInputTokens =
+          event.message.usage.cache_creation_input_tokens ?? 0;
+        state.cacheReadInputTokens =
+          event.message.usage.cache_read_input_tokens ?? 0;
 
         yield buildChunk(state, now(), {
-          delta: { role: 'assistant', content: '' },
+          delta: { role: "assistant", content: "" },
           finish_reason: null,
-        })
-        break
+        });
+        break;
       }
 
-      case 'content_block_start': {
-        if (event.content_block.type === 'tool_use') {
-          const toolCallIndex = state.nextToolCallIndex
-          state.toolCallIndexByBlock.set(event.index, toolCallIndex)
-          state.nextToolCallIndex += 1
+      case "content_block_start": {
+        if (event.content_block.type === "tool_use") {
+          const toolCallIndex = state.nextToolCallIndex;
+          state.toolCallIndexByBlock.set(event.index, toolCallIndex);
+          state.nextToolCallIndex += 1;
 
           yield buildChunk(state, now(), {
             delta: {
@@ -208,58 +129,66 @@ export async function* translateAnthropicStreamToOpenAI(
                 {
                   index: toolCallIndex,
                   id: event.content_block.id,
-                  type: 'function',
-                  function: { name: event.content_block.name, arguments: '' },
+                  type: "function",
+                  function: { name: event.content_block.name, arguments: "" },
                 },
               ],
             },
             finish_reason: null,
-          })
+          });
         }
         // text blocks: no output chunk — wait for deltas
-        break
+        break;
       }
 
-      case 'content_block_delta': {
-        if (event.delta.type === 'text_delta') {
+      case "content_block_delta": {
+        if (event.delta.type === "text_delta") {
           yield buildChunk(state, now(), {
             delta: { content: event.delta.text },
             finish_reason: null,
-          })
-        } else if (event.delta.type === 'input_json_delta') {
-          const toolCallIndex = state.toolCallIndexByBlock.get(event.index)
+          });
+        } else if (event.delta.type === "input_json_delta") {
+          const toolCallIndex = state.toolCallIndexByBlock.get(event.index);
           if (toolCallIndex === undefined) {
             throw new Error(
               `input_json_delta for unknown block index ${event.index}`,
-            )
+            );
           }
           yield buildChunk(state, now(), {
             delta: {
-              tool_calls: [{ index: toolCallIndex, function: { arguments: event.delta.partial_json } }],
+              tool_calls: [
+                {
+                  index: toolCallIndex,
+                  function: { arguments: event.delta.partial_json },
+                },
+              ],
             },
             finish_reason: null,
-          })
+          });
         }
-        break
+        break;
       }
 
-      case 'content_block_stop':
-      case 'ping': {
+      case "content_block_stop":
+      case "ping": {
         // No output — intentionally dropped
-        break
+        break;
       }
 
-      case 'message_delta': {
-        state.stopReason = event.delta.stop_reason
-        state.outputTokens = event.usage.output_tokens
-        break
+      case "message_delta": {
+        state.stopReason = event.delta.stop_reason;
+        state.outputTokens = event.usage.output_tokens;
+        break;
       }
 
-      case 'message_stop': {
-        const finishReason = FINISH_REASON_MAP[state.stopReason ?? ''] ?? 'stop'
+      case "message_stop": {
+        const finishReason =
+          FINISH_REASON_MAP[state.stopReason ?? ""] ?? "stop";
         const promptTokens =
-          state.inputTokens + state.cacheCreationInputTokens + state.cacheReadInputTokens
-        const completionTokens = state.outputTokens
+          state.inputTokens +
+          state.cacheCreationInputTokens +
+          state.cacheReadInputTokens;
+        const completionTokens = state.outputTokens;
 
         yield buildChunk(state, now(), {
           delta: {},
@@ -269,16 +198,16 @@ export async function* translateAnthropicStreamToOpenAI(
             completion_tokens: completionTokens,
             total_tokens: promptTokens + completionTokens,
           },
-        })
+        });
 
-        yield '[DONE]'
-        return
+        yield "[DONE]";
+        return;
       }
 
-      case 'error': {
+      case "error": {
         throw new Error(
           `upstream stream error: ${event.error.type}: ${event.error.message}`,
-        )
+        );
       }
     }
   }
@@ -292,14 +221,14 @@ function buildChunk(
   state: Readonly<TranslatorState>,
   created: number,
   payload: {
-    delta: StreamDelta
-    finish_reason: OpenAIStreamChunk['choices'][0]['finish_reason']
-    usage?: OpenAIStreamChunk['usage']
+    delta: StreamDelta;
+    finish_reason: OpenAIStreamChunk["choices"][0]["finish_reason"];
+    usage?: OpenAIStreamChunk["usage"];
   },
 ): OpenAIStreamChunk {
   const chunk: OpenAIStreamChunk = {
     id: state.id,
-    object: 'chat.completion.chunk',
+    object: "chat.completion.chunk",
     created,
     model: state.model,
     choices: [
@@ -309,11 +238,11 @@ function buildChunk(
         finish_reason: payload.finish_reason,
       },
     ],
-  }
+  };
 
   if (payload.usage !== undefined) {
-    chunk.usage = payload.usage
+    chunk.usage = payload.usage;
   }
 
-  return chunk
+  return chunk;
 }
