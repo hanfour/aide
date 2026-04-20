@@ -5,11 +5,15 @@ Session paused after Part 6 (PR #7) submitted with 2 review fixes landed. Resume
 ## Repo state
 
 - Working dir: `/Users/hanfourhuang/ai-dev-eval`
-- Main branch: `main` at `ba8fb45` (PR #6 / Part 5 merged)
-- Current branch: `feat/plan-4a-part-6-streaming` at `730af55` (PR #7 / Part 6 + fixes; **OPEN, awaiting merge**)
-- Open PR: https://github.com/hanfour/aide/pull/7
+- Main branch: `main` at `852cfa4` (PR #7 merged + this handoff doc on top)
+- No active branch
+- All 7 PRs (#4–#7) for Parts 1-6 merged
 
-**Before starting Part 7:** wait for PR #7 to merge to main, then `git checkout main && git pull && git checkout -b feat/plan-4a-part-7-usage-log`.
+**To start Part 7:**
+```bash
+git checkout main && git pull
+git checkout -b feat/plan-4a-part-7-usage-log
+```
 
 ## Design + implementation plan
 
@@ -24,10 +28,7 @@ Session paused after Part 6 (PR #7) submitted with 2 review fixes landed. Resume
 - **PR #5** — Part 3 (4) + Part 4 (6): Fastify scaffold + env + apiKeyAuth + metrics + Redis layer (slots/wait/idem/sticky/failureMode)
 - **PR #6** — Part 5 (4): selectAccounts, resolveCredential, undici upstream, /v1/messages MVP
 
-### Open PR (Part 6 — awaiting merge)
-
-- **PR #7** — Part 6 (7 tasks): SSE parser, smart buffer, failover loop, OAuth inline refresh, OAuth cron, /v1/chat/completions, streaming on /v1/messages
-- 7 commits + 1 fix commit (`730af55`); 119 unit + 71 integration (+1 skip) tests; ~5000 LOC diff
+- **PR #7** — Part 6 (7 tasks): SSE parser, smart buffer, failover loop, OAuth inline refresh, OAuth cron, /v1/chat/completions, streaming on /v1/messages. 7 commits + 1 fix commit (`730af55`); 119 unit + 71 integration (+1 skip) tests; ~5000 LOC diff
 
 ### Parts remaining (19 tasks across 7 parts)
 
@@ -86,13 +87,11 @@ Grep `TODO(part-` in `apps/gateway/src/`:
 
 ```
 繼續 Plan 4A。讀 .claude/plans/2026-04-20-plan-4a-parts-7-13-handoff.md.
-1. 確認 PR #7 (https://github.com/hanfour/aide/pull/7) 已 merge 到 main
-2. git checkout main && git pull && git checkout -b feat/plan-4a-part-7-usage-log
+1. git checkout main && git pull
+2. git checkout -b feat/plan-4a-part-7-usage-log
 3. 從 Part 7 Task 7.1 開始（BullMQ queue + usage-log job schema）
 4. 繼續 subagent-driven 模式（implementer → spec reviewer → code quality reviewer）
 ```
-
-If PR #7 is NOT yet merged when resuming: review it first, address any new findings on `feat/plan-4a-part-6-streaming`, then push, then merge.
 
 ## Checks to run at Part boundaries
 
