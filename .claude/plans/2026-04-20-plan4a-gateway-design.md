@@ -97,7 +97,9 @@ apps/api  (Fastify, :3001)            apps/gateway  (Fastify, :3002)
 
 4 new tables in `packages/db/src/schema/`, one migration `0005_gateway_schema.sql`.
 
-### 2.1 `accounts` (upstream AI account pool)
+### 2.1 `upstream_accounts` (upstream AI account pool)
+
+> **Naming note:** DB table is `upstream_accounts` / TS symbol is `upstreamAccounts`. Renamed from the original draft `accounts` during implementation because NextAuth's adapter already reserved `accounts` (user OAuth credentials). Product-level vocabulary (RBAC action names, tRPC router namespace, UI labels) continues to say "account" / "accounts" — only the DB table + TS schema symbol carry the `upstream_` prefix.
 
 ```
 id                        uuid PK (uuidv7)

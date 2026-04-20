@@ -157,7 +157,7 @@ Expected: FAIL with module-not-found.
 // packages/db/src/schema/credentialVault.ts
 import { pgTable, uuid, customType, timestamp, index, uniqueIndex } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
-import { accounts } from './accounts.js'
+import { upstreamAccounts } from './accounts.js'
 
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({
   dataType() { return 'bytea' },
@@ -165,7 +165,7 @@ const bytea = customType<{ data: Buffer; driverData: Buffer }>({
 
 export const credentialVault = pgTable('credential_vault', {
   id: uuid('id').primaryKey().default(sql`uuidv7()`),
-  accountId: uuid('account_id').notNull().unique().references(() => accounts.id, { onDelete: 'cascade' }),
+  accountId: uuid('account_id').notNull().unique().references(() => upstreamAccounts.id, { onDelete: 'cascade' }),
   nonce: bytea('nonce').notNull(),
   ciphertext: bytea('ciphertext').notNull(),
   authTag: bytea('auth_tag').notNull(),
@@ -335,14 +335,14 @@ import { pgTable, uuid, text, integer, bigserial, timestamp, decimal, boolean, i
 import { users } from './auth.js'
 import { organizations, teams } from './org.js'
 import { apiKeys } from './apiKeys.js'
-import { accounts } from './accounts.js'
+import { upstreamAccounts } from './accounts.js'
 
 export const usageLogs = pgTable('usage_logs', {
   id: bigserial('id', { mode: 'bigint' }).primaryKey(),
   requestId: text('request_id').notNull().unique(),
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
   apiKeyId: uuid('api_key_id').notNull().references(() => apiKeys.id, { onDelete: 'restrict' }),
-  accountId: uuid('account_id').notNull().references(() => accounts.id, { onDelete: 'restrict' }),
+  accountId: uuid('account_id').notNull().references(() => upstreamAccounts.id, { onDelete: 'restrict' }),
   orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'restrict' }),
   teamId: uuid('team_id').references(() => teams.id, { onDelete: 'set null' }),
   requestedModel: text('requested_model').notNull(),
@@ -412,13 +412,13 @@ import { join } from 'path'
 describe('migration 0005_gateway_schema', () => {
   const sql = readFileSync(join(__dirname, '../../drizzle/0005_gateway_schema.sql'), 'utf8')
   it('creates the 4 new tables', () => {
-    expect(sql).toMatch(/CREATE TABLE "accounts"/)
+    expect(sql).toMatch(/CREATE TABLE "upstream_accounts"/)
     expect(sql).toMatch(/CREATE TABLE "credential_vault"/)
     expect(sql).toMatch(/CREATE TABLE "api_keys"/)
     expect(sql).toMatch(/CREATE TABLE "usage_logs"/)
   })
   it('creates hot-path indexes', () => {
-    expect(sql).toMatch(/CREATE INDEX.*accounts_select_idx/)
+    expect(sql).toMatch(/CREATE INDEX.*upstream_accounts_select_idx/)
     expect(sql).toMatch(/CREATE INDEX.*usage_logs_user_time_idx/)
   })
 })
