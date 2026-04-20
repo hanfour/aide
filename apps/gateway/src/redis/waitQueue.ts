@@ -1,11 +1,8 @@
 import type { Redis } from "ioredis";
 import { ENQUEUE_WAIT_LUA } from "./lua/enqueueWait.js";
+import { keys } from "./keys.js";
 
 // TODO(part-7): emit gw_wait_queue_depth gauge (design 4.9)
-
-function waitKey(userId: string): string {
-  return `wait:user:${userId}`;
-}
 
 /**
  * Atomically enqueues a request into a user's wait queue ZSET.
@@ -30,7 +27,7 @@ export async function enqueueWait(
   const result = (await redis.eval(
     ENQUEUE_WAIT_LUA,
     1,
-    waitKey(userId),
+    keys.wait(userId),
     String(Date.now()),
     requestId,
     String(maxWait),
@@ -52,5 +49,5 @@ export async function dequeueWait(
   userId: string,
   requestId: string,
 ): Promise<void> {
-  await redis.zrem(waitKey(userId), requestId);
+  await redis.zrem(keys.wait(userId), requestId);
 }

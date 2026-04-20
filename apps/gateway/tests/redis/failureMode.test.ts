@@ -54,7 +54,7 @@ describe("withRedis", () => {
       null,
     );
     expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ err: "oops", label: "sticky:get" }),
+      expect.objectContaining({ err: expect.any(Error), label: "sticky:get" }),
       expect.any(String),
     );
   });
@@ -63,5 +63,14 @@ describe("withRedis", () => {
     await expect(
       withRedis({ mode: "lenient" }, async () => { throw new Error(); }, "ok"),
     ).resolves.toBe("ok");
+  });
+
+  it("re-throws non-Error throwables with String() coercion", async () => {
+    await expect(
+      withRedis({ mode: "strict", label: "test:string-throw" }, async () => { throw "boom"; }, "fb"),
+    ).rejects.toMatchObject({
+      name: "ServiceDegraded",
+      cause: expect.objectContaining({ message: "boom" }),
+    });
   });
 });

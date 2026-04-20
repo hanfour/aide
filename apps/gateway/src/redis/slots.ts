@@ -1,5 +1,6 @@
 import type { Redis } from "ioredis";
 import { ACQUIRE_SLOT_LUA } from "./lua/acquireSlot.js";
+import { keys } from "./keys.js";
 
 // TODO(part-7): emit gw_slot_acquire_total{scope, result} counter (design 4.9)
 // TODO(perf): migrate from EVAL to defineCommand+EVALSHA when call rate warrants
@@ -13,7 +14,8 @@ import { ACQUIRE_SLOT_LUA } from "./lua/acquireSlot.js";
  *   3. If under limit, add (expiry_ms, requestId) and set a 300s safety EXPIRE
  *
  * @param redis     - ioredis client (keyPrefix is applied transparently)
- * @param key       - ZSET key without the keyPrefix (e.g. "slots:user:abc-123")
+ * @param scope     - Slot scope: "user" or "account" (design 4.1)
+ * @param id        - User or account identifier
  * @param requestId - Unique identifier for this request/slot
  * @param limit     - Maximum number of concurrent slots allowed
  * @param durationMs - How long (ms) this slot is valid for
@@ -21,11 +23,13 @@ import { ACQUIRE_SLOT_LUA } from "./lua/acquireSlot.js";
  */
 export async function acquireSlot(
   redis: Redis,
-  key: string,
+  scope: "user" | "account",
+  id: string,
   requestId: string,
   limit: number,
   durationMs: number,
 ): Promise<boolean> {
+  const key = keys.slots(scope, id);
   const now = Date.now();
   const result = (await redis.eval(
     ACQUIRE_SLOT_LUA,
@@ -46,13 +50,15 @@ export async function acquireSlot(
  * score cleans up stale members on the next acquire call.
  *
  * @param redis     - ioredis client
- * @param key       - ZSET key without the keyPrefix
+ * @param scope     - Slot scope: "user" or "account" (design 4.1)
+ * @param id        - User or account identifier
  * @param requestId - The same requestId used during acquireSlot
  */
 export async function releaseSlot(
   redis: Redis,
-  key: string,
+  scope: "user" | "account",
+  id: string,
   requestId: string,
 ): Promise<void> {
-  await redis.zrem(key, requestId);
+  await redis.zrem(keys.slots(scope, id), requestId);
 }

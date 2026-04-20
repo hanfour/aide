@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import RedisMock from "ioredis-mock";
 import type { Redis } from "ioredis";
 import {
@@ -41,9 +41,20 @@ describe("idempotency", () => {
     }
   });
 
-  it("malformed JSON returns null", async () => {
+  it("malformed JSON returns null and calls logger.warn when logger provided", async () => {
+    const warn = vi.fn();
     await redis.set("idem:bad", "this is not json", "EX", 60);
-    expect(await getCached(redis, "bad")).toBeNull();
+    const result = await getCached(redis, "bad", { logger: { warn } });
+    expect(result).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: "bad" }),
+      "idempotency cache entry malformed; treating as miss",
+    );
+  });
+
+  it("malformed JSON returns null without throwing when no logger provided", async () => {
+    await redis.set("idem:bad-nolog", "this is not json", "EX", 60);
+    await expect(getCached(redis, "bad-nolog")).resolves.toBeNull();
   });
 
   it("setCached respects ttlSec", async () => {
