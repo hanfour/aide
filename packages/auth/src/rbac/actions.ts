@@ -1,42 +1,56 @@
 export type Role =
-  | 'super_admin'
-  | 'org_admin'
-  | 'dept_manager'
-  | 'team_manager'
-  | 'member'
+  | "super_admin"
+  | "org_admin"
+  | "dept_manager"
+  | "team_manager"
+  | "member";
 
-export type ScopeType = 'global' | 'organization' | 'department' | 'team'
+export type ScopeType = "global" | "organization" | "department" | "team";
 
 export const ROLE_RANK: Record<Role, number> = {
   super_admin: 50,
   org_admin: 40,
   dept_manager: 30,
   team_manager: 20,
-  member: 10
-}
+  member: 10,
+};
 
 export type Action =
-  | { type: 'org.read'; orgId: string }
-  | { type: 'org.update'; orgId: string }
-  | { type: 'org.create' }
-  | { type: 'org.delete'; orgId: string }
-  | { type: 'dept.read'; orgId: string; deptId: string }
-  | { type: 'dept.create'; orgId: string }
-  | { type: 'dept.update'; orgId: string; deptId: string }
-  | { type: 'dept.delete'; orgId: string; deptId: string }
-  | { type: 'team.read'; teamId: string }
-  | { type: 'team.create'; orgId: string; deptId?: string }
-  | { type: 'team.update'; teamId: string }
-  | { type: 'team.delete'; teamId: string }
-  | { type: 'team.add_member'; teamId: string }
-  | { type: 'user.read'; targetUserId: string }
-  | { type: 'user.invite'; orgId: string; deptId?: string; teamId?: string }
+  | { type: "org.read"; orgId: string }
+  | { type: "org.update"; orgId: string }
+  | { type: "org.create" }
+  | { type: "org.delete"; orgId: string }
+  | { type: "dept.read"; orgId: string; deptId: string }
+  | { type: "dept.create"; orgId: string }
+  | { type: "dept.update"; orgId: string; deptId: string }
+  | { type: "dept.delete"; orgId: string; deptId: string }
+  | { type: "team.read"; teamId: string }
+  | { type: "team.create"; orgId: string; deptId?: string }
+  | { type: "team.update"; teamId: string }
+  | { type: "team.delete"; teamId: string }
+  | { type: "team.add_member"; teamId: string }
+  | { type: "user.read"; targetUserId: string }
+  | { type: "user.invite"; orgId: string; deptId?: string; teamId?: string }
   | {
-      type: 'role.grant'
-      targetUserId: string
-      role: Role
-      scopeType: ScopeType
-      scopeId: string | null
+      type: "role.grant";
+      targetUserId: string;
+      role: Role;
+      scopeType: ScopeType;
+      scopeId: string | null;
     }
-  | { type: 'role.revoke'; assignmentOwnerId: string }
-  | { type: 'audit.read'; orgId: string; deptId?: string }
+  | { type: "role.revoke"; assignmentOwnerId: string }
+  | { type: "audit.read"; orgId: string; deptId?: string }
+  | { type: "account.read"; orgId: string }
+  | { type: "account.create"; orgId: string; teamId: string | null }
+  | { type: "account.update"; orgId: string; accountId: string }
+  | { type: "account.rotate"; orgId: string; accountId: string }
+  | { type: "account.delete"; orgId: string; accountId: string }
+  | { type: "api_key.issue_own" }
+  | { type: "api_key.issue_for_user"; orgId: string; targetUserId: string }
+  | { type: "api_key.list_own" }
+  | { type: "api_key.list_all"; orgId: string }
+  | { type: "api_key.revoke"; apiKeyId: string }
+  | { type: "usage.read_own" }
+  | { type: "usage.read_user"; orgId: string; targetUserId: string }
+  | { type: "usage.read_team"; orgId: string; teamId: string }
+  | { type: "usage.read_org"; orgId: string };

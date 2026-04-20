@@ -166,5 +166,30 @@ export function can(perm: UserPermissions, action: Action): boolean {
         );
       }
       return rolesAt(perm, "organization", action.orgId).has("org_admin");
+    case "account.read":
+    case "account.create":
+    case "account.update":
+    case "account.rotate":
+    case "account.delete":
+      return rolesAt(perm, "organization", action.orgId).has("org_admin");
+    case "api_key.issue_own":
+    case "api_key.list_own":
+    case "api_key.revoke":
+      return true;
+    case "api_key.issue_for_user":
+    case "api_key.list_all":
+      return rolesAt(perm, "organization", action.orgId).has("org_admin");
+    case "usage.read_own":
+      return true;
+    case "usage.read_user":
+      if (action.targetUserId === perm.userId) return true;
+      return rolesAt(perm, "organization", action.orgId).has("org_admin");
+    case "usage.read_team":
+      return (
+        rolesAt(perm, "team", action.teamId).has("team_manager") ||
+        rolesAt(perm, "organization", action.orgId).has("org_admin")
+      );
+    case "usage.read_org":
+      return rolesAt(perm, "organization", action.orgId).has("org_admin");
   }
 }
