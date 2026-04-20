@@ -39,13 +39,6 @@ import {
 } from "./usageLogQueue.js";
 import { writeUsageLogBatch } from "./writeUsageLogBatch.js";
 
-// Re-export the SQL helpers so existing callers / tests that import them
-// from this module keep working after the Task 7.3 extraction.
-export {
-  groupTotalCostByApiKey,
-  buildNumericSumExpr,
-} from "./writeUsageLogBatch.js";
-
 // ── Defaults ─────────────────────────────────────────────────────────────────
 
 /** Max payloads per transaction (matches Worker concurrency). */

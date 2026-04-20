@@ -155,13 +155,13 @@ function makeFakeLogger(): {
 }
 
 function makeFakeMetrics(): {
-  metrics: { persistLostInc: () => void };
+  metrics: { inc: () => void };
   incCount: () => number;
 } {
   let calls = 0;
   return {
     metrics: {
-      persistLostInc: (): void => {
+      inc: (): void => {
         calls += 1;
       },
     },
@@ -315,17 +315,57 @@ describe("enqueueUsageLog — inline DB fallback (Task 7.3)", () => {
     // INSERT step is the Zod-parsed one (not the raw input).  Since the
     // production fallback wraps the payload in [validated], the insert
     // chain should see exactly one row.
-    const payload = validPayload({ requestId: "req_payload_check" });
+    const payload = validPayload({
+      requestId: "req_payload_check",
+      apiKeyId: VALID_UUID_2,
+    });
     await enqueueUsageLog(queueFail.queue, payload, { fallback });
 
-    // Pull the inner tx stub used by makeFakeDb — easier than re-asserting
-    // the chain externally.  The call sequence is:
-    //   tx.insert(table) → returns insertChain
-    //   insertChain.values(rows) → awaited
+    // Pull the actual transaction callback the production code passed to
+    // db.transaction(...) and execute it against a fresh tx stub that
+    // records what writeUsageLogBatch performs:
+    //   tx.insert(usageLogs).values(rows)
+    //   tx.update(apiKeys).set({...}).where(...)
     expect(fakeDb.transaction).toHaveBeenCalledTimes(1);
     const cb = fakeDb.transaction.mock.calls[0]![0] as (
       tx: unknown,
     ) => Promise<void>;
     expect(typeof cb).toBe("function");
+
+    let capturedRows: unknown[] | null = null;
+    const insertChain = {
+      values: vi.fn(async (rows: unknown[]) => {
+        capturedRows = rows;
+      }),
+    };
+    const updateChain = {
+      set: vi.fn(() => updateChain),
+      where: vi.fn(async () => undefined),
+    };
+    const txStub = {
+      insert: vi.fn(() => insertChain),
+      update: vi.fn(() => updateChain),
+    };
+
+    await cb(txStub);
+
+    // Insert step ran with exactly one row whose key fields match the
+    // Zod-validated payload (proves the callback forwards `[validated]`,
+    // not the raw input or an empty array).
+    expect(txStub.insert).toHaveBeenCalledTimes(1);
+    expect(insertChain.values).toHaveBeenCalledTimes(1);
+    expect(capturedRows).not.toBeNull();
+    const rows = capturedRows as unknown as {
+      requestId: string;
+      apiKeyId: string;
+    }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.requestId).toBe("req_payload_check");
+    expect(rows[0]!.apiKeyId).toBe(VALID_UUID_2);
+
+    // Update step ran for the single distinct apiKeyId in the batch.
+    expect(txStub.update).toHaveBeenCalledTimes(1);
+    expect(updateChain.set).toHaveBeenCalledTimes(1);
+    expect(updateChain.where).toHaveBeenCalledTimes(1);
   });
 });

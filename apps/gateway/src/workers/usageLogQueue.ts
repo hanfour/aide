@@ -234,9 +234,12 @@ export interface UsageLogFallbackLogger {
  * Concrete counter is `gw_usage_persist_lost_total` in `plugins/metrics.ts`;
  * tests can pass any object that satisfies this shape.  Optional so callers
  * that don't care about metrics (e.g., tests) can skip wiring one up.
+ *
+ * Shape compatible with prom-client's `Counter` — pass
+ * `fastify.gwMetrics.usagePersistLostTotal` directly without an adapter.
  */
 export interface UsageLogFallbackMetrics {
-  persistLostInc: () => void;
+  inc: () => void;
 }
 
 /**
@@ -334,22 +337,30 @@ export async function enqueueUsageLog(
       // enqueue error.  Re-throwing the BullMQ error (rather than a wrapped
       // "persist lost" error) keeps the caller's error-classification logic
       // stable: callers already handle Redis-side failures of this call.
-      logger.error(
-        {
-          type: "gw_usage_persist_lost",
-          payload: validated,
-          enqueueError:
-            enqueueError instanceof Error
-              ? enqueueError.message
-              : String(enqueueError),
-          persistError:
-            persistError instanceof Error
-              ? persistError.message
-              : String(persistError),
-        },
-        "usage log persist lost",
-      );
-      metrics?.persistLostInc?.();
+      //
+      // The log + metric calls are wrapped in their own try/catch so a broken
+      // logger transport or pino hook can never mask the original BullMQ
+      // enqueue error the contract promises to surface.
+      try {
+        logger.error(
+          {
+            type: "gw_usage_persist_lost",
+            payload: validated,
+            enqueueError:
+              enqueueError instanceof Error
+                ? enqueueError.message
+                : String(enqueueError),
+            persistError:
+              persistError instanceof Error
+                ? persistError.message
+                : String(persistError),
+          },
+          "usage log persist lost",
+        );
+        metrics?.inc?.();
+      } catch {
+        // logger/metrics failure must not mask the original enqueue error
+      }
       throw enqueueError;
     }
   }
