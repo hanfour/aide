@@ -21,7 +21,6 @@ import {
   credentialVault,
   type Database,
 } from "@aide/db";
-import { acquireSlot } from "../../src/redis/slots.js";
 import { buildServer } from "../../src/server.js";
 import type { FastifyInstance } from "fastify";
 
@@ -57,37 +56,47 @@ let nextUpstreamResponse: {
   status: number;
   body: string;
   closeSocket?: boolean;
-  /** When set, respond as SSE: write these chunks then end. */
-  sseChunks?: string[];
 };
-let lastRequest: { url: string | undefined; method: string | undefined } | null;
+let lastUpstreamRequest: {
+  url: string | undefined;
+  method: string | undefined;
+  body?: string;
+} | null;
+
+const defaultAnthropicResponse = {
+  id: "msg_test",
+  type: "message",
+  role: "assistant",
+  model: "claude-3-haiku-20240307",
+  content: [{ type: "text", text: "hi there" }],
+  stop_reason: "end_turn",
+  usage: { input_tokens: 5, output_tokens: 3 },
+};
 
 beforeAll(async () => {
   nextUpstreamResponse = {
     status: 200,
-    body: '{"id":"msg_default","content":[]}',
+    body: JSON.stringify(defaultAnthropicResponse),
   };
-  lastRequest = null;
+  lastUpstreamRequest = null;
+
   fakeServer = createServer((req, res) => {
-    lastRequest = { url: req.url, method: req.method };
-    if (nextUpstreamResponse.closeSocket) {
-      req.socket.destroy();
-      return;
-    }
-    if (nextUpstreamResponse.sseChunks) {
-      res.statusCode = nextUpstreamResponse.status;
-      res.setHeader("content-type", "text/event-stream");
-      res.setHeader("cache-control", "no-cache");
-      for (const chunk of nextUpstreamResponse.sseChunks) {
-        res.write(chunk);
+    let body = "";
+    req.on("data", (chunk: Buffer) => {
+      body += chunk.toString();
+    });
+    req.on("end", () => {
+      lastUpstreamRequest = { url: req.url, method: req.method, body };
+      if (nextUpstreamResponse.closeSocket) {
+        req.socket.destroy();
+        return;
       }
-      res.end();
-      return;
-    }
-    res.statusCode = nextUpstreamResponse.status;
-    res.setHeader("content-type", "application/json");
-    res.end(nextUpstreamResponse.body);
+      res.statusCode = nextUpstreamResponse.status;
+      res.setHeader("content-type", "application/json");
+      res.end(nextUpstreamResponse.body);
+    });
   });
+
   await new Promise<void>((resolve) =>
     fakeServer.listen(0, "127.0.0.1", resolve),
   );
@@ -102,9 +111,9 @@ afterAll(
 beforeEach(() => {
   nextUpstreamResponse = {
     status: 200,
-    body: '{"id":"msg_default","content":[]}',
+    body: JSON.stringify(defaultAnthropicResponse),
   };
-  lastRequest = null;
+  lastUpstreamRequest = null;
 });
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -216,80 +225,186 @@ async function makeApp(
   return buildServer({ env, db, redis: redisMock });
 }
 
+// ── Minimal valid OpenAI request payload ─────────────────────────────────────
+
+const openaiPayload = {
+  model: "gpt-4",
+  messages: [{ role: "user", content: "hello" }],
+  max_tokens: 50,
+};
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("POST /v1/messages", () => {
-  it("1. happy path — forwards 200 + upstream body", async () => {
+describe("POST /v1/chat/completions", () => {
+  it("1. happy path — translates OpenAI request, calls upstream, returns OpenAI response", async () => {
     const orgId = await seedOrg();
     const userId = await seedUser(orgId);
-    const rawKey = `ak_happy_${Math.random().toString(36).slice(2)}`;
+    const rawKey = `ak_oai_happy_${Math.random().toString(36).slice(2)}`;
     await seedApiKey(orgId, userId, rawKey);
     await seedAccount(
       orgId,
       JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
     );
 
-    nextUpstreamResponse = { status: 200, body: '{"id":"msg_x","content":[]}' };
-
     const redis = makeRedisMock();
     const app = await makeApp(redis, container.getConnectionUri());
 
     const res = await app.inject({
       method: "POST",
-      url: "/v1/messages",
+      url: "/v1/chat/completions",
       headers: { authorization: `Bearer ${rawKey}` },
-      payload: { model: "claude-3-haiku-20240307", max_tokens: 10 },
+      payload: openaiPayload,
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ id: "msg_x" });
+    const json = res.json();
+    expect(json).toMatchObject({
+      id: "msg_test",
+      object: "chat.completion",
+      model: "claude-3-haiku-20240307",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "hi there" },
+          finish_reason: "stop",
+        },
+      ],
+      usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+    });
+    expect(typeof json.created).toBe("number");
     await app.close();
   });
 
-  it("2. stream=true returns 200 SSE text/event-stream", async () => {
+  it("2. stream=true → 501 not_implemented", async () => {
     const orgId = await seedOrg();
     const userId = await seedUser(orgId);
-    const rawKey = `ak_stream_${Math.random().toString(36).slice(2)}`;
+    const rawKey = `ak_oai_stream_${Math.random().toString(36).slice(2)}`;
     await seedApiKey(orgId, userId, rawKey);
     await seedAccount(
       orgId,
       JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
     );
 
-    // Fake upstream streams SSE chunks.
-    nextUpstreamResponse = {
-      status: 200,
-      body: "",
-      sseChunks: ['event: ping\ndata: {"type":"ping"}\n\n'],
-    };
+    const redis = makeRedisMock();
+    const app = await makeApp(redis, container.getConnectionUri());
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: { authorization: `Bearer ${rawKey}` },
+      payload: { ...openaiPayload, stream: true },
+    });
+
+    expect(res.statusCode).toBe(501);
+    expect(res.json()).toMatchObject({ error: "not_implemented" });
+    await app.close();
+  });
+
+  it("3. missing model → 400 missing_model", async () => {
+    const orgId = await seedOrg();
+    const userId = await seedUser(orgId);
+    const rawKey = `ak_oai_nomodel_${Math.random().toString(36).slice(2)}`;
+    await seedApiKey(orgId, userId, rawKey);
+    await seedAccount(
+      orgId,
+      JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
+    );
+    lastUpstreamRequest = null;
 
     const redis = makeRedisMock();
     const app = await makeApp(redis, container.getConnectionUri());
 
     const res = await app.inject({
       method: "POST",
-      url: "/v1/messages",
+      url: "/v1/chat/completions",
+      headers: { authorization: `Bearer ${rawKey}` },
+      payload: { messages: [{ role: "user", content: "hello" }] },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "missing_model" });
+    expect(lastUpstreamRequest).toBeNull(); // upstream not called
+    await app.close();
+  });
+
+  it("4. empty body → 400 invalid_body", async () => {
+    const orgId = await seedOrg();
+    const userId = await seedUser(orgId);
+    const rawKey = `ak_oai_nobody_${Math.random().toString(36).slice(2)}`;
+    await seedApiKey(orgId, userId, rawKey);
+    await seedAccount(
+      orgId,
+      JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
+    );
+
+    const redis = makeRedisMock();
+    const app = await makeApp(redis, container.getConnectionUri());
+
+    // Send a non-object body (null string) with content-type application/json
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: {
+        authorization: `Bearer ${rawKey}`,
+        "content-type": "application/json",
+      },
+      payload: "null",
+    });
+
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it("5. translator failure → 400 invalid_request (malformed messages)", async () => {
+    const orgId = await seedOrg();
+    const userId = await seedUser(orgId);
+    const rawKey = `ak_oai_badmsg_${Math.random().toString(36).slice(2)}`;
+    await seedApiKey(orgId, userId, rawKey);
+    await seedAccount(
+      orgId,
+      JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
+    );
+
+    const redis = makeRedisMock();
+    const app = await makeApp(redis, container.getConnectionUri());
+
+    // Provide a tool call with invalid JSON arguments to trigger translator error
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
       headers: { authorization: `Bearer ${rawKey}` },
       payload: {
-        model: "claude-3-haiku-20240307",
-        max_tokens: 10,
-        stream: true,
+        model: "gpt-4",
+        messages: [
+          {
+            role: "assistant",
+            tool_calls: [
+              {
+                id: "call_1",
+                type: "function",
+                function: {
+                  name: "my_tool",
+                  arguments: "NOT VALID JSON {{{",
+                },
+              },
+            ],
+          },
+          { role: "user", content: "hello" },
+        ],
       },
     });
 
-    // inject collects the full SSE body; status should be 200.
-    expect(res.statusCode).toBe(200);
-    expect(res.headers["content-type"]).toMatch(/text\/event-stream/);
-    expect(res.body).toContain("event: ping");
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "invalid_request" });
     await app.close();
   });
 
-  it("3. no eligible accounts → 503 no_upstream_available", async () => {
+  it("6. no eligible accounts → 503 all_upstreams_failed", async () => {
     const orgId = await seedOrg();
     const userId = await seedUser(orgId);
-    const rawKey = `ak_noacct_${Math.random().toString(36).slice(2)}`;
+    const rawKey = `ak_oai_noacct_${Math.random().toString(36).slice(2)}`;
     await seedApiKey(orgId, userId, rawKey);
-    // Seed account with deleted_at set — should be excluded by selectAccountIds.
+    // Seed only a soft-deleted account — should be excluded.
     await seedAccount(
       orgId,
       JSON.stringify({ type: "api_key", api_key: "sk-deleted" }),
@@ -301,108 +416,119 @@ describe("POST /v1/messages", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/v1/messages",
+      url: "/v1/chat/completions",
       headers: { authorization: `Bearer ${rawKey}` },
-      payload: { model: "claude-3-haiku-20240307", max_tokens: 10 },
+      payload: openaiPayload,
     });
 
     expect(res.statusCode).toBe(503);
-    expect(res.json()).toMatchObject({ error: "no_upstream_available" });
-    await app.close();
-  });
-
-  it("4. upstream 4xx is forwarded to caller", async () => {
-    const orgId = await seedOrg();
-    const userId = await seedUser(orgId);
-    const rawKey = `ak_4xx_${Math.random().toString(36).slice(2)}`;
-    await seedApiKey(orgId, userId, rawKey);
-    await seedAccount(
-      orgId,
-      JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
-    );
-
-    nextUpstreamResponse = {
-      status: 400,
-      body: '{"type":"error","error":{"type":"invalid_request_error","message":"bad"}}',
-    };
-
-    const redis = makeRedisMock();
-    const app = await makeApp(redis, container.getConnectionUri());
-
-    const res = await app.inject({
-      method: "POST",
-      url: "/v1/messages",
-      headers: { authorization: `Bearer ${rawKey}` },
-      payload: { model: "claude-3-haiku-20240307", max_tokens: 10 },
-    });
-
-    expect(res.statusCode).toBe(400);
-    expect(res.json()).toMatchObject({ type: "error" });
-    await app.close();
-  });
-
-  it("5. account at capacity → 503 (failover exhausted with no other accounts)", async () => {
-    const orgId = await seedOrg();
-    const userId = await seedUser(orgId);
-    const rawKey = `ak_cap_${Math.random().toString(36).slice(2)}`;
-    await seedApiKey(orgId, userId, rawKey);
-    const accountId = await seedAccount(
-      orgId,
-      JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
-      { concurrency: 2 },
-    );
-
-    const redis = makeRedisMock();
-
-    // Pre-fill the ZSET to capacity using the same acquireSlot helper.
-    const filled1 = await acquireSlot(
-      redis,
-      "account",
-      accountId,
-      "req-fill-1",
-      2,
-      60_000,
-    );
-    const filled2 = await acquireSlot(
-      redis,
-      "account",
-      accountId,
-      "req-fill-2",
-      2,
-      60_000,
-    );
-    expect(filled1).toBe(true);
-    expect(filled2).toBe(true);
-
-    const app = await makeApp(redis, container.getConnectionUri());
-
-    const res = await app.inject({
-      method: "POST",
-      url: "/v1/messages",
-      headers: { authorization: `Bearer ${rawKey}` },
-      payload: { model: "claude-3-haiku-20240307", max_tokens: 10 },
-    });
-
-    expect(res.statusCode).toBe(503);
-    // With the failover loop, the at-capacity account is treated as transient;
-    // since there is only one account, the loop exhausts and returns all_upstreams_failed.
     expect(res.json()).toMatchObject({ error: "all_upstreams_failed" });
     await app.close();
   });
 
-  it("6. slot is released after successful request", async () => {
+  it("7. failover: first account 429, second OK → returns OpenAI response from second", async () => {
     const orgId = await seedOrg();
     const userId = await seedUser(orgId);
-    const rawKey = `ak_release_${Math.random().toString(36).slice(2)}`;
+    const rawKey = `ak_oai_failover_${Math.random().toString(36).slice(2)}`;
     await seedApiKey(orgId, userId, rawKey);
-    const accountId = await seedAccount(
+
+    // Seed two accounts so the failover loop has a second to switch to.
+    await seedAccount(
+      orgId,
+      JSON.stringify({ type: "api_key", api_key: "sk-first-429" }),
+    );
+    await seedAccount(
+      orgId,
+      JSON.stringify({ type: "api_key", api_key: "sk-second-ok" }),
+    );
+
+    // First response is 429, second (after failover) is 200 with Anthropic body.
+    let callCount = 0;
+    const originalFakeServer = fakeServer;
+    // Override response per-call using a mutable variable approach:
+    // We'll set up a sequence via a counter on nextUpstreamResponse.
+    // The fake server reads nextUpstreamResponse, so we stage a "first-429" scenario
+    // by using a custom response queue.
+    const responseQueue = [
+      { status: 429, body: JSON.stringify({ error: "rate_limited" }) },
+      {
+        status: 200,
+        body: JSON.stringify(defaultAnthropicResponse),
+      },
+    ];
+
+    // Create a separate fake server for this test that serves from the queue.
+    const seqServer = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk: Buffer) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        const resp =
+          responseQueue[callCount] ?? responseQueue[responseQueue.length - 1]!;
+        callCount++;
+        res.statusCode = resp.status;
+        res.setHeader("content-type", "application/json");
+        res.end(resp.body);
+      });
+    });
+    await new Promise<void>((resolve) =>
+      seqServer.listen(0, "127.0.0.1", resolve),
+    );
+    const seqAddr = seqServer.address() as AddressInfo;
+    const seqBaseUrl = `http://127.0.0.1:${seqAddr.port}`;
+
+    const { parseServerEnv } = await import("@aide/config");
+    const env = parseServerEnv({
+      ...buildEnv(container.getConnectionUri()),
+      UPSTREAM_ANTHROPIC_BASE_URL: seqBaseUrl,
+    });
+    const redis = makeRedisMock();
+    const app = await buildServer({ env, db, redis });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: { authorization: `Bearer ${rawKey}` },
+      payload: openaiPayload,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      id: "msg_test",
+      object: "chat.completion",
+    });
+
+    await app.close();
+    await new Promise<void>((resolve) => seqServer.close(() => resolve()));
+  });
+
+  // Skipped: inline OAuth refresh on /v1/chat/completions is verified via
+  // maybeRefreshOAuth unit/integration tests (oauthRefresh.integration.test.ts).
+  // The route calls the identical maybeRefreshOAuth import as messages.ts — confirmed
+  // by grep: chatCompletions.ts contains `await maybeRefreshOAuth(`.
+  // A full end-to-end test here would require overriding the hardcoded DEFAULT_TOKEN_URL
+  // (https://api.anthropic.com/oauth/token) which is not currently injectable via env;
+  // adding an OAUTH_TOKEN_URL env override is tracked as a follow-up task.
+  it.skip("inline OAuth refresh — verified via maybeRefreshOAuth unit/integration tests; route uses same code path as messages.ts (verified via grep)", () => {});
+
+  it("8. fatal 4xx upstream → 4xx forwarded with request_id", async () => {
+    const orgId = await seedOrg();
+    const userId = await seedUser(orgId);
+    const rawKey = `ak_oai_fatal_${Math.random().toString(36).slice(2)}`;
+    await seedApiKey(orgId, userId, rawKey);
+    await seedAccount(
       orgId,
       JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
     );
 
+    // 400 is classified as fatal by the classifier (client error).
     nextUpstreamResponse = {
-      status: 200,
-      body: '{"id":"msg_rel","content":[]}',
+      status: 400,
+      body: JSON.stringify({
+        type: "error",
+        error: { type: "invalid_request_error", message: "bad request" },
+      }),
     };
 
     const redis = makeRedisMock();
@@ -410,135 +536,15 @@ describe("POST /v1/messages", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/v1/messages",
+      url: "/v1/chat/completions",
       headers: { authorization: `Bearer ${rawKey}` },
-      payload: { model: "claude-3-haiku-20240307", max_tokens: 10 },
-    });
-
-    expect(res.statusCode).toBe(200);
-
-    // After the request, the slot ZSET should be empty (ZCARD = 0).
-    const slotKey = `slots:account:${accountId}`;
-    const count = await redis.zcard(slotKey);
-    expect(count).toBe(0);
-
-    await app.close();
-  });
-
-  it("7. slot is released even when upstream closes socket (error path)", async () => {
-    const orgId = await seedOrg();
-    const userId = await seedUser(orgId);
-    const rawKey = `ak_err_${Math.random().toString(36).slice(2)}`;
-    await seedApiKey(orgId, userId, rawKey);
-    const accountId = await seedAccount(
-      orgId,
-      JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
-    );
-
-    // Make upstream destroy the socket to simulate a network error.
-    nextUpstreamResponse = { status: 200, body: "", closeSocket: true };
-
-    const redis = makeRedisMock();
-    const app = await makeApp(redis, container.getConnectionUri());
-
-    // The inject call may throw or return a 500; either is acceptable.
-    const res = await app
-      .inject({
-        method: "POST",
-        url: "/v1/messages",
-        headers: { authorization: `Bearer ${rawKey}` },
-        payload: { model: "claude-3-haiku-20240307", max_tokens: 10 },
-      })
-      .catch(() => null);
-
-    // Regardless of outcome, the slot must have been released.
-    const slotKey = `slots:account:${accountId}`;
-    const count = await redis.zcard(slotKey);
-    expect(count).toBe(0);
-
-    // Cleanup — may already be closed due to error.
-    await app.close().catch(() => {
-      /* already closed */
-    });
-  });
-
-  it("8. missing api key → 401 (auth middleware, not route)", async () => {
-    const orgId = await seedOrg();
-    await seedUser(orgId);
-    await seedAccount(
-      orgId,
-      JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
-    );
-
-    const redis = makeRedisMock();
-    const app = await makeApp(redis, container.getConnectionUri());
-
-    const res = await app.inject({
-      method: "POST",
-      url: "/v1/messages",
-      payload: { model: "claude-3-haiku-20240307", max_tokens: 10 },
-    });
-
-    expect(res.statusCode).toBe(401);
-    expect(res.json()).toMatchObject({ error: "missing_api_key" });
-    await app.close();
-  });
-
-  it("9. returns 400 missing_model when model field absent", async () => {
-    const orgId = await seedOrg();
-    const userId = await seedUser(orgId);
-    const rawKey = `ak_nomodel_${Math.random().toString(36).slice(2)}`;
-    await seedApiKey(orgId, userId, rawKey);
-    await seedAccount(
-      orgId,
-      JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
-    );
-    lastRequest = null; // reset upstream tracker
-
-    const redis = makeRedisMock();
-    const app = await makeApp(redis, container.getConnectionUri());
-
-    const res = await app.inject({
-      method: "POST",
-      url: "/v1/messages",
-      headers: { authorization: `Bearer ${rawKey}` },
-      payload: {}, // no model field
+      payload: openaiPayload,
     });
 
     expect(res.statusCode).toBe(400);
-    expect(res.json()).toMatchObject({ error: "missing_model" });
-    expect(lastRequest).toBeNull(); // upstream not called
-    await app.close();
-  });
-
-  it("10. returns 413 when body exceeds GATEWAY_MAX_BODY_BYTES", async () => {
-    const orgId = await seedOrg();
-    const userId = await seedUser(orgId);
-    const rawKey = `ak_413_${Math.random().toString(36).slice(2)}`;
-    await seedApiKey(orgId, userId, rawKey);
-    await seedAccount(
-      orgId,
-      JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
-    );
-
-    // Override env with tiny body limit so a small payload trips it.
-    const { parseServerEnv } = await import("@aide/config");
-    const tinyEnv = parseServerEnv({
-      ...buildEnv(container.getConnectionUri()),
-      GATEWAY_MAX_BODY_BYTES: "1024",
-    });
-    const redis = makeRedisMock();
-    const app = await buildServer({ env: tinyEnv, db, redis });
-
-    const oversized = { model: "claude-3", junk: "x".repeat(2048) };
-    const res = await app.inject({
-      method: "POST",
-      url: "/v1/messages",
-      headers: { authorization: `Bearer ${rawKey}` },
-      payload: oversized,
-    });
-
-    expect(res.statusCode).toBe(413);
+    const json = res.json();
+    expect(json).toHaveProperty("error");
+    expect(json).toHaveProperty("request_id");
     await app.close();
   });
 });

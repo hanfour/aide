@@ -6,4 +6,5 @@ export * from "./crypto/apiKey.js";
 export * from "./translate/types.js";
 export * from "./translate/openaiToAnthropic.js";
 export * from "./translate/anthropicToOpenai.js";
+export * from "./stream/anthropicSseParser.js";
 export * from "./translate/anthropicToOpenaiStream.js";
