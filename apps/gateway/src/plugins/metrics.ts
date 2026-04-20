@@ -1,16 +1,10 @@
 import fp from "fastify-plugin";
-import { Counter, Histogram, Gauge, type Registry } from "prom-client";
-
-// fastify-metrics is a CJS module; use createRequire to avoid ESM/CJS interop issues in TypeScript
-import { createRequire } from "node:module";
+import * as fm from "fastify-metrics";
 import type { IMetricsPluginOptions } from "fastify-metrics";
-import type { FastifyPluginCallback } from "fastify";
-const require = createRequire(import.meta.url);
+import { Counter, Histogram, Gauge, type Registry } from "prom-client";
+// fastify-metrics ships CJS; interop helper ensures we get the plugin function regardless of bundler resolution
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const fastifyMetrics = (require("fastify-metrics").default ??
-  require("fastify-metrics")) as FastifyPluginCallback<
-  Partial<IMetricsPluginOptions>
->;
+const fastifyMetrics = ((fm as any).default ?? fm) as (fm: any) => any;
 
 export interface GatewayMetrics {
   slotAcquireTotal: Counter<"scope" | "result">;
@@ -35,6 +29,7 @@ declare module "fastify" {
 export const metricsPlugin = fp(async (fastify) => {
   await fastify.register(fastifyMetrics, {
     endpoint: "/metrics",
+    // Owns the prom-client default singleton; no other process module should register against it.
     clearRegisterOnInit: true,
     routeMetrics: { enabled: true },
     defaultMetrics: { enabled: true },
@@ -50,6 +45,7 @@ export const metricsPlugin = fp(async (fastify) => {
     registers: [register],
   });
 
+  // TODO(part-5): tune buckets for upstream durations >10s; defaults are HTTP-shaped
   const slotHoldDurationSeconds = new Histogram({
     name: "gw_slot_hold_duration_seconds",
     help: "Time a slot was held",
@@ -81,6 +77,7 @@ export const metricsPlugin = fp(async (fastify) => {
     registers: [register],
   });
 
+  // TODO(part-5): tune buckets for upstream durations >10s; defaults are HTTP-shaped
   const upstreamDurationSeconds = new Histogram({
     name: "gw_upstream_duration_seconds",
     help: "Upstream API call duration",
