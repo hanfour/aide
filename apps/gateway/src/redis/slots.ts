@@ -1,15 +1,8 @@
 import type { Redis } from "ioredis";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { ACQUIRE_SLOT_LUA } from "./lua/acquireSlot.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const ACQUIRE_SCRIPT = readFileSync(
-  join(__dirname, "lua/acquire-slot.lua"),
-  "utf8",
-);
-
-// TODO(perf): migrate to defineCommand + EVALSHA to avoid script re-transmission on each call
+// TODO(part-7): emit gw_slot_acquire_total{scope, result} counter (design 4.9)
+// TODO(perf): migrate from EVAL to defineCommand+EVALSHA when call rate warrants
 
 /**
  * Atomically acquires a slot in a Redis ZSET rate-limiting bucket.
@@ -34,13 +27,12 @@ export async function acquireSlot(
   durationMs: number,
 ): Promise<boolean> {
   const now = Date.now();
-  const expiry = now + durationMs;
   const result = (await redis.eval(
-    ACQUIRE_SCRIPT,
+    ACQUIRE_SLOT_LUA,
     1,
     key,
     String(now),
-    String(expiry),
+    String(durationMs),
     requestId,
     String(limit),
   )) as number;

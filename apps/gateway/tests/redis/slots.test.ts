@@ -79,4 +79,11 @@ describe("slots", () => {
       releaseSlot(redis, "slots:user:u6", "never-acquired"),
     ).resolves.toBeUndefined();
   });
+
+  it("inline Lua script is embedded as a string constant (no fs read at module load)", async () => {
+    const mod = await import("../../src/redis/lua/acquireSlot.js");
+    expect(typeof mod.ACQUIRE_SLOT_LUA).toBe("string");
+    expect(mod.ACQUIRE_SLOT_LUA).toContain("ZREMRANGEBYSCORE");
+    expect(mod.ACQUIRE_SLOT_LUA).toContain("ZADD");
+  });
 });
