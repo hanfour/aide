@@ -1,9 +1,11 @@
 import Fastify, { type FastifyInstance } from 'fastify'
+import { metricsPlugin } from './plugins/metrics.js'
 
 export interface BuildOpts { enabled: boolean }
 
 export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' } })
+  await app.register(metricsPlugin)
   app.get('/health', async () => opts.enabled
     ? { status: 'ok' }
     : { status: 'disabled' })
