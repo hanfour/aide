@@ -30,6 +30,7 @@ describe("gateway server", () => {
         CREDENTIAL_ENCRYPTION_KEY: "a".repeat(64),
         API_KEY_HASH_PEPPER: "b".repeat(64),
       }),
+      db: {} as never,
     });
     const res = await app.inject({ method: "GET", url: "/health" });
     expect(res.statusCode).toBe(200);
@@ -47,5 +48,63 @@ describe("gateway server", () => {
     expect(() =>
       parseServerEnv({ ...validBase, ENABLE_GATEWAY: "true" }),
     ).toThrow();
+  });
+
+  it("requests to non-public paths require an API key (apiKeyAuthPlugin is wired)", async () => {
+    const app = await buildServer({
+      env: makeEnv({
+        ENABLE_GATEWAY: "true",
+        GATEWAY_BASE_URL: "http://localhost:3002",
+        REDIS_URL: "redis://localhost:6379",
+        CREDENTIAL_ENCRYPTION_KEY: "a".repeat(64),
+        API_KEY_HASH_PEPPER: "b".repeat(64),
+      }),
+      db: {} as never,
+    });
+    app.get("/v1/test", async () => ({ ok: true }));
+    const res = await app.inject({ method: "GET", url: "/v1/test" });
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ error: "missing_api_key" });
+    await app.close();
+  });
+
+  it("/metrics still bypasses auth in enabled mode", async () => {
+    const app = await buildServer({
+      env: makeEnv({
+        ENABLE_GATEWAY: "true",
+        GATEWAY_BASE_URL: "http://localhost:3002",
+        REDIS_URL: "redis://localhost:6379",
+        CREDENTIAL_ENCRYPTION_KEY: "a".repeat(64),
+        API_KEY_HASH_PEPPER: "b".repeat(64),
+      }),
+      db: {} as never,
+    });
+    const res = await app.inject({ method: "GET", url: "/metrics" });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it("decorates fastify.db when enabled", async () => {
+    const fakeDb = { sentinel: true } as never;
+    const app = await buildServer({
+      env: makeEnv({
+        ENABLE_GATEWAY: "true",
+        GATEWAY_BASE_URL: "http://localhost:3002",
+        REDIS_URL: "redis://localhost:6379",
+        CREDENTIAL_ENCRYPTION_KEY: "a".repeat(64),
+        API_KEY_HASH_PEPPER: "b".repeat(64),
+      }),
+      db: fakeDb,
+    });
+    expect(app.db).toBe(fakeDb);
+    await app.close();
+  });
+
+  it("does NOT register apiKeyAuthPlugin when disabled (no db open)", async () => {
+    const app = await buildServer({ env: makeEnv() });
+    expect(app.hasDecorator("db")).toBe(false);
+    const res = await app.inject({ method: "GET", url: "/v1/anything" });
+    expect(res.statusCode).toBe(404);
+    await app.close();
   });
 });
