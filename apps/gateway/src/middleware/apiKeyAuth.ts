@@ -28,13 +28,16 @@ export interface ApiKeyAuthOptions {
   env: ServerEnv;
 }
 
+const PUBLIC_PATHS = new Set(["/health", "/metrics"]);
+
 export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(async (fastify, opts) => {
   fastify.decorateRequest("apiKey", null);
   fastify.decorateRequest("gwUser", null);
   fastify.decorateRequest("gwOrg", null);
 
   fastify.addHook("preHandler", async (req, reply) => {
-    if (req.url === "/health" || req.url === "/metrics") return;
+    const path = (req.url ?? "").split("?", 1)[0] ?? "";
+    if (PUBLIC_PATHS.has(path)) return;
 
     const raw = extractKey(req.headers);
     if (!raw) {
@@ -60,7 +63,7 @@ export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(async (fastify, opts) => {
       .innerJoin(organizations, eq(organizations.id, apiKeys.orgId))
       .where(eq(apiKeys.keyHash, keyHash))
       .limit(1)
-      .then((r: Array<unknown>) => r[0] as RowResult | undefined);
+      .then((r) => r[0]);
 
     if (!row) {
       reply.code(401).send({ error: "key_invalid" });
@@ -82,6 +85,9 @@ export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(async (fastify, opts) => {
       return reply;
     }
 
+    // TODO(part-4+): wire GATEWAY_TRUSTED_PROXIES into Fastify trustProxy
+    // (currently req.ip resolves from socket; all production traffic behind L7
+    // proxies will appear to come from the proxy IP until this is hooked up).
     const ip = req.ip;
     const blacklist = row.apiKey.ipBlacklist ?? [];
     const whitelist = row.apiKey.ipWhitelist ?? [];
@@ -109,36 +115,14 @@ export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(async (fastify, opts) => {
   });
 });
 
-interface ApiKeyRow {
-  id: string;
-  orgId: string;
-  userId: string;
-  teamId: string | null;
-  keyHash: string;
-  revokedAt: Date | null;
-  expiresAt: Date | null;
-  revealTokenHash: string | null;
-  revealedAt: Date | null;
-  ipWhitelist: string[] | null;
-  ipBlacklist: string[] | null;
-  quotaUsd: string;
-  quotaUsedUsd: string;
-}
-
-interface RowResult {
-  apiKey: ApiKeyRow;
-  user: { id: string; email: string };
-  org: { id: string; slug: string };
-}
-
 function extractKey(headers: Record<string, unknown>): string | null {
   const auth = headers["authorization"];
-  if (typeof auth === "string" && auth.startsWith("Bearer ")) {
+  if (typeof auth === "string" && auth.toLowerCase().startsWith("bearer ")) {
     return auth.slice(7).trim();
   }
   const xKey = headers["x-api-key"];
-  if (typeof xKey === "string" && xKey.length > 0) {
-    return xKey;
+  if (typeof xKey === "string" && xKey.trim().length > 0) {
+    return xKey.trim();
   }
   return null;
 }
@@ -149,13 +133,10 @@ function matchesAny(ip: string, cidrs: string[]): boolean {
     const parsed = ipaddr.process(ip);
     return cidrs.some((c) => {
       try {
-        const [addr, prefixStr] = c.split("/");
-        const prefix = prefixStr
-          ? Number(prefixStr)
-          : parsed.kind() === "ipv6"
-            ? 128
-            : 32;
-        return parsed.match(ipaddr.parseCIDR(`${addr}/${prefix}`));
+        const cidr = c.includes("/")
+          ? c
+          : `${c}/${parsed.kind() === "ipv6" ? 128 : 32}`;
+        return parsed.match(ipaddr.parseCIDR(cidr));
       } catch {
         return false;
       }
