@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import RedisMock from "ioredis-mock";
+import type { Redis } from "ioredis";
 import { buildServer } from "../src/server.js";
 import { parseServerEnv, type ServerEnv } from "@aide/config";
 
@@ -106,5 +108,65 @@ describe("gateway server", () => {
     const res = await app.inject({ method: "GET", url: "/v1/anything" });
     expect(res.statusCode).toBe(404);
     await app.close();
+  });
+
+  it("skips BullMQ wiring when opts.redis is injected (test mode)", async () => {
+    // Inject ioredis-mock so the buildServer escape hatch fires; verifies
+    // fastify.usageLogQueue stays undefined and route-level code that doesn't
+    // touch the queue can run without standing up real BullMQ infra.
+    const mockRedis = new RedisMock() as unknown as Redis;
+    const app = await buildServer({
+      env: makeEnv({
+        ENABLE_GATEWAY: "true",
+        GATEWAY_BASE_URL: "http://localhost:3002",
+        REDIS_URL: "redis://localhost:6379",
+        CREDENTIAL_ENCRYPTION_KEY: "a".repeat(64),
+        API_KEY_HASH_PEPPER: "b".repeat(64),
+      }),
+      db: {} as never,
+      redis: mockRedis,
+    });
+    expect(app.usageLogQueue).toBeUndefined();
+    expect(app.hasDecorator("usageLogQueue")).toBe(false);
+    await app.close();
+  });
+
+  it("decorates fastify.usageLogQueue when enabled and no test redis injected", async () => {
+    // No opts.redis -> production wiring path.  BullMQ Queue construction is
+    // lazy w.r.t. actual Redis I/O (no command issued until enqueue), so this
+    // test runs without a real Redis available — the decoration itself is
+    // synchronous after createUsageLogQueue() returns.
+    const app = await buildServer({
+      env: makeEnv({
+        ENABLE_GATEWAY: "true",
+        GATEWAY_BASE_URL: "http://localhost:3002",
+        REDIS_URL: "redis://localhost:6379",
+        CREDENTIAL_ENCRYPTION_KEY: "a".repeat(64),
+        API_KEY_HASH_PEPPER: "b".repeat(64),
+      }),
+      db: {} as never,
+    });
+    expect(app.usageLogQueue).toBeDefined();
+    expect(app.hasDecorator("usageLogQueue")).toBe(true);
+    await app.close();
+  });
+
+  it("app.close() is idempotent / does not throw when BullMQ wiring is skipped", async () => {
+    // Regression guard: the onClose hook only fires when wireUsageLogPipeline()
+    // ran, so the test-mode path (opts.redis injected) must close cleanly with
+    // no orphaned BullMQ resources.
+    const mockRedis = new RedisMock() as unknown as Redis;
+    const app = await buildServer({
+      env: makeEnv({
+        ENABLE_GATEWAY: "true",
+        GATEWAY_BASE_URL: "http://localhost:3002",
+        REDIS_URL: "redis://localhost:6379",
+        CREDENTIAL_ENCRYPTION_KEY: "a".repeat(64),
+        API_KEY_HASH_PEPPER: "b".repeat(64),
+      }),
+      db: {} as never,
+      redis: mockRedis,
+    });
+    await expect(app.close()).resolves.not.toThrow();
   });
 });
