@@ -57,6 +57,8 @@ let nextUpstreamResponse: {
   status: number;
   body: string;
   closeSocket?: boolean;
+  /** When set, respond as SSE: write these chunks then end. */
+  sseChunks?: string[];
 };
 let lastRequest: { url: string | undefined; method: string | undefined } | null;
 
@@ -70,6 +72,16 @@ beforeAll(async () => {
     lastRequest = { url: req.url, method: req.method };
     if (nextUpstreamResponse.closeSocket) {
       req.socket.destroy();
+      return;
+    }
+    if (nextUpstreamResponse.sseChunks) {
+      res.statusCode = nextUpstreamResponse.status;
+      res.setHeader("content-type", "text/event-stream");
+      res.setHeader("cache-control", "no-cache");
+      for (const chunk of nextUpstreamResponse.sseChunks) {
+        res.write(chunk);
+      }
+      res.end();
       return;
     }
     res.statusCode = nextUpstreamResponse.status;
@@ -234,7 +246,7 @@ describe("POST /v1/messages", () => {
     await app.close();
   });
 
-  it("2. stream=true returns 501 not_implemented", async () => {
+  it("2. stream=true returns 200 SSE text/event-stream", async () => {
     const orgId = await seedOrg();
     const userId = await seedUser(orgId);
     const rawKey = `ak_stream_${Math.random().toString(36).slice(2)}`;
@@ -243,6 +255,13 @@ describe("POST /v1/messages", () => {
       orgId,
       JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
     );
+
+    // Fake upstream streams SSE chunks.
+    nextUpstreamResponse = {
+      status: 200,
+      body: "",
+      sseChunks: ['event: ping\ndata: {"type":"ping"}\n\n'],
+    };
 
     const redis = makeRedisMock();
     const app = await makeApp(redis, container.getConnectionUri());
@@ -258,8 +277,10 @@ describe("POST /v1/messages", () => {
       },
     });
 
-    expect(res.statusCode).toBe(501);
-    expect(res.json()).toMatchObject({ error: "not_implemented" });
+    // inject collects the full SSE body; status should be 200.
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/event-stream/);
+    expect(res.body).toContain("event: ping");
     await app.close();
   });
 
@@ -320,7 +341,7 @@ describe("POST /v1/messages", () => {
     await app.close();
   });
 
-  it("5. account at capacity → 503 account_at_capacity", async () => {
+  it("5. account at capacity → 503 (failover exhausted with no other accounts)", async () => {
     const orgId = await seedOrg();
     const userId = await seedUser(orgId);
     const rawKey = `ak_cap_${Math.random().toString(36).slice(2)}`;
@@ -363,7 +384,9 @@ describe("POST /v1/messages", () => {
     });
 
     expect(res.statusCode).toBe(503);
-    expect(res.json()).toMatchObject({ error: "account_at_capacity" });
+    // With the failover loop, the at-capacity account is treated as transient;
+    // since there is only one account, the loop exhausts and returns all_upstreams_failed.
+    expect(res.json()).toMatchObject({ error: "all_upstreams_failed" });
     await app.close();
   });
 
