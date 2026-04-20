@@ -283,6 +283,81 @@ describe("buildUsageLogPayload", () => {
     expect(payload.ipAddress).toBeNull();
   });
 
+  it("9a. stream=true + firstTokenMs/bufferReleasedAtMs propagate", () => {
+    const pricing = getPricing();
+    const { payload } = buildUsageLogPayload({
+      req: makeReq({ id: "req-stream-1" }),
+      requestedModel: "claude-3-5-haiku-20241022",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: {
+        model: "claude-3-5-haiku-20241022",
+        usage: { input_tokens: 10, output_tokens: 10 },
+      },
+      platform: "anthropic",
+      surface: "messages",
+      statusCode: 200,
+      durationMs: 2500,
+      pricing,
+      stream: true,
+      firstTokenMs: 150,
+      bufferReleasedAtMs: 400,
+    });
+    expect(payload.stream).toBe(true);
+    expect(payload.firstTokenMs).toBe(150);
+    expect(payload.bufferReleasedAtMs).toBe(400);
+  });
+
+  it("9b. stream=true + omitted ms fields default to null", () => {
+    const pricing = getPricing();
+    const { payload } = buildUsageLogPayload({
+      req: makeReq({ id: "req-stream-2" }),
+      requestedModel: "claude-3-5-haiku-20241022",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: {
+        model: "claude-3-5-haiku-20241022",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+      platform: "anthropic",
+      surface: "messages",
+      statusCode: 200,
+      durationMs: 10,
+      pricing,
+      stream: true,
+      // firstTokenMs + bufferReleasedAtMs omitted — upstream emitted zero
+      // bytes before close, so we never measured them.
+    });
+    expect(payload.stream).toBe(true);
+    expect(payload.firstTokenMs).toBeNull();
+    expect(payload.bufferReleasedAtMs).toBeNull();
+  });
+
+  it("9c. stream=false explicit — ms fields ignored even if provided", () => {
+    const pricing = getPricing();
+    const { payload } = buildUsageLogPayload({
+      req: makeReq({ id: "req-stream-false-1" }),
+      requestedModel: "claude-3-5-haiku-20241022",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: {
+        model: "claude-3-5-haiku-20241022",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+      platform: "anthropic",
+      surface: "messages",
+      statusCode: 200,
+      durationMs: 5,
+      pricing,
+      stream: false,
+      // Caller accidentally passes ms fields on a non-streaming payload —
+      // contract requires these to be zeroed so the column meaning stays
+      // tight ("null iff non-streaming OR streaming-but-not-measured").
+      firstTokenMs: 100,
+      bufferReleasedAtMs: 200,
+    });
+    expect(payload.stream).toBe(false);
+    expect(payload.firstTokenMs).toBeNull();
+    expect(payload.bufferReleasedAtMs).toBeNull();
+  });
+
   it("9. platform=openai + surface=chat-completions propagate", () => {
     const pricing = getPricing();
     const { payload } = buildUsageLogPayload({
@@ -439,6 +514,42 @@ describe("emitUsageLog", () => {
       expect.objectContaining({ requestId: "req-fail-1" }),
       expect.stringContaining("usage log persist failed"),
     );
+  });
+
+  it("13a. streaming enqueue — stream=true + ms fields propagate into payload", async () => {
+    const addFn = vi.fn().mockResolvedValue({ id: "stub" });
+    const app = makeApp({
+      usageLogQueue: {
+        add: addFn,
+      } as unknown as FastifyInstance["usageLogQueue"],
+    });
+    const req = makeReq({ id: "req-emit-stream-1" });
+
+    await emitUsageLog({
+      app,
+      req,
+      requestedModel: "claude-3-5-haiku-20241022",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: {
+        model: "claude-3-5-haiku-20241022",
+        usage: { input_tokens: 50, output_tokens: 25 },
+      },
+      platform: "anthropic",
+      surface: "messages",
+      statusCode: 200,
+      durationMs: 1500,
+      stream: true,
+      firstTokenMs: 100,
+      bufferReleasedAtMs: 350,
+    });
+
+    expect(addFn).toHaveBeenCalledTimes(1);
+    const payload = addFn.mock.calls[0]![1] as UsageLogJobPayload;
+    expect(payload.stream).toBe(true);
+    expect(payload.firstTokenMs).toBe(100);
+    expect(payload.bufferReleasedAtMs).toBe(350);
+    expect(payload.statusCode).toBe(200);
+    expect(payload.durationMs).toBe(1500);
   });
 
   it("14. buildUsageLogPayload/metering throws — warn but do not throw (never-throws contract)", async () => {

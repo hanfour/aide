@@ -140,6 +140,25 @@ export interface BuildUsageLogPayloadInput {
   durationMs: number;
   /** Pre-loaded pricing map (pass `getPricing()`). */
   pricing: PricingMap;
+  /**
+   * True when the client opted into SSE streaming (`stream=true`).  Drives
+   * the `usage_logs.stream` column.  Defaults to `false` for backward
+   * compatibility with non-streaming callers.
+   */
+  stream?: boolean;
+  /**
+   * Streaming only — ms between request start and the first upstream byte
+   * the gateway observed. `null` when the upstream emitted zero bytes.
+   * Ignored when `stream === false`; non-streaming callers may omit.
+   */
+  firstTokenMs?: number | null;
+  /**
+   * Streaming only — ms between request start and the moment `SmartBuffer`
+   * committed (transitioned BUFFERING → COMMITTED) and began flushing bytes
+   * to the client. `null` when the buffer never committed (e.g., zero-byte
+   * upstream stream). Ignored when `stream === false`.
+   */
+  bufferReleasedAtMs?: number | null;
 }
 
 export interface BuildUsageLogPayloadResult {
@@ -191,7 +210,7 @@ export function buildUsageLogPayload(
     upstreamModel: usage.model,
     platform: input.platform,
     surface: input.surface,
-    stream: false,
+    stream: input.stream ?? false,
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     cacheCreationTokens: usage.cacheCreationTokens,
@@ -205,8 +224,12 @@ export function buildUsageLogPayload(
     accountRateMultiplier: "1.0000",
     statusCode: input.statusCode,
     durationMs: input.durationMs,
-    firstTokenMs: null,
-    bufferReleasedAtMs: null,
+    // Streaming-only fields. Non-streaming callers omit them (defaults below)
+    // and the non-null shape of the `usage_logs` columns tolerates null via
+    // the bigserial/integer nullability declared in the schema.
+    firstTokenMs: input.stream === true ? (input.firstTokenMs ?? null) : null,
+    bufferReleasedAtMs:
+      input.stream === true ? (input.bufferReleasedAtMs ?? null) : null,
     upstreamRetries: 0,
     failedAccountIds: [],
     userAgent:
@@ -236,6 +259,15 @@ export interface EmitUsageLogInput {
   surface: "messages" | "chat-completions";
   statusCode: number;
   durationMs: number;
+  /**
+   * Streaming metadata — all optional for backward compatibility with the
+   * non-streaming callers added in Sub-task B.  Streaming callers
+   * (Sub-task C) pass `stream: true` and the two ms fields measured against
+   * the same `startedAtMs` used to compute `durationMs`.
+   */
+  stream?: boolean;
+  firstTokenMs?: number | null;
+  bufferReleasedAtMs?: number | null;
 }
 
 /**
@@ -271,6 +303,9 @@ export async function emitUsageLog(input: EmitUsageLogInput): Promise<void> {
       statusCode: input.statusCode,
       durationMs: input.durationMs,
       pricing: getPricing(),
+      stream: input.stream,
+      firstTokenMs: input.firstTokenMs,
+      bufferReleasedAtMs: input.bufferReleasedAtMs,
     });
 
     if (cost.miss) {
