@@ -1,31 +1,84 @@
 import { z } from "zod";
 
-export const serverEnvSchema = z.object({
-  NODE_ENV: z.enum(["development", "test", "production"]),
-  DATABASE_URL: z.string().url(),
-  AUTH_SECRET: z.string().min(32, "AUTH_SECRET must be at least 32 characters"),
-  NEXTAUTH_URL: z.string().url(),
-  GOOGLE_CLIENT_ID: z.string().min(1),
-  GOOGLE_CLIENT_SECRET: z.string().min(1),
-  GITHUB_CLIENT_ID: z.string().min(1),
-  GITHUB_CLIENT_SECRET: z.string().min(1),
-  BOOTSTRAP_SUPER_ADMIN_EMAIL: z.string().email(),
-  BOOTSTRAP_DEFAULT_ORG_SLUG: z
-    .string()
-    .regex(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/),
-  BOOTSTRAP_DEFAULT_ORG_NAME: z.string().min(1),
-  ENABLE_SWAGGER: z
-    .union([z.boolean(), z.string()])
-    .transform((v) => (typeof v === "string" ? v === "true" : v))
-    .default(false),
-  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
-  API_INTERNAL_URL: z.string().url().optional(),
-  ENABLE_TEST_SEED: z
-    .union([z.boolean(), z.string()])
-    .transform((v) => (typeof v === "string" ? v === "true" : v))
-    .default(false),
-  TEST_SEED_TOKEN: z.string().min(32).optional(),
-});
+const HEX_64_REGEX = /^[0-9a-f]{64}$/i;
+
+const booleanUnion = z
+  .union([z.boolean(), z.string()])
+  .transform((v) => (typeof v === "string" ? v === "true" : v));
+
+export const serverEnvSchema = z
+  .object({
+    NODE_ENV: z.enum(["development", "test", "production"]),
+    DATABASE_URL: z.string().url(),
+    AUTH_SECRET: z.string().min(32, "AUTH_SECRET must be at least 32 characters"),
+    NEXTAUTH_URL: z.string().url(),
+    GOOGLE_CLIENT_ID: z.string().min(1),
+    GOOGLE_CLIENT_SECRET: z.string().min(1),
+    GITHUB_CLIENT_ID: z.string().min(1),
+    GITHUB_CLIENT_SECRET: z.string().min(1),
+    BOOTSTRAP_SUPER_ADMIN_EMAIL: z.string().email(),
+    BOOTSTRAP_DEFAULT_ORG_SLUG: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/),
+    BOOTSTRAP_DEFAULT_ORG_NAME: z.string().min(1),
+    ENABLE_SWAGGER: booleanUnion.default(false),
+    LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+    API_INTERNAL_URL: z.string().url().optional(),
+    ENABLE_TEST_SEED: booleanUnion.default(false),
+    TEST_SEED_TOKEN: z.string().min(32).optional(),
+
+    // Gateway vars
+    ENABLE_GATEWAY: booleanUnion.default(false),
+    GATEWAY_PORT: z.coerce.number().int().min(1).default(3002),
+    GATEWAY_BASE_URL: z.string().url().optional(),
+    REDIS_URL: z.string().url().optional(),
+    CREDENTIAL_ENCRYPTION_KEY: z
+      .string()
+      .regex(HEX_64_REGEX, "CREDENTIAL_ENCRYPTION_KEY must be 64 hex characters (32 bytes)")
+      .optional(),
+    API_KEY_HASH_PEPPER: z
+      .string()
+      .regex(HEX_64_REGEX, "API_KEY_HASH_PEPPER must be 64 hex characters (32 bytes)")
+      .optional(),
+    UPSTREAM_ANTHROPIC_BASE_URL: z
+      .string()
+      .url()
+      .default("https://api.anthropic.com"),
+    GATEWAY_MAX_ACCOUNT_SWITCHES: z.coerce.number().int().min(1).default(10),
+    GATEWAY_MAX_BODY_BYTES: z.coerce.number().int().min(1024).default(10485760),
+    GATEWAY_BUFFER_WINDOW_MS: z.coerce.number().int().min(0).default(500),
+    GATEWAY_BUFFER_WINDOW_BYTES: z.coerce.number().int().min(0).default(2048),
+    GATEWAY_REDIS_FAILURE_MODE: z
+      .enum(["strict", "lenient"])
+      .default("strict"),
+    GATEWAY_IDEMPOTENCY_TTL_SEC: z.coerce.number().int().min(0).default(300),
+    GATEWAY_TRUSTED_PROXIES: z.string().default(""),
+    GATEWAY_OAUTH_REFRESH_LEAD_MIN: z.coerce.number().int().min(1).default(10),
+    GATEWAY_OAUTH_MAX_FAIL: z.coerce.number().int().min(1).default(3),
+    GATEWAY_QUEUE_SATURATE_THRESHOLD: z.coerce.number().int().min(1).default(5000),
+  })
+  .superRefine((data, ctx) => {
+    if (!data.ENABLE_GATEWAY) {
+      return;
+    }
+
+    const requiredGatewayFields = [
+      "GATEWAY_BASE_URL",
+      "REDIS_URL",
+      "CREDENTIAL_ENCRYPTION_KEY",
+      "API_KEY_HASH_PEPPER",
+    ] as const;
+
+    for (const field of requiredGatewayFields) {
+      if (data[field] === undefined || data[field] === null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: `${field} is required when ENABLE_GATEWAY is true`,
+        });
+      }
+    }
+  });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
 
