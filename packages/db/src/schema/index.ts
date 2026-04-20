@@ -6,3 +6,4 @@ export * from "./invites.js";
 export * from "./audit.js";
 export * from "./accounts.js";
 export * from "./credentialVault.js";
+export * from "./apiKeys.js";
