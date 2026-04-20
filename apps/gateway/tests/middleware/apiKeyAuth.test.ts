@@ -293,7 +293,23 @@ describe("apiKeyAuth middleware", () => {
     await app.close();
   });
 
-  it("13. case-insensitive bearer → 200", async () => {
+  it("13. soft-deleted org → 401 key_invalid (db returns [] when org.deletedAt set)", async () => {
+    // When organizations.deletedAt IS NOT NULL, the isNull(organizations.deletedAt)
+    // filter in the WHERE clause causes the DB to return no rows — same path as
+    // any other invalid key, so no info leakage about whether the key existed.
+    const app = await buildTestApp([]);
+    const res = await app.inject({
+      method: "GET",
+      url: "/echo",
+      headers: { authorization: `Bearer ${RAW_KEY}` },
+      remoteAddress: "10.0.0.1",
+    });
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ error: "key_invalid" });
+    await app.close();
+  });
+
+  it("14. case-insensitive bearer → 200", async () => {
     const app = await buildTestApp([BASE_FIXTURE]);
     const res = await app.inject({
       method: "GET",

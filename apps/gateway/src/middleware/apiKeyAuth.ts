@@ -1,5 +1,5 @@
 import fp from "fastify-plugin";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import ipaddr from "ipaddr.js";
 import { hashApiKey } from "@aide/gateway-core";
 import { apiKeys, users, organizations } from "@aide/db";
@@ -61,7 +61,7 @@ export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(async (fastify, opts) => {
       .from(apiKeys)
       .innerJoin(users, eq(users.id, apiKeys.userId))
       .innerJoin(organizations, eq(organizations.id, apiKeys.orgId))
-      .where(eq(apiKeys.keyHash, keyHash))
+      .where(and(eq(apiKeys.keyHash, keyHash), isNull(organizations.deletedAt)))
       .limit(1)
       .then((r) => r[0]);
 
