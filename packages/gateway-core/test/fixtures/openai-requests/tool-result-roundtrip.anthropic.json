@@ -1,0 +1,44 @@
+{
+  "model": "gpt-4o",
+  "messages": [
+    { "role": "user", "content": "What's the weather in Paris?" },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "call_abc123",
+          "name": "get_weather",
+          "input": { "location": "Paris", "unit": "celsius" }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_abc123",
+          "content": "15°C, partly cloudy"
+        }
+      ]
+    },
+    { "role": "user", "content": "Thanks, should I bring an umbrella?" }
+  ],
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Get current weather",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "location": { "type": "string" },
+          "unit": { "type": "string" }
+        },
+        "required": ["location"]
+      }
+    }
+  ],
+  "tool_choice": { "type": "tool", "name": "get_weather" },
+  "max_tokens": 512
+}
