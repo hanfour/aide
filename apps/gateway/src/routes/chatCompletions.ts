@@ -13,6 +13,7 @@ import { resolveCredential } from "../runtime/resolveCredential.js";
 import { maybeRefreshOAuth } from "../runtime/oauthRefresh.js";
 import { callUpstreamMessages } from "../runtime/upstreamCall.js";
 import { acquireSlot, releaseSlot } from "../redis/slots.js";
+import { emitUsageLog } from "../runtime/usageLogging.js";
 
 export interface ChatCompletionsRouteOptions {
   env: ServerEnv;
@@ -71,6 +72,15 @@ export async function chatCompletionsRoutes(
 
       const requestId = req.id;
       const upstreamBodyBuf = Buffer.from(JSON.stringify(anthropicBody));
+
+      // Capture start time BEFORE the failover loop so durationMs includes
+      // request translation + credential resolve + slot acquire + failover
+      // switches. See usageLogging.ts for payload semantics.
+      const startedAtMs = Date.now();
+      // Pull client-requested model from the already-validated body. This
+      // is the OpenAI model name (e.g., "gpt-4") the client sent — distinct
+      // from the Anthropic upstream model that comes back in `parsed.model`.
+      const requestedModel = body.model;
 
       try {
         const openaiResponse = await runFailover({
@@ -141,6 +151,26 @@ export async function chatCompletionsRoutes(
 
               // Parse Anthropic response and translate to OpenAI shape.
               const parsed = JSON.parse(result.body.toString("utf8"));
+
+              // Enqueue usage-log INSIDE the attempt callback on the success
+              // path so `account`, `parsed`, and `startedAtMs` are all in
+              // scope without threading closure state out of the failover
+              // loop. emitUsageLog never throws — residual errors are logged
+              // but do not block the user response. `platform: "openai"` is
+              // the inbound surface (client speaks OpenAI); upstream remains
+              // Anthropic regardless.
+              await emitUsageLog({
+                app,
+                req,
+                requestedModel,
+                accountId: account.id,
+                upstreamResponse: parsed,
+                platform: "openai",
+                surface: "chat-completions",
+                statusCode: 200,
+                durationMs: Date.now() - startedAtMs,
+              });
+
               return translateAnthropicToOpenAI(parsed);
             } finally {
               await releaseSlot(
