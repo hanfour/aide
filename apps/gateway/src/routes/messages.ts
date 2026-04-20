@@ -1,8 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import type { ServerEnv } from "@aide/config";
-import { eq } from "drizzle-orm";
-import { upstreamAccounts } from "@aide/db";
-import { selectAccountIds } from "../runtime/selectAccount.js";
+import { selectAccounts } from "../runtime/selectAccount.js";
 import { resolveCredential } from "../runtime/resolveCredential.js";
 import { callUpstreamMessages } from "../runtime/upstreamCall.js";
 import { acquireSlot, releaseSlot } from "../redis/slots.js";
@@ -14,7 +12,11 @@ export interface MessagesRouteOptions {
 /** Safety-net expiry: slot key expires in Redis even if release is missed. */
 const SLOT_DURATION_MS = 60_000;
 
-const HOP_BY_HOP = new Set(["content-length", "transfer-encoding", "connection"]);
+const HOP_BY_HOP = new Set([
+  "content-length",
+  "transfer-encoding",
+  "connection",
+]);
 
 export async function messagesRoutes(
   app: FastifyInstance,
@@ -44,35 +46,25 @@ export async function messagesRoutes(
       return;
     }
 
-    // Step 5: account selection
-    const candidateIds = await selectAccountIds(app.db, {
+    // Step 2 early-exit: model must be present before any DB/Redis work.
+    if (typeof body.model !== "string" || body.model.length === 0) {
+      reply.code(400).send({ error: "missing_model" });
+      return;
+    }
+
+    // Step 5: account selection — returns rows with id + concurrency in one query.
+    const candidates = await selectAccounts(app.db, {
       orgId: req.apiKey.orgId,
       teamId: req.apiKey.teamId,
     });
-    if (candidateIds.length === 0) {
+    if (candidates.length === 0) {
       reply.code(503).send({ error: "no_upstream_available" });
       return;
     }
 
     // TODO(part-6): failover loop — for now take only the first candidate.
-    const accountId = candidateIds[0]!;
-
-    // Load the full account row to get the concurrency cap.
-    const account = await app.db
-      .select({
-        id: upstreamAccounts.id,
-        concurrency: upstreamAccounts.concurrency,
-      })
-      .from(upstreamAccounts)
-      .where(eq(upstreamAccounts.id, accountId))
-      .limit(1)
-      .then((r) => r[0]);
-
-    if (!account) {
-      // Race: account deleted between selectAccountIds and this load.
-      reply.code(503).send({ error: "no_upstream_available" });
-      return;
-    }
+    const account = candidates[0]!;
+    const accountId = account.id;
 
     // Step 6: per-account concurrency slot via Redis ZSET.
     // TODO(part-6): user-level concurrency slot (users table has no concurrency column yet).

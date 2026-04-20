@@ -9,7 +9,7 @@ import pg from "pg";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { organizations, teams, upstreamAccounts } from "@aide/db";
-import { selectAccountIds } from "../../src/runtime/selectAccount.js";
+import { selectAccounts } from "../../src/runtime/selectAccount.js";
 
 const require = createRequire(import.meta.url);
 const migrationsFolder = path.resolve(
@@ -52,7 +52,7 @@ beforeEach(async () => {
   await db.delete(upstreamAccounts);
 });
 
-describe("selectAccountIds", () => {
+describe("selectAccounts", () => {
   it("team-override beats org-level even with worse priority", async () => {
     const [orgLevel] = await db
       .insert(upstreamAccounts)
@@ -82,12 +82,12 @@ describe("selectAccountIds", () => {
       })
       .returning();
 
-    const ids = await selectAccountIds(db as never, { orgId, teamId });
+    const rows = await selectAccounts(db as never, { orgId, teamId });
 
-    expect(ids).toHaveLength(2);
+    expect(rows).toHaveLength(2);
     // Team-scoped account must come first regardless of priority
-    expect(ids[0]).toBe(teamLevel!.id);
-    expect(ids[1]).toBe(orgLevel!.id);
+    expect(rows[0]!.id).toBe(teamLevel!.id);
+    expect(rows[1]!.id).toBe(orgLevel!.id);
   });
 
   it("rate-limited account is skipped when reset_at is in the future", async () => {
@@ -118,9 +118,9 @@ describe("selectAccountIds", () => {
       rateLimitResetAt: future,
     });
 
-    const ids = await selectAccountIds(db as never, { orgId, teamId: null });
+    const rows = await selectAccounts(db as never, { orgId, teamId: null });
 
-    expect(ids).toEqual([active!.id]);
+    expect(rows.map(r => r.id)).toEqual([active!.id]);
   });
 
   it("rate-limited account is re-eligible when reset_at is in the past", async () => {
@@ -141,9 +141,9 @@ describe("selectAccountIds", () => {
       })
       .returning();
 
-    const ids = await selectAccountIds(db as never, { orgId, teamId: null });
+    const rows = await selectAccounts(db as never, { orgId, teamId: null });
 
-    expect(ids).toContain(account!.id);
+    expect(rows.map(r => r.id)).toContain(account!.id);
   });
 
   it("account with overload_until in the future is skipped", async () => {
@@ -173,9 +173,9 @@ describe("selectAccountIds", () => {
       overloadUntil: future,
     });
 
-    const ids = await selectAccountIds(db as never, { orgId, teamId: null });
+    const rows = await selectAccounts(db as never, { orgId, teamId: null });
 
-    expect(ids).toEqual([active!.id]);
+    expect(rows.map(r => r.id)).toEqual([active!.id]);
   });
 
   it("excludeIds filters out specified accounts", async () => {
@@ -221,16 +221,16 @@ describe("selectAccountIds", () => {
       })
       .returning();
 
-    const ids = await selectAccountIds(db as never, {
+    const rows = await selectAccounts(db as never, {
       orgId,
       teamId: null,
       excludeIds: [account2!.id],
     });
 
-    expect(ids).toHaveLength(2);
-    expect(ids).not.toContain(account2!.id);
-    expect(ids).toContain(account1!.id);
-    expect(ids).toContain(account3!.id);
+    expect(rows).toHaveLength(2);
+    expect(rows.map(r => r.id)).not.toContain(account2!.id);
+    expect(rows.map(r => r.id)).toContain(account1!.id);
+    expect(rows.map(r => r.id)).toContain(account3!.id);
   });
 
   it("account with deleted_at set is skipped", async () => {
@@ -258,9 +258,9 @@ describe("selectAccountIds", () => {
       deletedAt: new Date(),
     });
 
-    const ids = await selectAccountIds(db as never, { orgId, teamId: null });
+    const rows = await selectAccounts(db as never, { orgId, teamId: null });
 
-    expect(ids).toEqual([active!.id]);
+    expect(rows.map(r => r.id)).toEqual([active!.id]);
   });
 
   it("account with schedulable=false is skipped", async () => {
@@ -287,9 +287,9 @@ describe("selectAccountIds", () => {
       status: "active",
     });
 
-    const ids = await selectAccountIds(db as never, { orgId, teamId: null });
+    const rows = await selectAccounts(db as never, { orgId, teamId: null });
 
-    expect(ids).toEqual([active!.id]);
+    expect(rows.map(r => r.id)).toEqual([active!.id]);
   });
 
   it("ordering by last_used_at NULLS FIRST — unused account sorts before recently-used", async () => {
@@ -323,18 +323,18 @@ describe("selectAccountIds", () => {
       })
       .returning();
 
-    const ids = await selectAccountIds(db as never, { orgId, teamId: null });
+    const rows = await selectAccounts(db as never, { orgId, teamId: null });
 
-    expect(ids).toHaveLength(2);
+    expect(rows).toHaveLength(2);
     // NULL last_used_at should come first
-    expect(ids[0]).toBe(neverUsed!.id);
-    expect(ids[1]).toBe(recentlyUsed!.id);
+    expect(rows[0]!.id).toBe(neverUsed!.id);
+    expect(rows[1]!.id).toBe(recentlyUsed!.id);
   });
 
   it("returns empty array when no eligible accounts exist", async () => {
-    const ids = await selectAccountIds(db as never, { orgId, teamId: null });
+    const rows = await selectAccounts(db as never, { orgId, teamId: null });
 
-    expect(ids).toEqual([]);
+    expect(rows).toEqual([]);
   });
 
   it("temp_unschedulable_until in the future skips the account", async () => {
@@ -364,9 +364,9 @@ describe("selectAccountIds", () => {
       tempUnschedulableUntil: future,
     });
 
-    const ids = await selectAccountIds(db as never, { orgId, teamId: null });
+    const rows = await selectAccounts(db as never, { orgId, teamId: null });
 
-    expect(ids).toEqual([active!.id]);
+    expect(rows.map(r => r.id)).toEqual([active!.id]);
   });
 
   it("excludes accounts from other organizations (cross-org isolation)", async () => {
@@ -393,8 +393,8 @@ describe("selectAccountIds", () => {
         platform: "anthropic",
         type: "api_key",
       });
-    const ids = await selectAccountIds(db as never, { orgId, teamId: null });
-    expect(ids).toEqual([mine!.id]);
+    const rows = await selectAccounts(db as never, { orgId, teamId: null });
+    expect(rows.map(r => r.id)).toEqual([mine!.id]);
   });
 
   it("excludes accounts with status != 'active'", async () => {
@@ -408,8 +408,8 @@ describe("selectAccountIds", () => {
         type: "api_key",
         status: "inactive",
       });
-    const ids = await selectAccountIds(db as never, { orgId, teamId: null });
-    expect(ids).toEqual([]);
+    const rows = await selectAccounts(db as never, { orgId, teamId: null });
+    expect(rows).toEqual([]);
   });
 
   it("excludeIds: [] does not generate invalid SQL (empty-array guard)", async () => {
@@ -423,11 +423,20 @@ describe("selectAccountIds", () => {
         type: "api_key",
       })
       .returning();
-    const ids = await selectAccountIds(db as never, {
+    const rows = await selectAccounts(db as never, {
       orgId,
       teamId: null,
       excludeIds: [],
     });
-    expect(ids).toEqual([acct!.id]);
+    expect(rows.map(r => r.id)).toEqual([acct!.id]);
+  });
+
+  it("returns concurrency along with id", async () => {
+    const [acct] = await db
+      .insert(upstreamAccounts)
+      .values({ orgId, teamId: null, name: "high-concurrency", platform: "anthropic", type: "api_key", concurrency: 7 })
+      .returning();
+    const rows = await selectAccounts(db as never, { orgId, teamId: null });
+    expect(rows).toEqual([{ id: acct!.id, concurrency: 7 }]);
   });
 });

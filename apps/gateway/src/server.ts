@@ -18,7 +18,10 @@ export interface BuildOpts {
 
 export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
   const enabled = opts.env.ENABLE_GATEWAY;
-  const app = Fastify({ logger: { level: opts.env.LOG_LEVEL } });
+  const app = Fastify({
+    logger: { level: opts.env.LOG_LEVEL },
+    bodyLimit: opts.env.GATEWAY_MAX_BODY_BYTES,
+  });
   await app.register(metricsPlugin);
   app.get("/health", async () =>
     enabled ? { status: "ok" } : { status: "disabled" },

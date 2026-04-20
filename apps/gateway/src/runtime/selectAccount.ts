@@ -1,13 +1,4 @@
-import {
-  and,
-  asc,
-  eq,
-  isNull,
-  lt,
-  notInArray,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, asc, eq, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { upstreamAccounts } from "@aide/db";
 import type { Database } from "@aide/db";
 
@@ -18,10 +9,15 @@ export interface SelectAccountInput {
   limit?: number;
 }
 
-export async function selectAccountIds(
+export interface SelectedAccount {
+  id: string;
+  concurrency: number;
+}
+
+export async function selectAccounts(
   db: Database,
   input: SelectAccountInput,
-): Promise<string[]> {
+): Promise<SelectedAccount[]> {
   const limit = input.limit ?? 5;
   const exclude = input.excludeIds ?? [];
   const now = new Date();
@@ -29,7 +25,10 @@ export async function selectAccountIds(
   // When teamId is provided: allow team-scoped (teamId = ?) OR org-level (teamId IS NULL).
   // When teamId is null: only org-level accounts.
   const teamPredicate = input.teamId
-    ? or(eq(upstreamAccounts.teamId, input.teamId), isNull(upstreamAccounts.teamId))
+    ? or(
+        eq(upstreamAccounts.teamId, input.teamId),
+        isNull(upstreamAccounts.teamId),
+      )
     : isNull(upstreamAccounts.teamId);
 
   const conditions = [
@@ -59,8 +58,11 @@ export async function selectAccountIds(
     conditions.push(notInArray(upstreamAccounts.id, exclude));
   }
 
-  const rows = await db
-    .select({ id: upstreamAccounts.id })
+  return db
+    .select({
+      id: upstreamAccounts.id,
+      concurrency: upstreamAccounts.concurrency,
+    })
     .from(upstreamAccounts)
     .where(and(...conditions))
     .orderBy(
@@ -71,6 +73,4 @@ export async function selectAccountIds(
       sql`${upstreamAccounts.lastUsedAt} ASC NULLS FIRST`,
     )
     .limit(limit);
-
-  return rows.map((r) => r.id);
 }
