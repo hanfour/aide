@@ -19,6 +19,12 @@
  * (DLQ). The worker keeps the `gw_queue_dlq_count` gauge in sync after each
  * flush so dashboards reflect the failed-set size in near real time.
  *
+ * Duplicate retries (BullMQ re-delivering a job whose prior commit lost its
+ * ACK) are handled inside the txn via ON CONFLICT DO NOTHING on request_id.
+ * A mixed batch of new + duplicate payloads commits cleanly — quota_used_usd
+ * is only bumped for rows that were actually inserted this time, so a single
+ * request_id can never double-charge. See writeUsageLogBatch.ts for details.
+ *
  * Why a batcher (vs polling Queue.getJobs):
  *   BullMQ's Worker model is per-job. To batch we set `concurrency = batchSize`
  *   and let the Worker invoke our processor up to N times in parallel. Each
@@ -299,6 +305,14 @@ export class UsageLogWorker {
    * per-entry promises on commit; rejects them all with the txn error on
    * failure.  After completion, refreshes the queueDepth + queueDlqCount
    * metrics from BullMQ.
+   *
+   * Duplicate-retry semantics: `writeUsageLogBatch` uses ON CONFLICT DO
+   * NOTHING on request_id, so a batch mixing new payloads with retries of
+   * previously-committed jobs (BullMQ missed ACK) commits cleanly.  Every
+   * per-job promise in such a batch resolves; for the duplicate entries
+   * that means "DB state was already correct, BullMQ marks the job
+   * complete without re-charging quota".  The reject path below only
+   * fires for genuine txn failures (FK violation, connection loss, etc.).
    *
    * Concurrency guard: this is fire-and-forget from add(), so two callers
    * (size trigger + time trigger) could both schedule a flush. The `sealed`

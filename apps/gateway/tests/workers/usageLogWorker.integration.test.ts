@@ -360,6 +360,146 @@ describe("UsageLogWorker — batched insert + quota update", () => {
     await queue.close();
   }, 60_000);
 
+  it("mixed batch of duplicate + new request_ids drains to completed (no poison-batch DLQ)", async () => {
+    // Regression test for the poison-batch fix: a BullMQ redelivery of a
+    // previously-committed job (missed ACK) arriving alongside legitimate
+    // new jobs must NOT take down the whole batch.  Before the fix the
+    // UNIQUE(request_id) collision aborted the txn and every job retried
+    // to DLQ.  After the fix the duplicate is silently deduped inside
+    // the same txn, new rows commit, all jobs mark completed.
+    const keyOld = await seedApiKey("k-old");
+    const keyNew = await seedApiKey("k-new");
+    const TOTAL_COST = "0.0200000000";
+
+    // 1. Pre-seed 50 "already committed" rows directly into usage_logs
+    //    with deterministic request_ids.  Quota bumped to match so the
+    //    starting state is consistent (50 × $0.02 = $1.00).
+    const preCommittedIds: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      const reqId = `req-dup-${keyOld.id.slice(0, 8)}-${i}`;
+      preCommittedIds.push(reqId);
+      await db.insert(usageLogs).values({
+        requestId: reqId,
+        userId,
+        apiKeyId: keyOld.id,
+        accountId,
+        orgId,
+        teamId: null,
+        requestedModel: "claude-sonnet-4-5",
+        upstreamModel: "claude-sonnet-4-5-20250101",
+        platform: "anthropic",
+        surface: "messages",
+        stream: false,
+        inputTokens: 100,
+        outputTokens: 200,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        inputCost: "0.0010000000",
+        outputCost: "0.0020000000",
+        cacheCreationCost: "0",
+        cacheReadCost: "0",
+        totalCost: TOTAL_COST,
+        rateMultiplier: "1.0000",
+        accountRateMultiplier: "1.0000",
+        statusCode: 200,
+        durationMs: 1234,
+        firstTokenMs: null,
+        bufferReleasedAtMs: null,
+        upstreamRetries: 0,
+        failedAccountIds: [],
+        userAgent: null,
+        ipAddress: null,
+      });
+    }
+    await db
+      .update(apiKeys)
+      .set({ quotaUsedUsd: "1.00000000" })
+      .where(eq(apiKeys.id, keyOld.id));
+
+    // 2. Build the queue.
+    const queue = createUsageLogQueue({
+      connection: {
+        host: redisHost,
+        port: redisPort,
+        maxRetriesPerRequest: null,
+      },
+    });
+
+    // 3. Enqueue 100 jobs: 50 duplicates (same request_ids as pre-seeded)
+    //    + 50 brand-new jobs for keyNew.  A BullMQ restart would plausibly
+    //    redeliver up to `concurrency` previously-ACKed jobs alongside
+    //    freshly-produced ones; we simulate that race directly.
+    const enqueues: Promise<unknown>[] = [];
+    for (let i = 0; i < 50; i++) {
+      // Duplicate: same requestId as the pre-seeded row.
+      const payload = {
+        ...makePayload(keyOld.id, TOTAL_COST, i),
+        requestId: preCommittedIds[i]!,
+      };
+      enqueues.push(enqueueUsageLog(queue, payload));
+    }
+    for (let i = 0; i < 50; i++) {
+      // New: distinct requestId derived from keyNew.
+      enqueues.push(
+        enqueueUsageLog(queue, makePayload(keyNew.id, TOTAL_COST, 1000 + i)),
+      );
+    }
+    await Promise.all(enqueues);
+
+    // 4. Start the worker with a small batch to guarantee mixed batches.
+    const dlqGauge = recordingGauge();
+    const worker = new UsageLogWorker(db, {
+      logger: silentLogger(),
+      connection: {
+        host: redisHost,
+        port: redisPort,
+        maxRetriesPerRequest: null,
+      },
+      queue,
+      metrics: { queueDepth: recordingGauge(), queueDlqCount: dlqGauge },
+      batchSize: 25,
+      flushIntervalMs: 200,
+    });
+    worker.start();
+
+    try {
+      // All 100 jobs must drain to completed, zero to failed.
+      await waitFor(async () => {
+        const c = await queue.getJobCounts("completed", "failed");
+        return (c.completed ?? 0) >= 100 && (c.failed ?? 0) === 0;
+      }, 20_000);
+    } finally {
+      await worker.stop();
+    }
+
+    // 5. usage_logs row count = 50 pre-seeded + 50 new = 100.  No dup
+    //    rows created.
+    const totalRows = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(usageLogs);
+    expect(totalRows[0]!.count).toBe(100);
+
+    // 6. keyOld quota unchanged: still $1.00 from the pre-seed.  If the
+    //    dup path accidentally bumped quota, this would be $2.00.
+    const [keyOldRow] = await db
+      .select({ used: apiKeys.quotaUsedUsd })
+      .from(apiKeys)
+      .where(eq(apiKeys.id, keyOld.id));
+    expect(Number(keyOldRow!.used)).toBeCloseTo(1.0, 8);
+
+    // 7. keyNew quota bumped exactly once per new row: 50 × $0.02 = $1.00.
+    const [keyNewRow] = await db
+      .select({ used: apiKeys.quotaUsedUsd })
+      .from(apiKeys)
+      .where(eq(apiKeys.id, keyNew.id));
+    expect(Number(keyNewRow!.used)).toBeCloseTo(1.0, 8);
+
+    // 8. DLQ stayed empty — the poison-batch bug is dead.
+    expect(dlqGauge.value).toBe(0);
+
+    await queue.close();
+  }, 60_000);
+
   it("retries failed batches up to attempts=3 then lands in DLQ; gauge reflects failure count", async () => {
     // 1. Seed one valid api_key — but enqueue all jobs with a NON-EXISTENT
     //    apiKeyId so the multi-row INSERT FK violation aborts the whole txn.

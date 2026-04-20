@@ -9,8 +9,9 @@
  *
  * Coverage:
  *   - single-payload write commits with the correct row + quota update
- *   - duplicate request_id raises (matches the documented retry caveat —
- *     no onConflictDoNothing, so a UNIQUE collision aborts the txn)
+ *   - duplicate request_id is silently deduped by ON CONFLICT DO NOTHING;
+ *     the txn commits, quota is NOT re-bumped for the duplicate, and
+ *     new rows in the same mixed batch still commit and bump quota
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
@@ -194,28 +195,111 @@ describe("writeUsageLogBatch — standalone helper", () => {
     expect(rows[0]!.count).toBe(0);
   });
 
-  it("rejects on duplicate request_id (UNIQUE constraint, txn rolls back)", async () => {
-    // Documents the retry caveat called out in writeUsageLogBatch.ts: there
-    // is no onConflictDoNothing, so a duplicate request_id aborts the whole
-    // txn.  This is intentional — silently accepting would double-charge
-    // quota_used_usd on the inline-fallback retry path.
+  it("dedups duplicate request_id via ON CONFLICT DO NOTHING (txn commits, quota not re-bumped)", async () => {
+    // Exercises the poison-batch fix: a duplicate request_id must NOT
+    // abort the txn.  A downstream retry (e.g., BullMQ lost ACK after a
+    // prior commit) should silently no-op for the duplicate row and let
+    // any other rows in the same batch commit.  The quota bump must
+    // happen exactly once across both calls.
     const key = await seedApiKey("k-dup");
     const payload = makePayload(key.id, "0.0100000000", "req-dup-1");
 
     await writeUsageLogBatch(db, [payload]);
-    await expect(writeUsageLogBatch(db, [payload])).rejects.toThrow();
+    await expect(writeUsageLogBatch(db, [payload])).resolves.toBeUndefined();
 
-    // Only one row, only one quota bump — the failed retry rolled back.
+    // Only one row persisted; the duplicate was dropped.
     const rows = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(usageLogs)
       .where(eq(usageLogs.requestId, "req-dup-1"));
     expect(rows[0]!.count).toBe(1);
 
+    // Quota bumped exactly once — not twice.
     const [keyRow] = await db
       .select({ used: apiKeys.quotaUsedUsd })
       .from(apiKeys)
       .where(eq(apiKeys.id, key.id));
     expect(Number(keyRow!.used)).toBeCloseTo(0.01, 8);
+  });
+
+  it("mixed batch of new + duplicate request_ids: new rows commit, duplicates are no-ops, quota bumped only for new", async () => {
+    // This is the real poison-batch scenario: a batch contains a
+    // previously-committed job (duplicate from a missed ACK) alongside
+    // legitimate new jobs.  Before the fix, the UNIQUE collision aborted
+    // the whole txn and ALL jobs eventually landed in DLQ.  With ON
+    // CONFLICT DO NOTHING, the new rows still commit and the duplicate
+    // is silently skipped.
+    const keyA = await seedApiKey("k-mix-a");
+    const keyB = await seedApiKey("k-mix-b");
+    const keyD = await seedApiKey("k-mix-d");
+
+    // First batch: A, B, C (all new, C shares keyA with A).  Seed three
+    // rows so the quota post-state for each key is deterministic.
+    const payloadA = makePayload(keyA.id, "0.0100000000", "req-mix-A");
+    const payloadB = makePayload(keyB.id, "0.0200000000", "req-mix-B");
+    const payloadC = makePayload(keyA.id, "0.0300000000", "req-mix-C");
+    await writeUsageLogBatch(db, [payloadA, payloadB, payloadC]);
+
+    // Second batch: A (duplicate), B (duplicate), D (new).  Must commit
+    // cleanly and only bump quota for D's key.
+    const payloadD = makePayload(keyD.id, "0.0400000000", "req-mix-D");
+    await expect(
+      writeUsageLogBatch(db, [payloadA, payloadB, payloadD]),
+    ).resolves.toBeUndefined();
+
+    // Four unique rows total (A, B, C, D) — no duplicates written.
+    const totalRows = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(usageLogs);
+    expect(totalRows[0]!.count).toBe(4);
+
+    // keyA quota = A ($0.01) + C ($0.03) = $0.04 — NOT bumped again.
+    const [keyARow] = await db
+      .select({ used: apiKeys.quotaUsedUsd })
+      .from(apiKeys)
+      .where(eq(apiKeys.id, keyA.id));
+    expect(Number(keyARow!.used)).toBeCloseTo(0.04, 8);
+
+    // keyB quota = B ($0.02) — NOT bumped again.
+    const [keyBRow] = await db
+      .select({ used: apiKeys.quotaUsedUsd })
+      .from(apiKeys)
+      .where(eq(apiKeys.id, keyB.id));
+    expect(Number(keyBRow!.used)).toBeCloseTo(0.02, 8);
+
+    // keyD quota = D ($0.04) — bumped exactly once (new row in 2nd batch).
+    const [keyDRow] = await db
+      .select({ used: apiKeys.quotaUsedUsd })
+      .from(apiKeys)
+      .where(eq(apiKeys.id, keyD.id));
+    expect(Number(keyDRow!.used)).toBeCloseTo(0.04, 8);
+  });
+
+  it("whole-batch duplicates: txn commits with no quota update and no new rows", async () => {
+    // Edge case: every payload in the batch is a duplicate.  The insert
+    // returns zero rows, so the grouping step short-circuits and no
+    // UPDATE runs.  The txn still commits cleanly.
+    const key = await seedApiKey("k-all-dup");
+    const payload1 = makePayload(key.id, "0.0100000000", "req-all-dup-1");
+    const payload2 = makePayload(key.id, "0.0200000000", "req-all-dup-2");
+
+    await writeUsageLogBatch(db, [payload1, payload2]);
+
+    // Replay both payloads — both should be silently deduped.
+    await expect(
+      writeUsageLogBatch(db, [payload1, payload2]),
+    ).resolves.toBeUndefined();
+
+    const totalRows = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(usageLogs);
+    expect(totalRows[0]!.count).toBe(2);
+
+    // Quota bumped once (from the first call), not twice.
+    const [keyRow] = await db
+      .select({ used: apiKeys.quotaUsedUsd })
+      .from(apiKeys)
+      .where(eq(apiKeys.id, key.id));
+    expect(Number(keyRow!.used)).toBeCloseTo(0.03, 8);
   });
 });

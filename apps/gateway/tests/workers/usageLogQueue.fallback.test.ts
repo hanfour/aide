@@ -106,10 +106,20 @@ interface FakeDb {
 }
 
 function makeFakeDb(txOutcome: "commit" | Error = "commit"): FakeDb {
-  // Insert chain: tx.insert(table).values(rows) — both methods return the
-  // same chainable object that resolves when awaited.
+  // Insert chain with the ON CONFLICT DO NOTHING ... RETURNING tail that
+  // `writeUsageLogBatch` exercises.  `values(rows)` captures how many rows
+  // were offered so `returning()` can resolve with one dedup-result per
+  // row — simulating the "no conflicts" happy path the fallback test
+  // depends on.  A more adversarial test would simulate a conflict by
+  // returning fewer rows, but here we only care about routing.
+  let lastInsertedRows: Array<{ requestId: string }> = [];
   const insertChain = {
-    values: vi.fn(async () => undefined),
+    values: vi.fn((rows: Array<{ requestId: string }>) => {
+      lastInsertedRows = rows.map((r) => ({ requestId: r.requestId }));
+      return insertChain;
+    }),
+    onConflictDoNothing: vi.fn(() => insertChain),
+    returning: vi.fn(async () => lastInsertedRows),
   };
   // Update chain: tx.update(table).set(...).where(...).
   const updateChain = {
@@ -332,11 +342,20 @@ describe("enqueueUsageLog — inline DB fallback (Task 7.3)", () => {
     ) => Promise<void>;
     expect(typeof cb).toBe("function");
 
-    let capturedRows: unknown[] | null = null;
+    let capturedRows: Array<{ requestId: string }> | null = null;
+    // Mirror the full insert chain `writeUsageLogBatch` exercises:
+    // .values(rows).onConflictDoNothing(...).returning(...).  The
+    // returning step echoes back all supplied rows so the "no conflicts,
+    // quota update runs" path is what the test observes.
     const insertChain = {
-      values: vi.fn(async (rows: unknown[]) => {
+      values: vi.fn((rows: Array<{ requestId: string }>) => {
         capturedRows = rows;
+        return insertChain;
       }),
+      onConflictDoNothing: vi.fn(() => insertChain),
+      returning: vi.fn(async () =>
+        (capturedRows ?? []).map((r) => ({ requestId: r.requestId })),
+      ),
     };
     const updateChain = {
       set: vi.fn(() => updateChain),
@@ -354,6 +373,8 @@ describe("enqueueUsageLog — inline DB fallback (Task 7.3)", () => {
     // not the raw input or an empty array).
     expect(txStub.insert).toHaveBeenCalledTimes(1);
     expect(insertChain.values).toHaveBeenCalledTimes(1);
+    expect(insertChain.onConflictDoNothing).toHaveBeenCalledTimes(1);
+    expect(insertChain.returning).toHaveBeenCalledTimes(1);
     expect(capturedRows).not.toBeNull();
     const rows = capturedRows as unknown as {
       requestId: string;
