@@ -69,6 +69,14 @@ export class StreamUsageExtractor {
   /** UTF-8 streaming decoder — carries partial multi-byte sequences across pushes. */
   readonly #decoder = new TextDecoder("utf-8");
 
+  /**
+   * True when the previous decoded segment ended with a lone `\r` that we
+   * stripped pending the next push.  Lets us safely fold a `\r\n` sequence
+   * even when the CR and LF arrive in different chunks, without paying the
+   * O(N²) cost of re-normalising the whole accumulated buffer on every push.
+   */
+  #pendingCR = false;
+
   #model = "";
   #inputTokens = 0;
   #outputTokensFromStart = 0;
@@ -86,9 +94,25 @@ export class StreamUsageExtractor {
   push(chunk: Buffer): void {
     if (chunk.length === 0) return;
 
-    // Append decoded bytes and normalise line endings once.
-    this.#buf += this.#decoder.decode(chunk, { stream: true });
-    this.#buf = this.#buf.replace(/\r\n/g, "\n");
+    // Decode just the new bytes and normalise the new segment only — the
+    // previous `this.#buf = this.#buf.replace(...)` form ran on the whole
+    // accumulated buffer on every push (O(N²) over the stream).  Restrict
+    // normalisation to the freshly-decoded slice; carry a single trailing
+    // `\r` over to the next push so a `\r\n` split across chunk boundaries
+    // still folds correctly.  This is the canonical SSE-parser pattern.
+    let decoded = this.#decoder.decode(chunk, { stream: true });
+    if (decoded.length === 0) return;
+
+    if (this.#pendingCR) {
+      decoded = "\r" + decoded;
+      this.#pendingCR = false;
+    }
+    if (decoded.endsWith("\r")) {
+      decoded = decoded.slice(0, -1);
+      this.#pendingCR = true;
+    }
+    decoded = decoded.replace(/\r\n/g, "\n");
+    this.#buf += decoded;
 
     // Consume every completed event (terminated by a blank line == `\n\n`).
     let boundary: number;

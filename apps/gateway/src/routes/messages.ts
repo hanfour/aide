@@ -325,6 +325,13 @@ async function runStreamingFailover(
       const extractor = new StreamUsageExtractor();
       let firstTokenAtMs: number | null = null;
       let bufferReleasedAtMs: number | null = null;
+      // Double-emit guard: protects against the narrow race where the
+      // `for await` upstream loop's `done: true` exit and a follow-up
+      // iteration's `req.raw.destroyed` check could BOTH fire an
+      // `emitUsageLog` call in the same microtask window, billing the
+      // user twice for one request.  Set BEFORE the awaited emit so any
+      // path that yields and re-enters sees the guard as tripped.
+      let emitted = false;
 
       const buffer = new SmartBuffer({
         windowMs: opts.env.GATEWAY_BUFFER_WINDOW_MS,
@@ -403,6 +410,8 @@ async function runStreamingFailover(
             // consumed tokens, so the user pays). Status 499 reflects the
             // client-closed-request convention and is distinct from the
             // happy-path 200 path below.
+            if (emitted) return;
+            emitted = true;
             await emitUsageLog({
               app,
               req,
@@ -448,7 +457,11 @@ async function runStreamingFailover(
 
         // Happy-path completion: enqueue the usage-log row.  Placed AFTER
         // reply.raw.end() so the client-visible response isn't gated on
-        // usage-log emission; emitUsageLog itself never throws.
+        // usage-log emission; emitUsageLog itself never throws.  Guarded
+        // by `emitted` so a same-tick race with the client-disconnect path
+        // can't double-bill.
+        if (emitted) return;
+        emitted = true;
         await emitUsageLog({
           app,
           req,
@@ -497,6 +510,13 @@ async function runStreamingFailover(
           { err: errMsg, accountId: account.id },
           "stream error after commit",
         );
+        // If the happy-path or client-disconnect emit already fired (e.g.
+        // the for-await loop completed cleanly and a downstream throw
+        // landed us here), skip the second emit to avoid double-billing.
+        if (emitted) {
+          return;
+        }
+        emitted = true;
         await emitUsageLog({
           app,
           req,
