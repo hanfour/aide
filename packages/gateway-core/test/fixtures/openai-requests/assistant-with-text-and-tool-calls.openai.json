@@ -1,0 +1,14 @@
+{
+  "model": "claude-3-5-sonnet-20241022",
+  "messages": [
+    { "role": "user", "content": "Help me calculate." },
+    {
+      "role": "assistant",
+      "content": "I'll use the calculator to help.",
+      "tool_calls": [
+        { "id": "tc_1", "type": "function", "function": { "name": "calculate", "arguments": "{\"expression\":\"2+2\"}" } }
+      ]
+    }
+  ],
+  "max_tokens": 1024
+}

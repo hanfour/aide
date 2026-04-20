@@ -106,9 +106,20 @@ function translateMessage(msg: OpenAIChatMessage): AnthropicMessage {
     msg.tool_calls !== undefined &&
     msg.tool_calls.length > 0
   ) {
-    // assistant tool call → tool_use blocks
-    const blocks: AnthropicToolUseBlock[] =
-      msg.tool_calls.map(translateToolCall);
+    // assistant message with tool calls — emit text blocks first, then tool_use blocks
+    const blocks: Array<AnthropicTextBlock | AnthropicToolUseBlock> = [];
+    if (typeof msg.content === "string" && msg.content.length > 0) {
+      blocks.push({ type: "text", text: msg.content });
+    } else if (Array.isArray(msg.content)) {
+      for (const part of msg.content) {
+        if (part.type === "text" && part.text) {
+          blocks.push({ type: "text", text: part.text });
+        }
+      }
+    }
+    for (const tc of msg.tool_calls) {
+      blocks.push(translateToolCall(tc));
+    }
     return { role: "assistant", content: blocks };
   }
 
@@ -188,25 +199,29 @@ function normalizeMediaType(
   return "image/png"; // default for unknown
 }
 
-function translateToolCall(tc: OpenAIToolCall): AnthropicToolUseBlock {
-  let input: Record<string, unknown> = {};
+function parseToolArgs(raw: string): Record<string, unknown> {
   try {
-    const parsed: unknown = JSON.parse(tc.function.arguments);
+    const parsed = JSON.parse(raw);
     if (
-      parsed !== null &&
-      typeof parsed === "object" &&
-      !Array.isArray(parsed)
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
     ) {
-      input = parsed as Record<string, unknown>;
+      throw new Error("tool_call.function.arguments must be a JSON object");
     }
-  } catch {
-    // malformed arguments — keep empty object
+    return parsed as Record<string, unknown>;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Invalid tool_call.function.arguments JSON: ${msg}`);
   }
+}
+
+function translateToolCall(tc: OpenAIToolCall): AnthropicToolUseBlock {
   return {
     type: "tool_use",
     id: tc.id,
     name: tc.function.name,
-    input,
+    input: parseToolArgs(tc.function.arguments),
   };
 }
 

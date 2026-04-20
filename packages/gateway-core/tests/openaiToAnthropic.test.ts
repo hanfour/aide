@@ -24,6 +24,7 @@ const FIXTURE_NAMES = [
   "tool-result-roundtrip",
   "image-input",
   "tool-choice-required",
+  "assistant-with-text-and-tool-calls",
 ] as const;
 
 describe("translateOpenAIToAnthropic", () => {
@@ -111,6 +112,29 @@ describe("translateOpenAIToAnthropic", () => {
       messages: [{ role: "user", content: "Hi" }],
     });
     expect("system" in result).toBe(false);
+  });
+
+  it("throws when tool_calls has malformed arguments JSON", () => {
+    const req = {
+      model: "claude-3-5-sonnet-20241022",
+      messages: [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "tc_1",
+              type: "function",
+              function: { name: "calc", arguments: "{not valid json" },
+            },
+          ],
+        },
+      ],
+      max_tokens: 1024,
+    };
+    expect(() => translateOpenAIToAnthropic(req as any)).toThrow(
+      /Invalid tool_call\.function\.arguments/,
+    );
   });
 
   it("base64 data URI image_url → base64 image block", () => {
