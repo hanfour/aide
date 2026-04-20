@@ -7,3 +7,4 @@ export * from "./audit.js";
 export * from "./accounts.js";
 export * from "./credentialVault.js";
 export * from "./apiKeys.js";
+export * from "./usageLogs.js";
