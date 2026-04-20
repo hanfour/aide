@@ -126,11 +126,14 @@ function recordingLogger(): RecordingLogger {
   return logger;
 }
 
-function recordingCounter(): CounterLike & { value: number } {
+function recordingCounter(): CounterLike & { readonly value: number } {
+  let value = 0;
   return {
-    value: 0,
+    get value() {
+      return value;
+    },
     inc(n = 1) {
-      this.value += n;
+      value = value + n;
     },
   };
 }

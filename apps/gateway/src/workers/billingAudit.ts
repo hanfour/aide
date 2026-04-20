@@ -31,7 +31,7 @@
  * `runOnce()` is exposed for tests so the timer is not in the loop.
  */
 
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import type { Database } from "@aide/db";
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
@@ -108,12 +108,20 @@ export interface BillingAuditResult {
 
 // ── Worker ───────────────────────────────────────────────────────────────────
 
+/**
+ * NOTE: Revoked api_keys (revoked_at IS NOT NULL) are excluded from sampling.
+ * Drift that existed at the moment of revocation is permanently invisible to
+ * this audit. Plan 4D may add a one-time reconciliation at revocation time;
+ * until then, operators should manually verify quota_used_usd matches
+ * SUM(usage_logs.total_cost) before revoking any high-volume key.
+ */
 export class BillingAudit {
   readonly #db: Database;
   readonly #logger: BillingAuditLogger;
   readonly #metrics: BillingAuditMetrics;
   readonly #intervalMs: number;
   readonly #sampleRatio: number;
+  readonly #sampleRatioLiteral: SQL;
   readonly #driftThresholdUsd: number;
   readonly #jitter: () => number;
   #handle: ReturnType<typeof setTimeout> | null = null;
@@ -126,6 +134,13 @@ export class BillingAudit {
     this.#sampleRatio = clampSampleRatio(
       opts.sampleRatio ?? DEFAULT_SAMPLE_RATIO,
     );
+    // Postgres needs the BERNOULLI percentage as a literal; we've already
+    // validated `sampleRatio` to a sane numeric range above, so wrapping it
+    // with sql.raw() here is safe.  Building the literal in the constructor
+    // (rather than in runOnce) makes it visually unambiguous that the value
+    // passed to sql.raw is the validated private field, not user input that
+    // could leak through a future refactor.
+    this.#sampleRatioLiteral = sql.raw(this.#sampleRatio.toString());
     this.#driftThresholdUsd =
       opts.driftThresholdUsd ?? DEFAULT_DRIFT_THRESHOLD_USD;
     this.#jitter = opts.jitter ?? defaultJitter;
@@ -161,10 +176,10 @@ export class BillingAudit {
    */
   async runOnce(): Promise<BillingAuditResult> {
     const threshold = this.#driftThresholdUsd;
-    // Postgres needs the BERNOULLI percentage as a literal; we've already
-    // validated `sampleRatio` to a sane numeric range, so embedding it here
-    // is safe.  Other values flow through parameterised binds.
-    const ratioLiteral = sql.raw(this.#sampleRatio.toString());
+    // Stamp every per-key event from this tick (and the summary) with the
+    // same ISO timestamp so forensics can link individual drift/violation
+    // entries back to their summary line.
+    const auditRunAt = new Date().toISOString();
 
     const rows = await this.#db.execute<{
       api_key_id: string;
@@ -181,7 +196,7 @@ export class BillingAudit {
             (SELECT SUM(total_cost) FROM usage_logs WHERE api_key_id = ak.id),
             0
           ) AS actual_sum
-        FROM api_keys ak TABLESAMPLE BERNOULLI(${ratioLiteral})
+        FROM api_keys ak TABLESAMPLE BERNOULLI(${this.#sampleRatioLiteral})
         WHERE ak.revoked_at IS NULL
       )
       SELECT
@@ -203,6 +218,7 @@ export class BillingAudit {
       this.#logger.warn(
         {
           type: "gw_billing_drift",
+          auditRunAt,
           apiKeyId: row.api_key_id,
           expected: row.expected,
           actual: row.actual,
@@ -216,6 +232,7 @@ export class BillingAudit {
         this.#logger.error(
           {
             type: "gw_billing_monotonicity_violation",
+            auditRunAt,
             apiKeyId: row.api_key_id,
             expected: row.expected,
             actual: row.actual,
@@ -233,6 +250,7 @@ export class BillingAudit {
 
     this.#logger.info(
       {
+        auditRunAt,
         sampled: result.sampled,
         drifted: result.drifted,
         monotonicityViolations: result.monotonicityViolations,
