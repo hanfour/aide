@@ -277,10 +277,10 @@ describe("buildUsageLogPayload", () => {
       pricing,
     });
     expect(payload.userAgent).toBeNull();
-    // Empty string ip → null per the `typeof === "string"` check is true, but
-    // empty-string is still a string; the helper preserves whatever Fastify
-    // set. Assert current behaviour so regressions are visible.
-    expect(typeof payload.ipAddress).toBe("string");
+    // Empty-string ip → null: Postgres `inet` rejects empty strings, so the
+    // helper normalises `""` to `null` before enqueue. (Non-empty strings
+    // are preserved verbatim; Fastify always sets a sensible value in prod.)
+    expect(payload.ipAddress).toBeNull();
   });
 
   it("9. platform=openai + surface=chat-completions propagate", () => {
@@ -313,7 +313,9 @@ describe("emitUsageLog", () => {
   it("10. happy path — enqueues with fallback wired", async () => {
     const addFn = vi.fn().mockResolvedValue({ id: "stub" });
     const app = makeApp({
-      usageLogQueue: { add: addFn } as unknown as FastifyInstance["usageLogQueue"],
+      usageLogQueue: {
+        add: addFn,
+      } as unknown as FastifyInstance["usageLogQueue"],
     });
     const req = makeReq({ id: "req-emit-happy" });
 
@@ -372,7 +374,9 @@ describe("emitUsageLog", () => {
   it("12. pricing miss — bumps counter + warn + still enqueues zero-cost row", async () => {
     const addFn = vi.fn().mockResolvedValue({ id: "stub" });
     const app = makeApp({
-      usageLogQueue: { add: addFn } as unknown as FastifyInstance["usageLogQueue"],
+      usageLogQueue: {
+        add: addFn,
+      } as unknown as FastifyInstance["usageLogQueue"],
     });
     const req = makeReq({ id: "req-miss-1" });
 
@@ -406,7 +410,9 @@ describe("emitUsageLog", () => {
     // gw_usage_persist_lost + re-throw. emitUsageLog must swallow that.
     const addFn = vi.fn().mockRejectedValue(new Error("redis down"));
     const app = makeApp({
-      usageLogQueue: { add: addFn } as unknown as FastifyInstance["usageLogQueue"],
+      usageLogQueue: {
+        add: addFn,
+      } as unknown as FastifyInstance["usageLogQueue"],
     });
     const req = makeReq({ id: "req-fail-1" });
 
@@ -432,6 +438,43 @@ describe("emitUsageLog", () => {
     expect(req.log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ requestId: "req-fail-1" }),
       expect.stringContaining("usage log persist failed"),
+    );
+  });
+
+  it("14. buildUsageLogPayload/metering throws — warn but do not throw (never-throws contract)", async () => {
+    // Force a throw on the payload-building side of emitUsageLog by handing
+    // it an `app` whose `gwMetrics` is undefined. When the upstream body
+    // triggers a pricing miss, emitUsageLog will dereference
+    // `app.gwMetrics.pricingMissTotal.inc` and hit a TypeError — exactly
+    // the kind of unexpected failure the widened try/catch must swallow.
+    const badApp = {
+      db: { __marker: "fake-db" },
+      usageLogQueue: undefined,
+      gwMetrics: undefined, // ← missing; .pricingMissTotal access will throw
+    } as unknown as FastifyInstance;
+    const req = makeReq({ id: "req-build-throw-1" });
+
+    await expect(
+      emitUsageLog({
+        app: badApp,
+        req,
+        requestedModel: "unknown-xyz",
+        accountId: VALID_UUID_ACCT,
+        upstreamResponse: {
+          // Pricing miss → hits the gwMetrics access that will throw.
+          model: "unknown-xyz",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+        platform: "anthropic",
+        surface: "messages",
+        statusCode: 200,
+        durationMs: 1,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(req.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: "req-build-throw-1" }),
+      expect.stringContaining("usage log emit failed; user request unaffected"),
     );
   });
 });

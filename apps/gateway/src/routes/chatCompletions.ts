@@ -149,8 +149,26 @@ export async function chatCompletionsRoutes(
                 };
               }
 
-              // Parse Anthropic response and translate to OpenAI shape.
-              const parsed = JSON.parse(result.body.toString("utf8"));
+              // Parse Anthropic response defensively. A malformed 2xx body
+              // would otherwise throw synchronously and cascade into the
+              // failover loop as a 503, even though the upstream actually
+              // succeeded. Mirror messages.ts behaviour: parse in try/catch,
+              // record a zero-usage log row, then throw a 502 so the client
+              // sees an honest upstream-malformed error.
+              let parsed: unknown = null;
+              let parseErr: unknown = null;
+              try {
+                parsed = JSON.parse(result.body.toString("utf8"));
+              } catch (err) {
+                parseErr = err;
+                req.log.warn(
+                  {
+                    requestId,
+                    err: err instanceof Error ? err.message : String(err),
+                  },
+                  "upstream 2xx body was not valid JSON; emitting zero-usage log then failing",
+                );
+              }
 
               // Enqueue usage-log INSIDE the attempt callback on the success
               // path so `account`, `parsed`, and `startedAtMs` are all in
@@ -158,7 +176,9 @@ export async function chatCompletionsRoutes(
               // loop. emitUsageLog never throws — residual errors are logged
               // but do not block the user response. `platform: "openai"` is
               // the inbound surface (client speaks OpenAI); upstream remains
-              // Anthropic regardless.
+              // Anthropic regardless. On parse failure, parsed === null and
+              // `extractUsageFromAnthropicResponse` zero-fills the row so the
+              // forensic entry still gets written.
               await emitUsageLog({
                 app,
                 req,
@@ -171,7 +191,16 @@ export async function chatCompletionsRoutes(
                 durationMs: Date.now() - startedAtMs,
               });
 
-              return translateAnthropicToOpenAI(parsed);
+              if (parseErr !== null) {
+                // Treat malformed 2xx as a fatal upstream error. The failover
+                // loop classifier will surface this as 502 to the client —
+                // honest about what actually happened.
+                throw { status: 502, message: "upstream_malformed_json" };
+              }
+
+              return translateAnthropicToOpenAI(
+                parsed as Parameters<typeof translateAnthropicToOpenAI>[0],
+              );
             } finally {
               await releaseSlot(
                 app.redis,

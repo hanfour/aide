@@ -213,7 +213,12 @@ export function buildUsageLogPayload(
       typeof input.req.headers["user-agent"] === "string"
         ? input.req.headers["user-agent"]
         : null,
-    ipAddress: typeof input.req.ip === "string" ? input.req.ip : null,
+    // Empty-string → null: an empty `req.ip` is not a valid address and the
+    // downstream persister (Postgres `inet`) would reject it anyway.
+    ipAddress:
+      typeof input.req.ip === "string" && input.req.ip.length > 0
+        ? input.req.ip
+        : null,
   };
 
   return { payload, cost };
@@ -249,61 +254,82 @@ export interface EmitUsageLogInput {
  */
 export async function emitUsageLog(input: EmitUsageLogInput): Promise<void> {
   const { app, req } = input;
-  const { payload, cost } = buildUsageLogPayload({
-    req,
-    requestedModel: input.requestedModel,
-    accountId: input.accountId,
-    upstreamResponse: input.upstreamResponse,
-    platform: input.platform,
-    surface: input.surface,
-    statusCode: input.statusCode,
-    durationMs: input.durationMs,
-    pricing: getPricing(),
-  });
-
-  if (cost.miss) {
-    // Bump the counter using the upstream-reported model (empty string when
-    // the upstream omitted it — still a valid label value for the counter).
-    app.gwMetrics.pricingMissTotal.inc({ model: payload.upstreamModel });
-    req.log.warn(
-      {
-        requestId: payload.requestId,
-        upstreamModel: payload.upstreamModel,
-        requestedModel: payload.requestedModel,
-      },
-      "pricing miss — usage log row will record zero cost",
-    );
-  }
-
-  if (!app.usageLogQueue) {
-    // Test mode (server.ts skips BullMQ when opts.redis is injected).
-    req.log.debug(
-      { requestId: payload.requestId },
-      "usage log queue absent; skipping enqueue (test mode)",
-    );
-    return;
-  }
-
+  // Top-level try/catch enforces the documented never-throws contract:
+  // a successful upstream response must never surface as a 500 to the
+  // client because of a usage-log-emission failure. This wraps EVERY
+  // code path — `getPricing()` (disk-read on first call), the synchronous
+  // `buildUsageLogPayload`, the pricing-miss metering, AND the enqueue
+  // — so any thrown error lands here and is logged, not propagated.
   try {
-    await enqueueUsageLog(app.usageLogQueue, payload, {
-      fallback: {
-        db: app.db,
-        logger: req.log,
-        // Direct Counter ref — satisfies UsageLogFallbackMetrics via `.inc()`.
-        metrics: app.gwMetrics.usagePersistLostTotal,
-      },
+    const { payload, cost } = buildUsageLogPayload({
+      req,
+      requestedModel: input.requestedModel,
+      accountId: input.accountId,
+      upstreamResponse: input.upstreamResponse,
+      platform: input.platform,
+      surface: input.surface,
+      statusCode: input.statusCode,
+      durationMs: input.durationMs,
+      pricing: getPricing(),
     });
-  } catch (enqueueErr) {
-    // BullMQ failed AND inline fallback also failed. The structured
-    // `gw_usage_persist_lost` log + metric already happened inside
-    // `enqueueUsageLog`. Don't fail the user request — just acknowledge.
+
+    if (cost.miss) {
+      // Bump the counter using the upstream-reported model (empty string when
+      // the upstream omitted it — still a valid label value for the counter).
+      app.gwMetrics.pricingMissTotal.inc({ model: payload.upstreamModel });
+      req.log.warn(
+        {
+          requestId: payload.requestId,
+          upstreamModel: payload.upstreamModel,
+          requestedModel: payload.requestedModel,
+        },
+        "pricing miss — usage log row will record zero cost",
+      );
+    }
+
+    if (!app.usageLogQueue) {
+      // Test mode (server.ts skips BullMQ when opts.redis is injected).
+      req.log.debug(
+        { requestId: payload.requestId },
+        "usage log queue absent; skipping enqueue (test mode)",
+      );
+      return;
+    }
+
+    try {
+      await enqueueUsageLog(app.usageLogQueue, payload, {
+        fallback: {
+          db: app.db,
+          logger: req.log,
+          // Direct Counter ref — satisfies UsageLogFallbackMetrics via `.inc()`.
+          metrics: app.gwMetrics.usagePersistLostTotal,
+        },
+      });
+    } catch (enqueueErr) {
+      // BullMQ failed AND inline fallback also failed. The structured
+      // `gw_usage_persist_lost` log + metric already happened inside
+      // `enqueueUsageLog`. Don't fail the user request — just acknowledge.
+      req.log.warn(
+        {
+          err:
+            enqueueErr instanceof Error
+              ? enqueueErr.message
+              : String(enqueueErr),
+          requestId: payload.requestId,
+        },
+        "usage log persist failed (already metered as gw_usage_persist_lost)",
+      );
+    }
+  } catch (err) {
+    // Something upstream of the enqueue failed — pricing load, payload
+    // construction, or metric increment. Record it and return without
+    // throwing so the user's successful response is unaffected.
     req.log.warn(
       {
-        err:
-          enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr),
-        requestId: payload.requestId,
+        err: err instanceof Error ? err.message : String(err),
+        requestId: req.id,
       },
-      "usage log persist failed (already metered as gw_usage_persist_lost)",
+      "usage log emit failed; user request unaffected",
     );
   }
 }
