@@ -7,6 +7,7 @@ import { dbPlugin } from "./plugins/db.js";
 import { redisPlugin } from "./redis/client.js";
 import { apiKeyAuthPlugin } from "./middleware/apiKeyAuth.js";
 import { messagesRoutes } from "./routes/messages.js";
+import { chatCompletionsRoutes } from "./routes/chatCompletions.js";
 
 export interface BuildOpts {
   env: ServerEnv;
@@ -34,6 +35,7 @@ export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
   await app.register(redisPlugin, { env: opts.env, client: opts.redis });
   await app.register(apiKeyAuthPlugin, { env: opts.env });
   await app.register(messagesRoutes, { env: opts.env });
+  await app.register(chatCompletionsRoutes, { env: opts.env });
   return app;
 }
 
