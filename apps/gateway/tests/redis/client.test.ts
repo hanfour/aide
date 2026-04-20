@@ -1,0 +1,138 @@
+import { describe, it, expect, vi, afterEach } from "vitest";
+import Fastify, { type FastifyInstance } from "fastify";
+import RedisMock from "ioredis-mock";
+import type { ServerEnv } from "@aide/config";
+import { redisPlugin } from "../../src/redis/client.js";
+
+function makeEnv(overrides: Partial<ServerEnv> = {}): ServerEnv {
+  return {
+    NODE_ENV: "test",
+    DATABASE_URL: "postgresql://u:p@localhost/db",
+    AUTH_SECRET: "a".repeat(32),
+    NEXTAUTH_URL: "http://localhost:3000",
+    GOOGLE_CLIENT_ID: "g",
+    GOOGLE_CLIENT_SECRET: "g",
+    GITHUB_CLIENT_ID: "gh",
+    GITHUB_CLIENT_SECRET: "gh",
+    BOOTSTRAP_SUPER_ADMIN_EMAIL: "a@b.com",
+    BOOTSTRAP_DEFAULT_ORG_SLUG: "demo",
+    BOOTSTRAP_DEFAULT_ORG_NAME: "Demo",
+    ENABLE_SWAGGER: false,
+    LOG_LEVEL: "info",
+    ENABLE_TEST_SEED: false,
+    ENABLE_GATEWAY: true,
+    GATEWAY_PORT: 3002,
+    GATEWAY_BASE_URL: "http://localhost:3002",
+    REDIS_URL: "redis://localhost:6379",
+    CREDENTIAL_ENCRYPTION_KEY: "a".repeat(64),
+    API_KEY_HASH_PEPPER: "b".repeat(64),
+    UPSTREAM_ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+    GATEWAY_MAX_ACCOUNT_SWITCHES: 10,
+    GATEWAY_MAX_BODY_BYTES: 10485760,
+    GATEWAY_BUFFER_WINDOW_MS: 500,
+    GATEWAY_BUFFER_WINDOW_BYTES: 2048,
+    GATEWAY_REDIS_FAILURE_MODE: "strict",
+    GATEWAY_IDEMPOTENCY_TTL_SEC: 300,
+    GATEWAY_TRUSTED_PROXIES: "",
+    GATEWAY_OAUTH_REFRESH_LEAD_MIN: 10,
+    GATEWAY_OAUTH_MAX_FAIL: 3,
+    GATEWAY_QUEUE_SATURATE_THRESHOLD: 5000,
+    ...overrides,
+  };
+}
+
+describe("redisPlugin", () => {
+  const apps: FastifyInstance[] = [];
+
+  afterEach(async () => {
+    for (const app of apps) {
+      await app.close();
+    }
+    apps.length = 0;
+  });
+
+  it("1. decorates fastify.redis with the injected client", async () => {
+    const mock = new RedisMock();
+    const app = Fastify({ logger: false });
+    apps.push(app);
+    await app.register(redisPlugin, { env: makeEnv(), client: mock as never });
+    await app.ready();
+    expect(app.redis).toBe(mock);
+  });
+
+  it("2. set/get round-trip works via the injected client", async () => {
+    const mock = new RedisMock();
+    const app = Fastify({ logger: false });
+    apps.push(app);
+    await app.register(redisPlugin, { env: makeEnv(), client: mock as never });
+    await app.ready();
+    await app.redis.set("foo", "bar");
+    const val = await app.redis.get("foo");
+    expect(val).toBe("bar");
+  });
+
+  it("3. onClose hook calls quit on the client", async () => {
+    const mock = new RedisMock();
+    const quitSpy = vi.spyOn(mock, "quit");
+    const app = Fastify({ logger: false });
+    // do NOT push — we close manually to verify
+    await app.register(redisPlugin, { env: makeEnv(), client: mock as never });
+    await app.ready();
+    await app.close();
+    expect(quitSpy).toHaveBeenCalledOnce();
+  });
+
+  it("4. reconnect event → fastify.log.warn with delayMs", async () => {
+    const warnSpy = vi.fn();
+    const mock = new RedisMock();
+    const app = Fastify({
+      logger: { level: "warn" },
+    });
+    apps.push(app);
+    // Override log.warn so we can assert
+    await app.register(redisPlugin, { env: makeEnv(), client: mock as never });
+    await app.ready();
+
+    // Patch the already-resolved log instance
+    app.log.warn = warnSpy;
+
+    mock.emit("reconnecting", 500);
+
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ delayMs: 500 }),
+      "redis reconnecting",
+    );
+  });
+
+  it("5. error event → fastify.log.warn with err message", async () => {
+    const warnSpy = vi.fn();
+    const mock = new RedisMock();
+    const app = Fastify({ logger: { level: "warn" } });
+    apps.push(app);
+    await app.register(redisPlugin, { env: makeEnv(), client: mock as never });
+    await app.ready();
+
+    app.log.warn = warnSpy;
+
+    const testErr = new Error("connection refused");
+    mock.emit("error", testErr);
+
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ err: "connection refused" }),
+      "redis error",
+    );
+  });
+
+  it("6. missing REDIS_URL throws when no client injection", async () => {
+    const app = Fastify({ logger: false });
+    // Do not push — will throw before ready
+    await expect(
+      app.register(redisPlugin, {
+        env: makeEnv({ REDIS_URL: undefined }),
+      }),
+    ).rejects.toThrow("REDIS_URL required when gateway is enabled");
+    await app.close();
+  });
+});
