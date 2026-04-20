@@ -1,11 +1,4 @@
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  beforeEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
@@ -24,6 +17,8 @@ import { organizations, upstreamAccounts, credentialVault } from "@aide/db";
 import { encryptCredential, decryptCredential } from "@aide/gateway-core";
 import {
   maybeRefreshOAuth,
+  persistRefresh,
+  readVaultRotatedAt,
   OAuthRefreshError,
 } from "../../src/runtime/oauthRefresh.js";
 import type { ResolvedCredential } from "../../src/runtime/resolveCredential.js";
@@ -63,7 +58,10 @@ afterAll(async () => {
 
 let tokenServer: Server;
 let tokenBaseUrl: string;
-let lastTokenRequest: { headers: IncomingMessage["headers"]; body: string } | null = null;
+let lastTokenRequest: {
+  headers: IncomingMessage["headers"];
+  body: string;
+} | null = null;
 let nextTokenResponse: { status: number; body: string };
 
 beforeAll(async () => {
@@ -109,11 +107,13 @@ function makeRedis(): Redis {
   return new RedisMock() as unknown as Redis;
 }
 
-async function seedAccount(overrides: Partial<{
-  failCount: number;
-  status: string;
-  schedulable: boolean;
-}> = {}) {
+async function seedAccount(
+  overrides: Partial<{
+    failCount: number;
+    status: string;
+    schedulable: boolean;
+  }> = {},
+) {
   const [acct] = await db
     .insert(upstreamAccounts)
     .values({
@@ -143,16 +143,18 @@ async function seedVault(
     refresh_token: credential.refreshToken,
     expires_at: credential.expiresAt.toISOString(),
   });
-  const sealed = encryptCredential({ masterKeyHex: MASTER_KEY, accountId, plaintext });
-  await db
-    .insert(credentialVault)
-    .values({
-      accountId,
-      nonce: sealed.nonce,
-      ciphertext: sealed.ciphertext,
-      authTag: sealed.authTag,
-      oauthExpiresAt: credential.expiresAt,
-    });
+  const sealed = encryptCredential({
+    masterKeyHex: MASTER_KEY,
+    accountId,
+    plaintext,
+  });
+  await db.insert(credentialVault).values({
+    accountId,
+    nonce: sealed.nonce,
+    ciphertext: sealed.ciphertext,
+    authTag: sealed.authTag,
+    oauthExpiresAt: credential.expiresAt,
+  });
 }
 
 function staleExpiresAt(now: number = Date.now()): Date {
@@ -185,12 +187,18 @@ describe("maybeRefreshOAuth", () => {
       expiresAt,
     };
 
-    const result = await maybeRefreshOAuth(db as never, redis, acct.id, currentCredential, {
-      masterKeyHex: MASTER_KEY,
-      leadMinutes: 10,
-      maxFail: 3,
-      tokenUrl: tokenBaseUrl,
-    });
+    const result = await maybeRefreshOAuth(
+      db as never,
+      redis,
+      acct.id,
+      currentCredential,
+      {
+        masterKeyHex: MASTER_KEY,
+        leadMinutes: 10,
+        maxFail: 3,
+        tokenUrl: tokenBaseUrl,
+      },
+    );
 
     expect(result).toBe(currentCredential); // same object reference
     expect(lastTokenRequest).toBeNull();
@@ -228,28 +236,44 @@ describe("maybeRefreshOAuth", () => {
       expiresAt,
     };
 
-    const result = await maybeRefreshOAuth(db as never, redis, acct.id, currentCredential, {
-      masterKeyHex: MASTER_KEY,
-      leadMinutes: 10,
-      maxFail: 5,
-      tokenUrl: tokenBaseUrl,
-    });
+    const result = await maybeRefreshOAuth(
+      db as never,
+      redis,
+      acct.id,
+      currentCredential,
+      {
+        masterKeyHex: MASTER_KEY,
+        leadMinutes: 10,
+        maxFail: 5,
+        tokenUrl: tokenBaseUrl,
+      },
+    );
 
     expect(result.type).toBe("oauth");
     expect(result.accessToken).toBe("fresh-access-token");
     expect(result.refreshToken).toBe("fresh-refresh-token");
-    expect(result.expiresAt.getTime()).toBeGreaterThan(Date.now() + 3500 * 1000);
+    expect(result.expiresAt.getTime()).toBeGreaterThan(
+      Date.now() + 3500 * 1000,
+    );
 
     const [vaultRow] = await db
-      .select({ oauthExpiresAt: credentialVault.oauthExpiresAt, rotatedAt: credentialVault.rotatedAt })
+      .select({
+        oauthExpiresAt: credentialVault.oauthExpiresAt,
+        rotatedAt: credentialVault.rotatedAt,
+      })
       .from(credentialVault)
       .where(eq(credentialVault.accountId, acct.id));
     expect(vaultRow!.oauthExpiresAt).not.toBeNull();
-    expect(vaultRow!.oauthExpiresAt!.getTime()).toBeGreaterThan(Date.now() + 3500 * 1000);
+    expect(vaultRow!.oauthExpiresAt!.getTime()).toBeGreaterThan(
+      Date.now() + 3500 * 1000,
+    );
     expect(vaultRow!.rotatedAt).not.toBeNull();
 
     const [acctRow] = await db
-      .select({ failCount: upstreamAccounts.oauthRefreshFailCount, lastError: upstreamAccounts.oauthRefreshLastError })
+      .select({
+        failCount: upstreamAccounts.oauthRefreshFailCount,
+        lastError: upstreamAccounts.oauthRefreshLastError,
+      })
       .from(upstreamAccounts)
       .where(eq(upstreamAccounts.id, acct.id));
     expect(acctRow!.failCount).toBe(0);
@@ -265,7 +289,10 @@ describe("maybeRefreshOAuth", () => {
       expiresAt,
     });
 
-    nextTokenResponse = { status: 400, body: JSON.stringify({ error: "invalid_grant" }) };
+    nextTokenResponse = {
+      status: 400,
+      body: JSON.stringify({ error: "invalid_grant" }),
+    };
 
     const redis = makeRedis();
     const currentCredential: Extract<ResolvedCredential, { type: "oauth" }> = {
@@ -311,7 +338,10 @@ describe("maybeRefreshOAuth", () => {
       expiresAt,
     });
 
-    nextTokenResponse = { status: 500, body: JSON.stringify({ error: "server_error" }) };
+    nextTokenResponse = {
+      status: 500,
+      body: JSON.stringify({ error: "server_error" }),
+    };
 
     const redis = makeRedis();
     const currentCredential: Extract<ResolvedCredential, { type: "oauth" }> = {
@@ -404,7 +434,11 @@ describe("maybeRefreshOAuth", () => {
         refresh_token: "winner-fresh-refresh",
         expires_at: freshExpiry.toISOString(),
       });
-      const sealed = encryptCredential({ masterKeyHex: MASTER_KEY, accountId: acct.id, plaintext });
+      const sealed = encryptCredential({
+        masterKeyHex: MASTER_KEY,
+        accountId: acct.id,
+        plaintext,
+      });
       await db
         .update(credentialVault)
         .set({
@@ -426,12 +460,18 @@ describe("maybeRefreshOAuth", () => {
       expiresAt: staleExpiry,
     };
 
-    const result = await maybeRefreshOAuth(db as never, redis, acct.id, currentCredential, {
-      masterKeyHex: MASTER_KEY,
-      leadMinutes: 10,
-      maxFail: 3,
-      tokenUrl: tokenBaseUrl,
-    });
+    const result = await maybeRefreshOAuth(
+      db as never,
+      redis,
+      acct.id,
+      currentCredential,
+      {
+        masterKeyHex: MASTER_KEY,
+        leadMinutes: 10,
+        maxFail: 3,
+        tokenUrl: tokenBaseUrl,
+      },
+    );
 
     clearTimeout(refreshDelay);
 
@@ -556,7 +596,10 @@ describe("maybeRefreshOAuth", () => {
       expiresAt,
     });
 
-    nextTokenResponse = { status: 500, body: JSON.stringify({ error: "internal_error" }) };
+    nextTokenResponse = {
+      status: 500,
+      body: JSON.stringify({ error: "internal_error" }),
+    };
 
     const redis = makeRedis();
     const currentCredential: Extract<ResolvedCredential, { type: "oauth" }> = {
@@ -578,6 +621,128 @@ describe("maybeRefreshOAuth", () => {
     const lockKey = `oauth-refresh:${acct.id}`;
     const exists = await redis.exists(lockKey);
     expect(exists).toBe(0);
+  });
+
+  it("11. CAS conflict: persistRefresh with stale prevRotatedAt throws OAuthRefreshError and leaves vault unchanged", async () => {
+    const acct = await seedAccount();
+    const initialRotated = new Date("2026-04-20T00:00:00Z");
+    await seedVault(acct.id, {
+      accessToken: "original-access",
+      refreshToken: "original-refresh",
+      expiresAt: new Date(Date.now() + 3600_000),
+    });
+    // Manually set rotated_at to a known value
+    await db
+      .update(credentialVault)
+      .set({ rotatedAt: initialRotated })
+      .where(eq(credentialVault.accountId, acct.id));
+
+    // Call persistRefresh with a stale prevRotatedAt that doesn't match the current DB value
+    const stalePrev = new Date("1970-01-01T00:00:00Z");
+    const staleFresh: Extract<
+      import("../../src/runtime/resolveCredential.js").ResolvedCredential,
+      { type: "oauth" }
+    > = {
+      type: "oauth",
+      accessToken: "stale",
+      refreshToken: "r",
+      expiresAt: new Date(Date.now() + 3600_000),
+    };
+
+    await expect(
+      persistRefresh(
+        db as never,
+        acct.id,
+        staleFresh,
+        MASTER_KEY,
+        () => Date.now(),
+        stalePrev,
+      ),
+    ).rejects.toThrow(/CAS conflict/);
+
+    // Vault must be unchanged
+    const [row] = await db
+      .select({ rotatedAt: credentialVault.rotatedAt })
+      .from(credentialVault)
+      .where(eq(credentialVault.accountId, acct.id))
+      .limit(1);
+    expect(row!.rotatedAt?.toISOString()).toBe(initialRotated.toISOString());
+  });
+
+  it("12. CAS happy path: persistRefresh with prevRotatedAt=null succeeds when rotated_at IS NULL", async () => {
+    const acct = await seedAccount();
+    await seedVault(acct.id, {
+      accessToken: "original-access",
+      refreshToken: "original-refresh",
+      expiresAt: new Date(Date.now() + 3600_000),
+    });
+    // Confirm rotated_at starts as null
+    const before = await readVaultRotatedAt(db as never, acct.id);
+    expect(before).toBeNull();
+
+    const fresh: Extract<
+      import("../../src/runtime/resolveCredential.js").ResolvedCredential,
+      { type: "oauth" }
+    > = {
+      type: "oauth",
+      accessToken: "fresh-access",
+      refreshToken: "fresh-refresh",
+      expiresAt: new Date(Date.now() + 3600_000),
+    };
+
+    await expect(
+      persistRefresh(
+        db as never,
+        acct.id,
+        fresh,
+        MASTER_KEY,
+        () => Date.now(),
+        null,
+      ),
+    ).resolves.toBeUndefined();
+
+    const after = await readVaultRotatedAt(db as never, acct.id);
+    expect(after).not.toBeNull();
+  });
+
+  it("13. CAS happy path: persistRefresh with prevRotatedAt=X succeeds when rotated_at matches X; rotated_at advances", async () => {
+    const acct = await seedAccount();
+    const initialRotated = new Date("2026-01-01T00:00:00Z");
+    await seedVault(acct.id, {
+      accessToken: "original-access",
+      refreshToken: "original-refresh",
+      expiresAt: new Date(Date.now() + 3600_000),
+    });
+    await db
+      .update(credentialVault)
+      .set({ rotatedAt: initialRotated })
+      .where(eq(credentialVault.accountId, acct.id));
+
+    const fresh: Extract<
+      import("../../src/runtime/resolveCredential.js").ResolvedCredential,
+      { type: "oauth" }
+    > = {
+      type: "oauth",
+      accessToken: "newer-access",
+      refreshToken: "newer-refresh",
+      expiresAt: new Date(Date.now() + 3600_000),
+    };
+
+    const nowMs = Date.now();
+    await expect(
+      persistRefresh(
+        db as never,
+        acct.id,
+        fresh,
+        MASTER_KEY,
+        () => nowMs,
+        initialRotated,
+      ),
+    ).resolves.toBeUndefined();
+
+    const after = await readVaultRotatedAt(db as never, acct.id);
+    expect(after).not.toBeNull();
+    expect(after!.getTime()).toBeGreaterThan(initialRotated.getTime());
   });
 
   it("10. token endpoint receives correct body { grant_type, refresh_token, client_id }", async () => {

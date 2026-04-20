@@ -10,6 +10,7 @@ import {
   FatalUpstreamError,
 } from "../runtime/failoverLoop.js";
 import { resolveCredential } from "../runtime/resolveCredential.js";
+import { maybeRefreshOAuth } from "../runtime/oauthRefresh.js";
 import { callUpstreamMessages } from "../runtime/upstreamCall.js";
 import { acquireSlot, releaseSlot } from "../redis/slots.js";
 
@@ -92,10 +93,22 @@ export async function chatCompletionsRoutes(
               throw { status: 503, message: "account_at_capacity" };
             }
             try {
-              const credential = await resolveCredential(app.db, account.id, {
+              let credential = await resolveCredential(app.db, account.id, {
                 masterKeyHex: opts.env.CREDENTIAL_ENCRYPTION_KEY!,
               });
-              // TODO(part-6.7): inline OAuth refresh via maybeRefreshOAuth before upstream call
+              if (credential.type === "oauth") {
+                credential = await maybeRefreshOAuth(
+                  app.db,
+                  app.redis,
+                  account.id,
+                  credential,
+                  {
+                    masterKeyHex: opts.env.CREDENTIAL_ENCRYPTION_KEY!,
+                    leadMinutes: opts.env.GATEWAY_OAUTH_REFRESH_LEAD_MIN,
+                    maxFail: opts.env.GATEWAY_OAUTH_MAX_FAIL,
+                  },
+                );
+              }
 
               const result = await callUpstreamMessages({
                 baseUrl: opts.env.UPSTREAM_ANTHROPIC_BASE_URL,
@@ -121,8 +134,7 @@ export async function chatCompletionsRoutes(
                       : undefined;
                 throw {
                   status: result.status,
-                  retryAfter:
-                    Number.isNaN(retryAfter) ? undefined : retryAfter,
+                  retryAfter: Number.isNaN(retryAfter) ? undefined : retryAfter,
                   message: text.slice(0, 500),
                 };
               }

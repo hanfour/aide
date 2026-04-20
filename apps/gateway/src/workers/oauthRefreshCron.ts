@@ -8,6 +8,7 @@ import {
   persistRefresh,
   recordFailure,
   readCredential,
+  readVaultRotatedAt,
   type OAuthRefreshOptions,
 } from "../runtime/oauthRefresh.js";
 
@@ -158,6 +159,7 @@ export class OAuthRefreshCron {
         // Defensive — shouldn't happen given the WHERE clause.
         return "skipped";
       }
+      const prevRotatedAt = await readVaultRotatedAt(this.#db, row.id);
       const fresh = await performRefresh({
         currentRefreshToken: credential.refreshToken,
         tokenUrl: this.#opts.tokenUrl ?? DEFAULT_TOKEN_URL,
@@ -170,6 +172,7 @@ export class OAuthRefreshCron {
         fresh,
         this.#opts.masterKeyHex,
         now,
+        prevRotatedAt,
       );
       this.#opts.logger?.info(
         { accountId: row.id, expiresAt: fresh.expiresAt },

@@ -1,11 +1,4 @@
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  beforeEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
@@ -63,7 +56,10 @@ afterAll(async () => {
 let tokenServer: Server;
 let tokenBaseUrl: string;
 let tokenCallCount: number;
-let lastTokenRequest: { headers: IncomingMessage["headers"]; body: string } | null;
+let lastTokenRequest: {
+  headers: IncomingMessage["headers"];
+  body: string;
+} | null;
 let nextTokenResponse: { status: number; body: string };
 
 beforeAll(async () => {
@@ -338,6 +334,14 @@ describe("OAuthRefreshCron.runOnce", () => {
     expect(acctRow!.status).toBe("error");
     expect(acctRow!.schedulable).toBe(false);
   });
+
+  // NOTE: CAS conflict coverage for persistRefresh lives in
+  // tests/runtime/oauthRefresh.integration.test.ts (tests 11–13).
+  // The cron's #processOne calls readVaultRotatedAt → performRefresh → persistRefresh
+  // in exactly the same order as maybeRefreshOAuth; the CAS predicate is exercised by
+  // those unit-level tests.  A separate cron-level CAS test would require either
+  // monkey-patching private class methods or a real race condition between two DB
+  // connections, both of which add significant fragility.  Controller-approved skip.
 
   it("8. multiple candidates: 2 refresh, 1 backoff-skipped → counts correct", async () => {
     const expiresAt = minutesFromNow(5);

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { request } from "undici";
 import type { Redis } from "ioredis";
 import { credentialVault, upstreamAccounts } from "@aide/db";
@@ -77,13 +77,21 @@ export async function maybeRefreshOAuth(
 
   if (acquired === "OK") {
     try {
+      const prevRotatedAt = await readVaultRotatedAt(db, accountId);
       const fresh = await performRefresh({
         currentRefreshToken: currentCredential.refreshToken,
         tokenUrl: opts.tokenUrl ?? DEFAULT_TOKEN_URL,
         clientId: opts.clientId ?? DEFAULT_CLIENT_ID,
         now,
       });
-      await persistRefresh(db, accountId, fresh, opts.masterKeyHex, now);
+      await persistRefresh(
+        db,
+        accountId,
+        fresh,
+        opts.masterKeyHex,
+        now,
+        prevRotatedAt,
+      );
       return fresh;
     } catch (err) {
       await recordFailure(db, accountId, err, opts.maxFail, now);
@@ -173,6 +181,7 @@ export async function performRefresh(input: {
 
 /**
  * Encrypts and persists a refreshed credential to the vault; resets fail counters on the account.
+ * Uses Compare-And-Swap on rotated_at to prevent concurrent writers from overwriting a newer token.
  * Shared with the cron worker (oauthRefreshCron.ts).
  */
 export async function persistRefresh(
@@ -181,6 +190,7 @@ export async function persistRefresh(
   credential: Extract<ResolvedCredential, { type: "oauth" }>,
   masterKeyHex: string,
   now: () => number,
+  prevRotatedAt: Date | null,
 ): Promise<void> {
   const plaintext = JSON.stringify({
     type: "oauth",
@@ -189,7 +199,13 @@ export async function persistRefresh(
     expires_at: credential.expiresAt.toISOString(),
   });
   const sealed = encryptCredential({ masterKeyHex, accountId, plaintext });
-  await db
+
+  const casCondition =
+    prevRotatedAt === null
+      ? isNull(credentialVault.rotatedAt)
+      : eq(credentialVault.rotatedAt, prevRotatedAt);
+
+  const result = await db
     .update(credentialVault)
     .set({
       nonce: sealed.nonce,
@@ -198,7 +214,17 @@ export async function persistRefresh(
       oauthExpiresAt: credential.expiresAt,
       rotatedAt: new Date(now()),
     })
-    .where(eq(credentialVault.accountId, accountId));
+    .where(and(eq(credentialVault.accountId, accountId), casCondition));
+
+  if (
+    typeof (result as { rowCount?: number }).rowCount === "number" &&
+    (result as { rowCount: number }).rowCount === 0
+  ) {
+    throw new OAuthRefreshError(
+      `CAS conflict on credential_vault for account ${accountId} — concurrent writer beat us`,
+    );
+  }
+
   await db
     .update(upstreamAccounts)
     .set({
@@ -243,6 +269,24 @@ export async function recordFailure(
     .update(upstreamAccounts)
     .set(update)
     .where(eq(upstreamAccounts.id, accountId));
+}
+
+/**
+ * Reads the rotated_at timestamp from the credential vault for a given account.
+ * Used to establish the CAS baseline before calling persistRefresh.
+ * Exported so the cron worker can use it without a separate query.
+ */
+export async function readVaultRotatedAt(
+  db: Database,
+  accountId: string,
+): Promise<Date | null> {
+  const row = await db
+    .select({ rotatedAt: credentialVault.rotatedAt })
+    .from(credentialVault)
+    .where(eq(credentialVault.accountId, accountId))
+    .limit(1)
+    .then((r) => r[0]);
+  return row?.rotatedAt ?? null;
 }
 
 /**
