@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { JobsOptions } from "bullmq";
 import {
+  buildQueueOptions,
   enqueueUsageLog,
   UsageLogJobPayload,
   USAGE_LOG_JOB_NAME,
@@ -76,6 +77,10 @@ function makeFakeQueue(returnValue: unknown = { id: "stub-job-id" }): {
   return { queue: { add }, calls, add };
 }
 
+// Stand-in connection — `buildQueueOptions` is a pure object-shaping function
+// and never touches the connection field, so any object passes through.
+const STUB_CONNECTION = { host: "localhost", port: 6379 } as const;
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("usageLogQueue constants", () => {
@@ -106,6 +111,88 @@ describe("usageLogQueue constants", () => {
   });
 });
 
+describe("buildQueueOptions", () => {
+  // These tests pin the Queue-construction path: defaults flow from
+  // USAGE_LOG_DEFAULT_JOB_OPTIONS into `defaultJobOptions`, BullMQ then merges
+  // those into every Queue.add() call. enqueueUsageLog deliberately does NOT
+  // re-spread them.
+
+  it("uses USAGE_LOG_QUEUE_PREFIX when no prefix override is supplied", () => {
+    const built = buildQueueOptions({ connection: STUB_CONNECTION });
+    expect(built.prefix).toBe(USAGE_LOG_QUEUE_PREFIX);
+  });
+
+  it("honours an explicit prefix override", () => {
+    const built = buildQueueOptions({
+      connection: STUB_CONNECTION,
+      prefix: "test:gw",
+    });
+    expect(built.prefix).toBe("test:gw");
+  });
+
+  it("forwards the connection object verbatim to BullMQ", () => {
+    const built = buildQueueOptions({ connection: STUB_CONNECTION });
+    expect(built.connection).toBe(STUB_CONNECTION);
+  });
+
+  it("includes attempts=3 + exponential backoff in defaultJobOptions", () => {
+    const built = buildQueueOptions({ connection: STUB_CONNECTION });
+    expect(built.defaultJobOptions.attempts).toBe(3);
+    expect(built.defaultJobOptions.backoff).toEqual({
+      type: "exponential",
+      delay: 1000,
+    });
+  });
+
+  it("includes removeOnComplete and removeOnFail retention in defaultJobOptions", () => {
+    const built = buildQueueOptions({ connection: STUB_CONNECTION });
+    expect(built.defaultJobOptions.removeOnComplete).toEqual({
+      age: 3600,
+      count: 1000,
+    });
+    expect(built.defaultJobOptions.removeOnFail).toEqual({ age: 86400 });
+  });
+
+  it("deep-copies the nested backoff object so mutation cannot leak into the module-level constant", () => {
+    const built = buildQueueOptions({ connection: STUB_CONNECTION });
+    // Identity check: returned backoff must not be the same reference as the
+    // shared constant. If it were, mutating the returned options would corrupt
+    // every subsequent buildQueueOptions() call.
+    expect(built.defaultJobOptions.backoff).not.toBe(
+      USAGE_LOG_DEFAULT_JOB_OPTIONS.backoff,
+    );
+
+    // Mutate the copy and verify the constant is untouched.
+    (built.defaultJobOptions.backoff as { delay: number }).delay = 9999;
+    expect(USAGE_LOG_DEFAULT_JOB_OPTIONS.backoff.delay).toBe(1000);
+  });
+
+  it("merges caller-supplied defaultJobOptions on top of the module defaults", () => {
+    const built = buildQueueOptions({
+      connection: STUB_CONNECTION,
+      defaultJobOptions: { attempts: 5 },
+    });
+    expect(built.defaultJobOptions.attempts).toBe(5);
+    // Untouched defaults should still be present.
+    expect(built.defaultJobOptions.backoff).toEqual({
+      type: "exponential",
+      delay: 1000,
+    });
+    expect(built.defaultJobOptions.removeOnFail).toEqual({ age: 86400 });
+  });
+
+  it("lets caller-supplied backoff fully replace the default backoff", () => {
+    const built = buildQueueOptions({
+      connection: STUB_CONNECTION,
+      defaultJobOptions: { backoff: { type: "fixed", delay: 500 } },
+    });
+    expect(built.defaultJobOptions.backoff).toEqual({
+      type: "fixed",
+      delay: 500,
+    });
+  });
+});
+
 describe("enqueueUsageLog", () => {
   let fake: ReturnType<typeof makeFakeQueue>;
 
@@ -129,20 +216,20 @@ describe("enqueueUsageLog", () => {
     expect(fake.calls[0]!.data).toEqual(payload);
   });
 
-  it("passes attempts=3, exponential backoff delay=1000", async () => {
-    await enqueueUsageLog(fake.queue, validPayload());
+  it("passes ONLY { jobId } in per-call opts when no caller overrides — Queue-level defaults supply the rest", async () => {
+    // Critical regression test: enqueueUsageLog must NOT re-spread the
+    // module defaults into per-call opts. Per-call opts win in BullMQ and
+    // would silently shadow whatever the Queue was constructed with.
+    await enqueueUsageLog(fake.queue, validPayload({ requestId: "req_only" }));
 
     const opts = fake.calls[0]!.opts!;
-    expect(opts.attempts).toBe(3);
-    expect(opts.backoff).toEqual({ type: "exponential", delay: 1000 });
-  });
-
-  it("passes removeOnComplete and removeOnFail retention policies", async () => {
-    await enqueueUsageLog(fake.queue, validPayload());
-
-    const opts = fake.calls[0]!.opts!;
-    expect(opts.removeOnComplete).toEqual({ age: 3600, count: 1000 });
-    expect(opts.removeOnFail).toEqual({ age: 86400 });
+    expect(Object.keys(opts).sort()).toEqual(["jobId"]);
+    expect(opts.jobId).toBe("req_only");
+    // Sanity: defaults explicitly NOT in per-call opts.
+    expect(opts.attempts).toBeUndefined();
+    expect(opts.backoff).toBeUndefined();
+    expect(opts.removeOnComplete).toBeUndefined();
+    expect(opts.removeOnFail).toBeUndefined();
   });
 
   it("returns { jobId } matching payload.requestId", async () => {
@@ -169,6 +256,13 @@ describe("enqueueUsageLog", () => {
 
   it("rejects payloads with non-UUID accountId", async () => {
     const bad = validPayload({ accountId: "not-a-uuid" });
+    await expect(enqueueUsageLog(fake.queue, bad)).rejects.toThrow();
+    expect(fake.add).not.toHaveBeenCalled();
+  });
+
+  it("rejects payloads where failedAccountIds contains a non-UUID element", async () => {
+    // Documents that array elements are validated, not just the array itself.
+    const bad = validPayload({ failedAccountIds: ["not-a-uuid"] });
     await expect(enqueueUsageLog(fake.queue, bad)).rejects.toThrow();
     expect(fake.add).not.toHaveBeenCalled();
   });
@@ -201,16 +295,20 @@ describe("enqueueUsageLog", () => {
     ).rejects.toThrow(/ECONNREFUSED/);
   });
 
-  it("per-call jobOptions override defaults except jobId", async () => {
+  it("per-call jobOptions are passed through verbatim, but jobId is always derived from payload.requestId", async () => {
     await enqueueUsageLog(fake.queue, validPayload({ requestId: "req_ovr" }), {
       jobOptions: { attempts: 7, jobId: "ignored-by-impl" },
     });
 
     const opts = fake.calls[0]!.opts!;
+    // Caller-supplied attempts flows through.
     expect(opts.attempts).toBe(7);
-    // jobId always derived from payload.requestId, never user-overridable
+    // jobId is always derived from payload.requestId, never user-overridable.
     expect(opts.jobId).toBe("req_ovr");
-    // Other defaults still present
-    expect(opts.backoff).toEqual({ type: "exponential", delay: 1000 });
+    // No defaults re-spread by enqueueUsageLog — backoff/removeOn* must come
+    // from the Queue's defaultJobOptions, not from per-call opts.
+    expect(opts.backoff).toBeUndefined();
+    expect(opts.removeOnComplete).toBeUndefined();
+    expect(opts.removeOnFail).toBeUndefined();
   });
 });

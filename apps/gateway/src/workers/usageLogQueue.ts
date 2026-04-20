@@ -123,13 +123,18 @@ export type UsageLogJobPayload = z.infer<typeof UsageLogJobPayload>;
 /**
  * Subset of BullMQ's Queue API that this module depends on. Exposed so unit
  * tests can swap in a fake without standing up a real Redis-backed queue.
+ *
+ * Note: `add` returns `Promise<unknown>` because the wrapper does not consume
+ * the return value — `enqueueUsageLog` derives `jobId` from the validated
+ * payload itself and returns that to the caller. The real BullMQ `Queue.add`
+ * resolves to a `Job` instance; tests may return any stand-in.
  */
 export interface QueueLike {
   add(
     name: string,
     data: UsageLogJobPayload,
     opts?: JobsOptions,
-  ): Promise<{ id?: string | undefined } | unknown>;
+  ): Promise<unknown>;
   close?(): Promise<void>;
 }
 
@@ -152,6 +157,40 @@ export interface CreateUsageLogQueueOptions {
   defaultJobOptions?: JobsOptions;
 }
 
+/** QueueOptions-shaped object passed to the BullMQ Queue constructor. */
+export interface BuiltQueueOptions {
+  connection: UsageLogQueueConnection;
+  prefix: string;
+  defaultJobOptions: JobsOptions;
+}
+
+/**
+ * Pure helper that builds the options object passed to `new Queue(...)`.
+ *
+ * Exposed for unit testing so the default-options-merge logic can be exercised
+ * without standing up a real Redis-backed Queue. `createUsageLogQueue` calls
+ * this and forwards the result.
+ *
+ * The nested `backoff` object is deep-copied so callers that mutate the
+ * returned options (or the constructed Queue's defaults) cannot bleed into the
+ * shared `USAGE_LOG_DEFAULT_JOB_OPTIONS` constant. Caller-supplied
+ * `defaultJobOptions` is spread last so an explicit `backoff` from the caller
+ * fully replaces the copied default.
+ */
+export function buildQueueOptions(
+  opts: CreateUsageLogQueueOptions,
+): BuiltQueueOptions {
+  return {
+    connection: opts.connection,
+    prefix: opts.prefix ?? USAGE_LOG_QUEUE_PREFIX,
+    defaultJobOptions: {
+      ...USAGE_LOG_DEFAULT_JOB_OPTIONS,
+      backoff: { ...USAGE_LOG_DEFAULT_JOB_OPTIONS.backoff },
+      ...(opts.defaultJobOptions ?? {}),
+    },
+  };
+}
+
 /**
  * Build a real BullMQ Queue wired to `aide:gw:usage-log:*`.
  *
@@ -161,14 +200,10 @@ export interface CreateUsageLogQueueOptions {
 export function createUsageLogQueue(
   opts: CreateUsageLogQueueOptions,
 ): Queue<UsageLogJobPayload> {
-  return new Queue<UsageLogJobPayload>(USAGE_LOG_QUEUE_NAME, {
-    connection: opts.connection,
-    prefix: opts.prefix ?? USAGE_LOG_QUEUE_PREFIX,
-    defaultJobOptions: {
-      ...USAGE_LOG_DEFAULT_JOB_OPTIONS,
-      ...(opts.defaultJobOptions ?? {}),
-    },
-  });
+  return new Queue<UsageLogJobPayload>(
+    USAGE_LOG_QUEUE_NAME,
+    buildQueueOptions(opts),
+  );
 }
 
 // ── Enqueue wrapper ──────────────────────────────────────────────────────────
@@ -180,9 +215,13 @@ export interface EnqueueUsageLogResult {
 
 export interface EnqueueUsageLogOptions {
   /**
-   * Extra per-call BullMQ options. Shallow-merged on top of the module
-   * defaults (incl. `jobId` derived from the payload). Provided primarily for
-   * tests / future fallback paths; production callers should pass nothing.
+   * Extra per-call BullMQ options. Shallow-merged with the derived `jobId`
+   * (`payload.requestId`). Queue-level `defaultJobOptions` (set by
+   * `createUsageLogQueue`) supply attempts/backoff/removeOn* automatically —
+   * BullMQ merges those into every `add()` call, so we deliberately do NOT
+   * re-spread them here (per-call opts win in BullMQ and would silently
+   * override Queue-level defaults). Provided primarily for tests / future
+   * fallback paths; production callers should pass nothing.
    */
   jobOptions?: JobsOptions;
 }
@@ -193,6 +232,9 @@ export interface EnqueueUsageLogOptions {
  * - jobId is set to `payload.requestId` so duplicate enqueues for the same
  *   request are no-ops (BullMQ rejects duplicate job IDs and returns the
  *   existing job).
+ * - Per-call opts are kept minimal (jobId + caller overrides only). Queue-
+ *   level `defaultJobOptions` from `createUsageLogQueue` cover retries and
+ *   retention.
  * - On Zod validation failure this throws — callers should treat that as a
  *   programmer error (the route assembled a bad payload), not a transient
  *   condition. Surface the ZodError details in logs.
@@ -207,7 +249,6 @@ export async function enqueueUsageLog(
 ): Promise<EnqueueUsageLogResult> {
   const validated = UsageLogJobPayload.parse(payload);
   const jobOptions: JobsOptions = {
-    ...USAGE_LOG_DEFAULT_JOB_OPTIONS,
     ...(opts.jobOptions ?? {}),
     jobId: validated.requestId,
   };
