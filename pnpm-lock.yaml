@@ -155,6 +155,9 @@ importers:
       '@testcontainers/postgresql':
         specifier: ^11.14.0
         version: 11.14.0
+      '@testcontainers/redis':
+        specifier: ^11.14.0
+        version: 11.14.0
       '@types/ioredis-mock':
         specifier: ^8.2.7
         version: 8.2.7(ioredis@5.10.1)
@@ -1864,6 +1867,9 @@ packages:
 
   '@testcontainers/postgresql@11.14.0':
     resolution: {integrity: sha512-wYbJn8GRTj8qfqzfVubxioYWlHJU/ImIjuzPwyy9C5Qfo6g3GLduPZAj+BifvqTZjgT3gd4gFVLCPhBji7dc1w==}
+
+  '@testcontainers/redis@11.14.0':
+    resolution: {integrity: sha512-WX005slz2JMQPw2avbSjf5awVjpmFhOs5xCxeGSYLcV5ia4W1edv/P6MdOw4dZnvDQDuN5LfqNoV/ut3XGb2pA==}
 
   '@trpc/client@11.16.0':
     resolution: {integrity: sha512-TxIzm7OoK3baKZ0XCbuMUbI3GhgjcbKHIc4nWVKaRpCRnbSh0T31BT6fTPYwtnA/Nur8pBCGqC2B4J5hEPiPFQ==}
@@ -5897,6 +5903,15 @@ snapshots:
       react: 19.2.5
 
   '@testcontainers/postgresql@11.14.0':
+    dependencies:
+      testcontainers: 11.14.0
+    transitivePeerDependencies:
+      - bare-abort-controller
+      - bare-buffer
+      - react-native-b4a
+      - supports-color
+
+  '@testcontainers/redis@11.14.0':
     dependencies:
       testcontainers: 11.14.0
     transitivePeerDependencies:
