@@ -1,0 +1,21 @@
+{
+  "id": "msg_04MixedContentExample567890",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    { "type": "text", "text": "I'll look up the weather for you." },
+    {
+      "type": "tool_use",
+      "id": "toolu_02B18r18rx18mx918946mx8",
+      "name": "get_weather",
+      "input": { "location": "Tokyo" }
+    }
+  ],
+  "model": "claude-3-5-sonnet-20241022",
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 60,
+    "output_tokens": 35
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "id": "msg_03ToolCallExample1234567890",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_01A09q90qw90lq917835lq9",
+      "name": "get_weather",
+      "input": { "location": "Paris", "unit": "celsius" }
+    }
+  ],
+  "model": "claude-3-5-sonnet-20241022",
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 80,
+    "output_tokens": 22,
+    "cache_creation_input_tokens": 10,
+    "cache_read_input_tokens": 5
+  }
+}

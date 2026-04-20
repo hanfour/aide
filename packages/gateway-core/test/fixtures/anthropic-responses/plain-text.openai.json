@@ -1,0 +1,21 @@
+{
+  "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+  "object": "chat.completion",
+  "created": 1000000,
+  "model": "claude-3-5-sonnet-20241022",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello! How can I help you today?"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 25,
+    "completion_tokens": 11,
+    "total_tokens": 36
+  }
+}

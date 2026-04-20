@@ -1,0 +1,15 @@
+{
+  "id": "msg_02ABCDEFGHIJKLMNopqrstuvwx",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    { "type": "text", "text": "Here is a very long answer that got cut off because the token limit was reached" }
+  ],
+  "model": "claude-3-haiku-20240307",
+  "stop_reason": "max_tokens",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 50,
+    "output_tokens": 100
+  }
+}
