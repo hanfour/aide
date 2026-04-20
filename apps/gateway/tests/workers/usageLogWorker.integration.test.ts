@@ -36,6 +36,7 @@ import {
   upstreamAccounts,
   usageLogs,
   users,
+  type Database,
 } from "@aide/db";
 import {
   createUsageLogQueue,
@@ -59,7 +60,10 @@ const migrationsFolder = path.resolve(
 
 let pgContainer: StartedPostgreSqlContainer;
 let pool: pg.Pool;
-let db: ReturnType<typeof drizzle>;
+// node-postgres drizzle return shape lines up with Database, but TS can't
+// infer through pg.Pool generics without the schema parameter passed to
+// createDb in @aide/db, so we keep a localized cast.
+let db: Database;
 
 let redisContainer: StartedRedisContainer;
 let redisHost: string;
@@ -72,7 +76,7 @@ let accountId: string;
 beforeAll(async () => {
   pgContainer = await new PostgreSqlContainer("postgres:16-alpine").start();
   pool = new pg.Pool({ connectionString: pgContainer.getConnectionUri() });
-  db = drizzle(pool);
+  db = drizzle(pool) as unknown as Database;
   await migrate(db, { migrationsFolder });
 
   redisContainer = await new RedisContainer("redis:7-alpine").start();
@@ -283,7 +287,7 @@ describe("UsageLogWorker — batched insert + quota update", () => {
     // 4. Start the worker.
     const queueDepthGauge = recordingGauge();
     const dlqGauge = recordingGauge();
-    const worker = new UsageLogWorker(db as never, {
+    const worker = new UsageLogWorker(db, {
       logger: silentLogger(),
       connection: {
         host: redisHost,
@@ -389,7 +393,7 @@ describe("UsageLogWorker — batched insert + quota update", () => {
 
     const queueDepthGauge = recordingGauge();
     const dlqGauge = recordingGauge();
-    const worker = new UsageLogWorker(db as never, {
+    const worker = new UsageLogWorker(db, {
       logger: silentLogger(),
       connection: {
         host: redisHost,

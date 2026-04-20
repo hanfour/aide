@@ -29,7 +29,7 @@
  *   we don't pull in the dependency.
  */
 
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, type SQL } from "drizzle-orm";
 import { Worker, type Job, type RedisOptions } from "bullmq";
 import type { Redis } from "ioredis";
 import { apiKeys, usageLogs } from "@aide/db";
@@ -193,6 +193,9 @@ export class UsageLogWorker {
     if (this.#worker !== null) {
       const w = this.#worker;
       this.#worker = null;
+      // w.close() waits for in-flight processor promises to settle, which
+      // covers the case where stop() is called mid-flush (sealed batch, txn
+      // awaiting). If this changes (e.g., forced shutdown), drain explicitly.
       await w.close();
     }
     await this.refreshMetrics().catch((err) => {
@@ -368,6 +371,9 @@ export class UsageLogWorker {
   async #runTxn(payloads: UsageLogJobPayload[]): Promise<void> {
     await this.#db.transaction(async (tx) => {
       // 1. Multi-row INSERT into usage_logs.
+      // NOTE: no .onConflictDoNothing() on request_id — if BullMQ misses the
+      // ACK after commit, retry hits UNIQUE(request_id) and the entire retry
+      // batch fails. Plan 4A Task 7.3 (inline fallback) will revisit.
       await tx.insert(usageLogs).values(
         payloads.map((p) => ({
           requestId: p.requestId,
@@ -432,12 +438,7 @@ export function groupTotalCostByApiKey(
 ): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const p of payloads) {
-    const list = out.get(p.apiKeyId);
-    if (list === undefined) {
-      out.set(p.apiKeyId, [p.totalCost]);
-    } else {
-      list.push(p.totalCost);
-    }
+    out.set(p.apiKeyId, [...(out.get(p.apiKeyId) ?? []), p.totalCost]);
   }
   return out;
 }
@@ -450,7 +451,7 @@ export function groupTotalCostByApiKey(
  *
  * Single-element batches collapse to `(v1)::numeric`, which Postgres folds.
  */
-export function buildNumericSumExpr(values: string[]) {
+export function buildNumericSumExpr(values: string[]): SQL<unknown> {
   if (values.length === 0) {
     // Defensive — shouldn't happen because groupTotalCostByApiKey only
     // produces non-empty arrays — but a 0::numeric add is a safe no-op.
