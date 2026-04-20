@@ -47,7 +47,8 @@ interface TokenResponse {
   expires_in: number;
 }
 
-const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const defaultSleep = (ms: number) =>
+  new Promise<void>((r) => setTimeout(r, ms));
 
 /**
  * Refreshes the OAuth credential if necessary; returns the (possibly fresh) credential.
@@ -118,12 +119,17 @@ export async function maybeRefreshOAuth(
   return refreshed;
 }
 
-async function performRefresh(input: {
+/**
+ * Calls the OAuth token endpoint with the given refresh token and returns the new credential.
+ * Shared with the cron worker (oauthRefreshCron.ts).
+ */
+export async function performRefresh(input: {
   currentRefreshToken: string;
   tokenUrl: string;
   clientId: string;
-  now: () => number;
+  now?: () => number;
 }): Promise<Extract<ResolvedCredential, { type: "oauth" }>> {
+  const now = input.now ?? Date.now;
   const res = await request(input.tokenUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -138,26 +144,38 @@ async function performRefresh(input: {
 
   const text = await res.body.text();
   if (res.statusCode < 200 || res.statusCode >= 300) {
-    throw new OAuthRefreshError(`token endpoint ${res.statusCode}: ${text.slice(0, 200)}`);
+    throw new OAuthRefreshError(
+      `token endpoint ${res.statusCode}: ${text.slice(0, 200)}`,
+    );
   }
   let parsed: TokenResponse;
   try {
     parsed = JSON.parse(text) as TokenResponse;
   } catch {
-    throw new OAuthRefreshError(`token endpoint returned non-JSON: ${text.slice(0, 200)}`);
+    throw new OAuthRefreshError(
+      `token endpoint returned non-JSON: ${text.slice(0, 200)}`,
+    );
   }
-  if (!parsed.access_token || !parsed.refresh_token || typeof parsed.expires_in !== "number") {
+  if (
+    !parsed.access_token ||
+    !parsed.refresh_token ||
+    typeof parsed.expires_in !== "number"
+  ) {
     throw new OAuthRefreshError("token response missing required fields");
   }
   return {
     type: "oauth",
     accessToken: parsed.access_token,
     refreshToken: parsed.refresh_token,
-    expiresAt: new Date(input.now() + parsed.expires_in * 1000),
+    expiresAt: new Date(now() + parsed.expires_in * 1000),
   };
 }
 
-async function persistRefresh(
+/**
+ * Encrypts and persists a refreshed credential to the vault; resets fail counters on the account.
+ * Shared with the cron worker (oauthRefreshCron.ts).
+ */
+export async function persistRefresh(
   db: Database,
   accountId: string,
   credential: Extract<ResolvedCredential, { type: "oauth" }>,
@@ -192,7 +210,11 @@ async function persistRefresh(
     .where(eq(upstreamAccounts.id, accountId));
 }
 
-async function recordFailure(
+/**
+ * Increments the failure counter; marks account status='error' and schedulable=false at maxFail.
+ * Shared with the cron worker (oauthRefreshCron.ts).
+ */
+export async function recordFailure(
   db: Database,
   accountId: string,
   err: unknown,
@@ -217,10 +239,17 @@ async function recordFailure(
     update.schedulable = false;
     // TODO(part-7): emit gw_oauth_refresh_dead_total{account_id}
   }
-  await db.update(upstreamAccounts).set(update).where(eq(upstreamAccounts.id, accountId));
+  await db
+    .update(upstreamAccounts)
+    .set(update)
+    .where(eq(upstreamAccounts.id, accountId));
 }
 
-async function readCredential(
+/**
+ * Reads and decrypts the credential vault row for a given account.
+ * Shared with the cron worker (oauthRefreshCron.ts).
+ */
+export async function readCredential(
   db: Database,
   accountId: string,
   masterKeyHex: string,
@@ -236,12 +265,18 @@ async function readCredential(
     .limit(1)
     .then((r) => r[0]);
   if (!row) {
-    throw new OAuthRefreshError(`credential vault row missing for account ${accountId}`);
+    throw new OAuthRefreshError(
+      `credential vault row missing for account ${accountId}`,
+    );
   }
   const plaintext = decryptCredential({
     masterKeyHex,
     accountId,
-    sealed: { nonce: row.nonce, ciphertext: row.ciphertext, authTag: row.authTag },
+    sealed: {
+      nonce: row.nonce,
+      ciphertext: row.ciphertext,
+      authTag: row.authTag,
+    },
   });
   const parsed = JSON.parse(plaintext) as Record<string, unknown>;
   if (parsed.type !== "oauth") {
