@@ -368,4 +368,66 @@ describe("selectAccountIds", () => {
 
     expect(ids).toEqual([active!.id]);
   });
+
+  it("excludes accounts from other organizations (cross-org isolation)", async () => {
+    const [otherOrg] = await db
+      .insert(organizations)
+      .values({ slug: "other-org-cross-isolation", name: "Other Org" })
+      .returning();
+    const [mine] = await db
+      .insert(upstreamAccounts)
+      .values({
+        orgId,
+        teamId: null,
+        name: "mine",
+        platform: "anthropic",
+        type: "api_key",
+      })
+      .returning();
+    await db
+      .insert(upstreamAccounts)
+      .values({
+        orgId: otherOrg!.id,
+        teamId: null,
+        name: "theirs",
+        platform: "anthropic",
+        type: "api_key",
+      });
+    const ids = await selectAccountIds(db as never, { orgId, teamId: null });
+    expect(ids).toEqual([mine!.id]);
+  });
+
+  it("excludes accounts with status != 'active'", async () => {
+    await db
+      .insert(upstreamAccounts)
+      .values({
+        orgId,
+        teamId: null,
+        name: "inactive",
+        platform: "anthropic",
+        type: "api_key",
+        status: "inactive",
+      });
+    const ids = await selectAccountIds(db as never, { orgId, teamId: null });
+    expect(ids).toEqual([]);
+  });
+
+  it("excludeIds: [] does not generate invalid SQL (empty-array guard)", async () => {
+    const [acct] = await db
+      .insert(upstreamAccounts)
+      .values({
+        orgId,
+        teamId: null,
+        name: "a",
+        platform: "anthropic",
+        type: "api_key",
+      })
+      .returning();
+    const ids = await selectAccountIds(db as never, {
+      orgId,
+      teamId: null,
+      excludeIds: [],
+    });
+    expect(ids).toEqual([acct!.id]);
+  });
 });
