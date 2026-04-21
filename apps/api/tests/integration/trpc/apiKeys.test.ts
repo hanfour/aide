@@ -342,6 +342,60 @@ describe("apiKeys router", () => {
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
+  it("revealViaToken: a different authenticated user (not the targetUser) → NOT_FOUND; targetUser can still claim afterwards", async () => {
+    const org = await makeOrg(t.db);
+    const admin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const targetA = await makeUser(t.db, {
+      role: "member",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    // Same-org colleague, also a member — has a valid session but is NOT the
+    // intended recipient. Must not be able to claim the misdirected URL.
+    const userB = await makeUser(t.db, {
+      role: "member",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const adminCaller = await callerFor({
+      db: t.db,
+      userId: admin.id,
+      redis,
+    });
+    const issued = await adminCaller.apiKeys.issueForUser({
+      orgId: org.id,
+      targetUserId: targetA.id,
+      name: "scoped-to-targetA",
+    });
+    const token = issued.revealUrl.split("/").pop()!;
+
+    // Wrong user attempts to claim → NOT_FOUND (no existence leak; userB
+    // can't tell the token is valid for someone else).
+    const callerB = await callerFor({ db: t.db, userId: userB.id, redis });
+    await expect(
+      callerB.apiKeys.revealViaToken({ token }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    // The CAS predicate also requires revealedAt IS NULL — userB's failed
+    // attempt must NOT have flipped revealedAt, so the targetUser can still
+    // claim the URL successfully.
+    const callerA = await callerFor({
+      db: t.db,
+      userId: targetA.id,
+      redis,
+    });
+    const result = await callerA.apiKeys.revealViaToken({ token });
+    expect(result.id).toBe(issued.id);
+    expect(result.raw.startsWith("ak_")).toBe(true);
+  });
+
   it("listOwn: returns only the caller's keys and excludes revoked rows", async () => {
     const org = await makeOrg(t.db);
     const a = await makeUser(t.db, {
@@ -376,6 +430,8 @@ describe("apiKeys router", () => {
     // No key material in the response.
     expect(list[0]).not.toHaveProperty("keyHash");
     expect(list[0]).not.toHaveProperty("raw");
+    expect(list[0]).not.toHaveProperty("revealTokenHash");
+    expect(list[0]).not.toHaveProperty("revealedByIp");
   });
 
   it("listOrg: org_admin sees all org keys; non-admin → FORBIDDEN", async () => {
@@ -407,10 +463,12 @@ describe("apiKeys router", () => {
     await memberCaller.apiKeys.issueOwn({ name: "member-key" });
 
     const list = await adminCaller.apiKeys.listOrg({ orgId: org.id });
-    expect(list.map((r) => r.name).sort()).toEqual([
-      "admin-key",
-      "member-key",
-    ]);
+    expect(list.map((r) => r.name).sort()).toEqual(["admin-key", "member-key"]);
+    // Scrub assertions: org admins must never see raw key material or
+    // reveal-flow bookkeeping in the list response.
+    expect(list[0]).not.toHaveProperty("keyHash");
+    expect(list[0]).not.toHaveProperty("revealTokenHash");
+    expect(list[0]).not.toHaveProperty("revealedByIp");
 
     await expect(
       memberCaller.apiKeys.listOrg({ orgId: org.id }),

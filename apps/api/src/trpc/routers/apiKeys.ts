@@ -226,10 +226,12 @@ export const apiKeysRouter = router({
     };
   }),
 
-  // Claim the one-time reveal URL. Requires login (defense in depth — the
-  // token alone is the secret, but a stolen URL becomes useless once the
-  // target user has logged in and claimed it). Single-use is enforced via
-  // a CAS update on revealedAt.
+  // Claim the one-time reveal URL. Requires login AND that the caller is the
+  // targetUser the key was issued for. The token is the secret; session
+  // enforces ownership scope so a misdirected URL (admin sent it to the wrong
+  // person) cannot be claimed by the wrong user. Single-use is enforced via
+  // a CAS update on revealedAt. NOT_FOUND on userId mismatch — no existence
+  // leak (the wrong recipient can't tell the token was valid for someone else).
   revealViaToken: protectedProcedure
     .input(z.object({ token: z.string().min(1).max(512) }))
     .mutation(async ({ ctx, input }) => {
@@ -247,6 +249,7 @@ export const apiKeysRouter = router({
         .where(
           and(
             eq(apiKeys.revealTokenHash, tokenHash),
+            eq(apiKeys.userId, ctx.user.id),
             gt(apiKeys.revealTokenExpiresAt, sql`NOW()`),
             isNull(apiKeys.revealedAt),
             isNull(apiKeys.revokedAt),
@@ -297,9 +300,7 @@ export const apiKeysRouter = router({
     const rows = await ctx.db
       .select(ownColumns)
       .from(apiKeys)
-      .where(
-        and(eq(apiKeys.userId, ctx.user.id), isNull(apiKeys.revokedAt)),
-      );
+      .where(and(eq(apiKeys.userId, ctx.user.id), isNull(apiKeys.revokedAt)));
     return rows;
   }),
 
@@ -313,9 +314,7 @@ export const apiKeysRouter = router({
     const rows = await ctx.db
       .select(orgColumns)
       .from(apiKeys)
-      .where(
-        and(eq(apiKeys.orgId, input.orgId), isNull(apiKeys.revokedAt)),
-      );
+      .where(and(eq(apiKeys.orgId, input.orgId), isNull(apiKeys.revokedAt)));
     return rows;
   }),
 
