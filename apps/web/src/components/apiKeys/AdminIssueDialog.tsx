@@ -109,7 +109,7 @@ export function AdminIssueDialog({
   };
 
   const onSubmit = (values: FormValues) => {
-    return issue.mutateAsync({
+    issue.mutate({
       orgId,
       targetUserId,
       name: values.name,
@@ -207,20 +207,27 @@ export function AdminIssueDialog({
                   </p>
                 )}
               </div>
-              {hasTeams && (
+              {(teamsLoading || hasTeams) && (
                 <div className="space-y-1.5">
                   <Label htmlFor="adminApiKeyTeamId">Team (optional)</Label>
                   <select
                     id="adminApiKeyTeamId"
                     className={SELECT_CLASS}
+                    disabled={teamsLoading}
                     {...register("teamId")}
                   >
-                    <option value="">— Any team —</option>
-                    {teams?.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
+                    {teamsLoading ? (
+                      <option value="">Loading teams…</option>
+                    ) : (
+                      <>
+                        <option value="">— Any team —</option>
+                        {teams?.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </>
+                    )}
                   </select>
                   {errors.teamId && (
                     <p className="text-xs text-destructive">
