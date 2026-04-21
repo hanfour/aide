@@ -5,8 +5,10 @@ import {
   type TRPCUnsetMarker,
 } from "@trpc/server";
 import type { z } from "zod";
+import type { Redis } from "ioredis";
 import { can, type Action } from "@aide/auth";
-import type { TrpcContext } from "./context.js";
+import type { ServerEnv } from "@aide/config";
+import type { TrpcContext, TrpcLogger } from "./context.js";
 
 const t = initTRPC.context<TrpcContext>().create();
 
@@ -20,11 +22,17 @@ interface ProtectedCtx {
   reqId: string;
   user: { id: string; email: string };
   perm: NonNullable<TrpcContext["perm"]>;
+  env: ServerEnv;
+  redis: Redis;
+  ipAddress: string | null;
+  logger: TrpcLogger;
 }
 
 // Narrow user/perm to non-null by returning a new ctx object (tRPC v11 uses the
 // returned ctx type for downstream procedures — spreading and reassigning still
-// leaves the declared TrpcContext fields nullable).
+// leaves the declared TrpcContext fields nullable). We forward `env` explicitly
+// so downstream handlers can rely on the contract here rather than tRPC v11's
+// implicit partial-ctx merge (which is correct today but undocumented).
 export const protectedProcedure = publicProcedure.use(async ({ ctx, next }) => {
   if (!ctx.user || !ctx.perm) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -35,6 +43,10 @@ export const protectedProcedure = publicProcedure.use(async ({ ctx, next }) => {
       reqId: ctx.reqId,
       user: ctx.user,
       perm: ctx.perm,
+      env: ctx.env,
+      redis: ctx.redis,
+      ipAddress: ctx.ipAddress,
+      logger: ctx.logger,
     },
   });
 });
