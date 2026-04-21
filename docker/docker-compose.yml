@@ -1,5 +1,5 @@
-# Shared app env — both api and web call parseServerEnv() at runtime, so they
-# need the full server schema. Keep one source of truth via a YAML anchor.
+# Shared app env — api, web, and gateway all call parseServerEnv() at runtime
+# and need the full server schema. Keep one source of truth via a YAML anchor.
 x-app-env: &app-env
   NODE_ENV: production
   LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -31,6 +31,25 @@ services:
       retries: 20
     # Intentionally not publishing 5432 — api reaches postgres via the
     # internal compose network only.
+
+  redis:
+    # Always up (not gated by the `gateway` profile) so future features that
+    # need a shared cache — sticky sessions, idempotency, rate limiting — can
+    # reuse this instance without a second compose change.
+    image: redis:7-alpine
+    restart: unless-stopped
+    # appendonly=yes persists to redis_data; gateway usage-log queue payloads
+    # and billing audit state survive restarts.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # Not publishing 6379 — gateway (and any future consumer) reaches redis
+    # via the internal compose network only.
 
   migrate:
     image: ghcr.io/hanfour/aide-api:${VERSION:?VERSION is required}
@@ -74,5 +93,43 @@ services:
     ports:
       - "${WEB_PORT:-3000}:3000"
 
+  gateway:
+    # Opt-in service: `docker compose --profile gateway up` brings it up.
+    # Keeps the base profile (api + web + postgres + migrate + redis) bootable
+    # on hosts that don't need the customer-facing /v1/* proxy yet.
+    profiles: [gateway]
+    image: ghcr.io/hanfour/aide-gateway:${VERSION:?VERSION is required}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *app-env
+      GATEWAY_PORT: 3002
+      ENABLE_GATEWAY: "true"
+      REDIS_URL: redis://redis:6379
+      # Gateway-only vars use soft defaults (`${VAR:-}`) instead of
+      # `${VAR:?required}` because compose still interpolates this block even
+      # when the `gateway` profile is inactive — making them strictly required
+      # would break the base `docker compose up` flow for api+web-only
+      # deploys. Validation happens inside the container: parseServerEnv
+      # (@aide/config) enforces URL + 64-char-hex shapes on boot, so a missing
+      # or malformed value fails fast with a clear error.
+      #
+      # For file-backed secrets, swap these three lines for an `env_file:`
+      # entry pointing at a non-tracked `.env.secrets`.
+      GATEWAY_BASE_URL: ${GATEWAY_BASE_URL:-}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-}
+      API_KEY_HASH_PEPPER: ${API_KEY_HASH_PEPPER:-}
+    ports:
+      # Customer-facing /v1/messages and /v1/chat/completions endpoints.
+      # Put a TLS-terminating reverse proxy in front in production.
+      - "${GATEWAY_PORT:-3002}:3002"
+
 volumes:
   pg_data:
+  redis_data:
