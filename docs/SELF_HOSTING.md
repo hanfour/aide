@@ -123,6 +123,7 @@ Append to your `docker/.env`:
 | `CREDENTIAL_ENCRYPTION_KEY` | **Secret.** 32 bytes hex (64 chars). AES-256-GCM master key for the credential vault. Generate with `openssl rand -hex 32`. **Never commit this value.** |
 | `API_KEY_HASH_PEPPER` | **Secret.** 32 bytes hex (64 chars). HMAC-SHA256 pepper for API key hashing. Generate with `openssl rand -hex 32`. **Losing this value invalidates every issued key by design.** |
 | `GATEWAY_PORT` | Host port published for the gateway service. Default `3002`. |
+| `REDIS_URL` | Only needed if you run the gateway **outside** this compose file. The shipped `gateway` service hard-codes `redis://redis:6379` (the internal compose hostname), so you don't need to set this when you use `docker compose --profile gateway up`. |
 
 All other gateway vars (`GATEWAY_MAX_ACCOUNT_SWITCHES`,
 `GATEWAY_REDIS_FAILURE_MODE`, etc.) have sensible defaults and are documented

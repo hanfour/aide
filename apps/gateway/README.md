@@ -27,7 +27,7 @@ The workspace packages this depends on:
   reads is validated here.
 - `@aide/db` — shared schema, Drizzle client, migrations.
 - `@aide/gateway-core` — pricing table, OpenAI↔Anthropic translation,
-  error-classifier state machine, fake-Anthropic test harness.
+  error-classifier state machine, state-machine + pricing helpers.
 
 ---
 
@@ -147,12 +147,19 @@ see what's there:
 
 ```sh
 docker compose exec redis redis-cli --scan --pattern 'aide:gw:*' | head
-# Typical shapes:
-#   aide:gw:slot:{accountId}       — concurrency slot count (int)
-#   aide:gw:authblock:{ip}         — 60s auth-failure ban (EXPIRE ~60)
-#   aide:gw:key-reveal:{token}     — one-time URL reveal token (EXPIRE 86400)
-#   aide:gw:oauth-refresh-lock:{accountId}  — per-account refresh lock
-#   bull:aide:gw:queue:usage-log:* — BullMQ internals (not prefixed the same)
+# Shapes shipped in 4A (see apps/gateway/src/redis/keys.ts for the single
+# source of truth — ioredis prepends the `aide:gw:` prefix automatically):
+#   aide:gw:slots:account:{accountId}   — per-account concurrency slot
+#   aide:gw:slots:user:{userId}         — per-user concurrency slot
+#   aide:gw:state:account:{accountId}   — cached account state snapshot
+#   aide:gw:oauth-refresh:{accountId}   — per-account OAuth refresh lock
+#   aide:gw:key-reveal:{token}          — one-time URL reveal token (EXPIRE 86400)
+#   bull:aide:gw:queue:usage-log:*      — BullMQ internals (not keyPrefix-governed)
+#
+# `aide:gw:wait:user:{userId}`, `aide:gw:idem:{requestId}`, and
+# `aide:gw:sticky:{orgId}:{sessionId}` are reserved by keys.ts but not
+# populated in 4A — the wait-queue / idempotency / sticky features land
+# in Plan 4B/4C.
 ```
 
 BullMQ lives under its own prefix (`bull:<queueName>:*`) because it computes

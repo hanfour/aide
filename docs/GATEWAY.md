@@ -65,18 +65,21 @@ session cookie auth.
 | Action | Minimum role | Notes |
 |---|---|---|
 | `account.read` / `account.create` / `account.update` / `account.delete` / `account.rotate` | `team_manager` (org-scope) / `super_admin` (platform) | `update` / `rotate` are stubbed "Soon" UI in 4A; tRPC endpoints exist. |
-| `api_key.issue_own` | any authenticated org member | Self-service in `/dashboard/profile`. |
-| `api_key.issue_for_user` | `team_manager` | One-time URL flow; see [§4](#4-api-key-distribution). |
+| `api_key.list_own` / `api_key.issue_own` | any authenticated org member | Self-service in `/dashboard/profile`. |
+| `api_key.list_all` / `api_key.issue_for_user` | `team_manager` (org-scope) | Admin + one-time URL flow; see [§4](#4-api-key-distribution). |
 | `api_key.revoke` | key owner, or `api_key.issue_for_user` holder | Revocation sets `revoked_at`; gateway rejects on next request. |
 | `usage.read_own` | any authenticated user | Self usage in `/dashboard/profile/usage`. |
-| `usage.read_org` | `team_manager` + | Org usage dashboards. |
+| `usage.read_user` / `usage.read_team` | `team_manager` within the target team / org | Used by the org usage dashboards' drill-downs. |
+| `usage.read_org` | `team_manager` + (org-scope) | Org-wide usage dashboards. |
 
 ---
 
 ## 2. Configuration
 
 All env vars are validated by `parseServerEnv` (`packages/config/src/env.ts`)
-at boot. Bad shape → `process.exit(1)` with the failing field listed.
+at boot. Bad shape throws with the offending field(s) listed; the gateway's
+top-level bootstrap logs the error and `process.exit(1)` on the unhandled
+rejection, so a misconfigured container never accepts traffic.
 
 | Env | Required when | Default | Purpose |
 |---|---|---|---|
@@ -223,8 +226,10 @@ At request time the gateway (`apps/gateway/src/middleware/apiKeyAuth.ts`):
 4. Enforces `ip_whitelist` / `ip_blacklist` (CIDR via `ipaddr.js`). Client
    IP comes from the socket unless the source is listed in
    `GATEWAY_TRUSTED_PROXIES`, in which case `X-Forwarded-For` is honoured.
-5. Brute-force guard: more than 10 auth failures per second from one IP
-   triggers a 60-second block (`aide:gw:authblock:<ip>` in Redis).
+
+Per-IP auth-failure brute-force throttling (design §6.7) is planned but not
+wired in 4A — put a request-rate limit in your reverse proxy if you need it
+now.
 
 ### 4.4 Revocation
 
@@ -314,8 +319,11 @@ translator lands post-4A. Use `/v1/messages` directly if streaming matters.
 
 | Header | Effect |
 |---|---|
-| `X-Request-Id: <uuid>` | Idempotency cache key. Two requests with the same id inside `GATEWAY_IDEMPOTENCY_TTL_SEC` replay the cached response; the second does **not** create a second `usage_logs` row. |
 | `X-Forwarded-For` | Only trusted when the socket source is in `GATEWAY_TRUSTED_PROXIES`. |
+
+Idempotent-replay on `X-Request-Id` (the metric `gw_idempotency_hit_total`
+exists already) is planned for Plan 4B/4C — the env var
+`GATEWAY_IDEMPOTENCY_TTL_SEC` is accepted but no-ops in 4A.
 
 ---
 
@@ -366,8 +374,8 @@ Prometheus exposition format. Key series:
 | `gw_slot_acquire_total` | counter | `scope`, `result` | Concurrency slot acquisition outcomes |
 | `gw_slot_hold_duration_seconds` | histogram | — | How long a request held a slot |
 | `gw_wait_queue_depth` | gauge | — | (stub in 4A — populated when admission control lands) |
-| `gw_idempotency_hit_total` | counter | — | `X-Request-Id` replay count |
-| `gw_sticky_hit_total` | counter | — | (stub in 4A) |
+| `gw_idempotency_hit_total` | counter | — | (stub in 4A — populated when idempotent-replay lands) |
+| `gw_sticky_hit_total` | counter | — | (stub in 4A — populated when sticky-session routing lands) |
 | `gw_redis_latency_seconds` | histogram | — | Round-trip latency on gateway-owned Redis ops |
 | `gw_upstream_duration_seconds` | histogram | — | Time spent in Anthropic upstream |
 | `gw_pricing_miss_total` | counter | `model` | Model missing from the bundled pricing table |
