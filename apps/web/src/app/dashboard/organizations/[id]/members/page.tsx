@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { KeyRound, Users } from "lucide-react";
+import { KeyRound, ShieldAlert, Users } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
 import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -11,12 +11,28 @@ import { RequirePerm } from "@/components/RequirePerm";
 export default function MembersTab() {
   const params = useParams();
   const orgId = params?.id as string;
-  const { data: members, isLoading } = trpc.users.list.useQuery({ orgId });
+  const {
+    data: members,
+    isLoading,
+    error,
+  } = trpc.users.list.useQuery({ orgId });
 
   if (isLoading) {
     return (
       <Card className="shadow-card p-6 text-sm text-muted-foreground">
         Loading…
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card className="shadow-card flex flex-col items-center p-10 text-center">
+        <ShieldAlert className="h-6 w-6 text-muted-foreground" />
+        <h3 className="mt-3 text-sm font-semibold">Unable to load members</h3>
+        <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+          {error.message}
+        </p>
       </Card>
     );
   }

@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc/client";
 import { Button } from "@/components/ui/button";
@@ -155,10 +157,19 @@ export default function ProfilePage() {
         </CardContent>
       </Card>
 
-      <p className="text-xs text-muted-foreground">
-        API keys authenticate your CLI / scripts to the gateway. Treat them like
-        passwords.
-      </p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          API keys authenticate your CLI / scripts to the gateway. Treat them
+          like passwords.
+        </p>
+        <Link
+          href="/dashboard/profile/usage"
+          className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <BarChart3 className="h-3.5 w-3.5" />
+          View usage
+        </Link>
+      </div>
       <ApiKeyList />
     </div>
   );

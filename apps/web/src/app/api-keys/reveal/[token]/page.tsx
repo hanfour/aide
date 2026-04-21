@@ -192,7 +192,7 @@ export default function RevealApiKeyPage() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div role="status" className={BANNER}>
+        <div role="alert" className={BANNER}>
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
             This URL is valid for one-time use. Once you reveal the key you
