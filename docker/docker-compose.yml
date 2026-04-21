@@ -98,7 +98,7 @@ services:
     # Keeps the base profile (api + web + postgres + migrate + redis) bootable
     # on hosts that don't need the customer-facing /v1/* proxy yet.
     profiles: [gateway]
-    image: ghcr.io/hanfour/aide-gateway:${VERSION}
+    image: ghcr.io/hanfour/aide-gateway:${VERSION:?VERSION is required}
     restart: unless-stopped
     depends_on:
       postgres:

@@ -58,6 +58,12 @@ jobs:
         run: pnpm turbo run build --filter=@aide/db --filter=@aide/config --filter=@aide/gateway-core
       - name: Run Gateway integration tests (testcontainers postgres + redis)
         run: pnpm --filter @aide/gateway test:integration
+      # gateway-core unit tests also run in lint-type-test via `turbo run test`,
+      # but plan 1728 names this job as their home too. Kept here so a future
+      # gateway-core integration suite lands in the right place without a
+      # workflow change.
+      - name: Run gateway-core tests
+        run: pnpm --filter @aide/gateway-core test
 
   coverage:
     runs-on: ubuntu-latest
