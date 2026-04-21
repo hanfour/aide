@@ -1,4 +1,3 @@
-import { createElement } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -118,15 +117,13 @@ export const TONE_CLASSNAME: Record<StatusTone, string> = {
     "border-transparent bg-slate-100 text-slate-700 dark:bg-slate-500/15 dark:text-slate-300",
 };
 
-// Kept as a .ts file per the split instructions; uses createElement instead of
-// JSX so the module can stay .ts and avoid a .tsx rename.
 export function StatusBadge({ status }: { status: AccountStatus }) {
-  return createElement(
-    Badge,
-    {
-      variant: "outline",
-      className: cn("font-medium", TONE_CLASSNAME[STATUS_TONE[status]]),
-    },
-    STATUS_LABEL[status],
+  return (
+    <Badge
+      variant="outline"
+      className={cn("font-medium", TONE_CLASSNAME[STATUS_TONE[status]])}
+    >
+      {STATUS_LABEL[status]}
+    </Badge>
   );
 }
