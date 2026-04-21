@@ -372,16 +372,29 @@ export const apiKeysRouter = router({
   }),
 
   // Org-admin only: list every active key in the org. Used by admin UIs to
-  // audit/rotate user-issued credentials.
-  listOrg: permissionProcedure(z.object({ orgId: uuid }), (_, input) => ({
-    type: "api_key.list_all",
-    orgId: input.orgId,
-  })).query(async ({ ctx, input }) => {
+  // audit/rotate user-issued credentials. Optional `userId` narrows to a single
+  // member — the admin per-user view passes this so the browser doesn't
+  // receive metadata for unrelated org members. The RBAC action is still
+  // `api_key.list_all` (org-wide read), so adding the filter is purely a
+  // bandwidth/exposure reduction, not a privilege change.
+  listOrg: permissionProcedure(
+    z.object({ orgId: uuid, userId: uuid.optional() }),
+    (_, input) => ({
+      type: "api_key.list_all",
+      orgId: input.orgId,
+    }),
+  ).query(async ({ ctx, input }) => {
     ensureGatewayEnabled(ctx.env);
     const rows = await ctx.db
       .select(orgColumns)
       .from(apiKeys)
-      .where(and(eq(apiKeys.orgId, input.orgId), isNull(apiKeys.revokedAt)));
+      .where(
+        and(
+          eq(apiKeys.orgId, input.orgId),
+          isNull(apiKeys.revokedAt),
+          input.userId ? eq(apiKeys.userId, input.userId) : undefined,
+        ),
+      );
     return rows;
   }),
 

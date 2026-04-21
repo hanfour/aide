@@ -44,14 +44,6 @@ function AccountRowActions({
   // a dead trigger.
   if (!canRotate && !canUpdate && !canDelete) return null;
 
-  const handleRotate = () => {
-    toast.info("Rotate flow lands in a follow-up task");
-  };
-
-  const handleEdit = () => {
-    toast.info("Edit flow lands in a follow-up task");
-  };
-
   const handleDelete = () => {
     if (typeof window === "undefined") return;
     const ok = window.confirm(
@@ -74,14 +66,26 @@ function AccountRowActions({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        {/* Rotate + Edit flows land in a follow-up PR. Kept disabled here so
+            the eventual affordance has a stable slot and permissioned admins
+            can see the feature is planned (rather than a toast that reads as
+            user error). */}
         {canRotate && (
-          <DropdownMenuItem onSelect={handleRotate}>
+          <DropdownMenuItem disabled>
             <Key className="h-4 w-4" />
             Rotate credentials
+            <span className="ml-auto text-[10px] text-muted-foreground">
+              Soon
+            </span>
           </DropdownMenuItem>
         )}
         {canUpdate && (
-          <DropdownMenuItem onSelect={handleEdit}>Edit</DropdownMenuItem>
+          <DropdownMenuItem disabled>
+            Edit
+            <span className="ml-auto text-[10px] text-muted-foreground">
+              Soon
+            </span>
+          </DropdownMenuItem>
         )}
         {canDelete && (
           <>

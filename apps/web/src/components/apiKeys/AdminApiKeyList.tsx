@@ -35,18 +35,16 @@ export function AdminApiKeyList({ orgId, targetUserId }: Props) {
     data: keys,
     isLoading,
     error,
-  } = trpc.apiKeys.listOrg.useQuery({ orgId });
+  } = trpc.apiKeys.listOrg.useQuery({ orgId, userId: targetUserId });
 
   const revoke = trpc.apiKeys.revoke.useMutation({
     onSuccess: () => {
       toast.success("Key revoked");
-      utils.apiKeys.listOrg.invalidate({ orgId });
+      utils.apiKeys.listOrg.invalidate({ orgId, userId: targetUserId });
     },
     onError: (e) => {
       const code = (e.data as { code?: string } | undefined)?.code;
-      toast.error(
-        code === "FORBIDDEN" ? "Insufficient permission" : e.message,
-      );
+      toast.error(code === "FORBIDDEN" ? "Insufficient permission" : e.message);
     },
     onSettled: () => setRevokingId(null),
   });
@@ -68,10 +66,10 @@ export function AdminApiKeyList({ orgId, targetUserId }: Props) {
     return <p className="text-xs text-destructive">{error.message}</p>;
   }
 
-  // Client-side filter: `listOrg` returns every key in the org; the admin page
-  // wants only those belonging to the target user. Filtering here (vs adding a
-  // server-side userId filter) keeps the tRPC surface small and lets React
-  // Query share the org-wide cache with any future admin-wide list view.
+  // Server-side filtered by `userId` so an admin browsing one member's keys
+  // doesn't receive metadata (names / prefixes / timestamps) for unrelated
+  // org members. Kept the nominal safety-net filter below in case the server
+  // ever returns an unrelated row — not expected, but cheap.
   const rows = (keys ?? []).filter((r) => r.userId === targetUserId);
   if (rows.length === 0) {
     return (

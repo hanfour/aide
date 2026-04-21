@@ -573,6 +573,72 @@ describe("apiKeys router", () => {
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
+  it("listOrg: optional userId narrows to a single member's keys", async () => {
+    // The admin-per-user UI passes `userId` so the browser doesn't receive
+    // metadata for unrelated org members. Behaviour: same RBAC (list_all),
+    // but results are WHERE-narrowed to the target user.
+    const org = await makeOrg(t.db);
+    const admin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const memberA = await makeUser(t.db, {
+      role: "member",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const memberB = await makeUser(t.db, {
+      role: "member",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const adminCaller = await callerFor({
+      db: t.db,
+      userId: admin.id,
+      redis,
+    });
+    const callerA = await callerFor({ db: t.db, userId: memberA.id, redis });
+    const callerB = await callerFor({ db: t.db, userId: memberB.id, redis });
+
+    await callerA.apiKeys.issueOwn({ name: "a-key-1" });
+    await callerA.apiKeys.issueOwn({ name: "a-key-2" });
+    await callerB.apiKeys.issueOwn({ name: "b-key" });
+
+    // Without filter: all three keys.
+    const all = await adminCaller.apiKeys.listOrg({ orgId: org.id });
+    expect(all.map((r) => r.name).sort()).toEqual([
+      "a-key-1",
+      "a-key-2",
+      "b-key",
+    ]);
+
+    // With userId filter: only memberA's keys.
+    const onlyA = await adminCaller.apiKeys.listOrg({
+      orgId: org.id,
+      userId: memberA.id,
+    });
+    expect(onlyA.map((r) => r.name).sort()).toEqual(["a-key-1", "a-key-2"]);
+    expect(onlyA.every((r) => r.userId === memberA.id)).toBe(true);
+
+    // Non-member userId: empty result, not a permission error (filter is just
+    // a WHERE narrowing; org_admin still authorises).
+    const stranger = await makeUser(t.db, {
+      role: "member",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const empty = await adminCaller.apiKeys.listOrg({
+      orgId: org.id,
+      userId: stranger.id,
+    });
+    expect(empty).toEqual([]);
+  });
+
   it("revoke: sets revokedAt; subsequent listOwn excludes; double-revoke → NOT_FOUND", async () => {
     const org = await makeOrg(t.db);
     const user = await makeUser(t.db, {
