@@ -190,8 +190,11 @@ describe("usage router", () => {
     const summary = await callerA.usage.summary({ scope: { type: "own" } });
 
     expect(summary.totalRequests).toBe(2);
-    // Decimal preserved as a string with full scale.
-    expect(Number(summary.totalCostUsd)).toBeCloseTo(0.75, 8);
+    // Decimal preserved as a string with full scale (numeric(20, 10)).
+    // Asserting the EXACT serialized value pins down the precision contract:
+    // a regression that cast to ::float8::text would yield "0.75" and break
+    // bigdecimal rendering downstream — `toBeCloseTo(0.75)` would still pass.
+    expect(summary.totalCostUsd).toBe("0.7500000000");
     expect(summary.totalInputTokens).toBe(15);
     expect(summary.totalOutputTokens).toBe(27);
   });
@@ -255,6 +258,69 @@ describe("usage router", () => {
     const caller = await callerFor({ db: t.db, userId: adminB.id });
     await expect(
       caller.usage.summary({ scope: { type: "org", orgId: orgA.id } }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("summary: scope=team is FORBIDDEN for an org member who is not on the team and not a team_manager", async () => {
+    // RBAC: usage.read_team requires team_manager on the target team OR
+    // org_admin on the parent org. A plain org member (even one who happens
+    // to be in the same org) must not be able to read another team's usage.
+    const org = await makeOrg(t.db);
+    const team = await makeTeam(t.db, org.id);
+    const outsider = await makeUser(t.db, {
+      role: "member",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const caller = await callerFor({ db: t.db, userId: outsider.id });
+    await expect(
+      caller.usage.summary({
+        scope: { type: "team", teamId: team.id, orgId: org.id },
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("summary: scope=user is FORBIDDEN when caller is neither org_admin nor the target user", async () => {
+    // RBAC: usage.read_user allows the target user themselves OR an
+    // org_admin on the parent org. A peer member trying to read another
+    // user's usage must be denied even within the same org.
+    const org = await makeOrg(t.db);
+    const peer = await makeUser(t.db, {
+      role: "member",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const target = await makeUser(t.db, {
+      role: "member",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const caller = await callerFor({ db: t.db, userId: peer.id });
+    await expect(
+      caller.usage.summary({
+        scope: { type: "user", userId: target.id, orgId: org.id },
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("list: cross-org caller is FORBIDDEN at scope=org (verifies list shares the same RBAC guard)", async () => {
+    // The `list` procedure must enforce the SAME ensureCanReadScope check as
+    // `summary`. Without this test, a regression that drops the guard from
+    // `list` (or wires the wrong action) would leak rows across orgs.
+    const orgA = await makeOrg(t.db);
+    const orgB = await makeOrg(t.db);
+    const adminB = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: orgB.id,
+      orgId: orgB.id,
+    });
+    const caller = await callerFor({ db: t.db, userId: adminB.id });
+    await expect(
+      caller.usage.list({ scope: { type: "org", orgId: orgA.id } }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
@@ -450,7 +516,9 @@ describe("usage router", () => {
     // Sonnet first (higher cost sum).
     expect(summary.byModel[0]!.model).toBe("claude-sonnet-4-5");
     expect(summary.byModel[0]!.requests).toBe(3);
-    expect(Number(summary.byModel[0]!.costUsd)).toBeCloseTo(3.0, 8);
+    // Pin the EXACT decimal string — same contract as totalCostUsd. Sum of
+    // three "1.0000000000" rows must serialize as "3.0000000000", not "3".
+    expect(summary.byModel[0]!.costUsd).toBe("3.0000000000");
     expect(summary.byModel[1]!.model).toBe("claude-opus-4-5");
     expect(summary.byModel[1]!.requests).toBe(2);
     expect(Number(summary.byModel[1]!.costUsd)).toBeCloseTo(0.2, 8);
