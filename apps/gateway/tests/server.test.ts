@@ -33,6 +33,7 @@ describe("gateway server", () => {
         API_KEY_HASH_PEPPER: "b".repeat(64),
       }),
       db: {} as never,
+      redis: new RedisMock() as unknown as Redis,
     });
     const res = await app.inject({ method: "GET", url: "/health" });
     expect(res.statusCode).toBe(200);
@@ -62,6 +63,7 @@ describe("gateway server", () => {
         API_KEY_HASH_PEPPER: "b".repeat(64),
       }),
       db: {} as never,
+      redis: new RedisMock() as unknown as Redis,
     });
     app.get("/v1/test", async () => ({ ok: true }));
     const res = await app.inject({ method: "GET", url: "/v1/test" });
@@ -80,6 +82,7 @@ describe("gateway server", () => {
         API_KEY_HASH_PEPPER: "b".repeat(64),
       }),
       db: {} as never,
+      redis: new RedisMock() as unknown as Redis,
     });
     const res = await app.inject({ method: "GET", url: "/metrics" });
     expect(res.statusCode).toBe(200);
@@ -97,6 +100,7 @@ describe("gateway server", () => {
         API_KEY_HASH_PEPPER: "b".repeat(64),
       }),
       db: fakeDb,
+      redis: new RedisMock() as unknown as Redis,
     });
     expect(app.db).toBe(fakeDb);
     await app.close();
