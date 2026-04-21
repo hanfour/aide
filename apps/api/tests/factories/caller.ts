@@ -6,6 +6,17 @@ import type { ServerEnv } from "@aide/config";
 import { resolvePermissions } from "@aide/auth";
 import { appRouter, type AppRouter } from "../../src/trpc/router.js";
 import { createCallerFactory } from "../../src/trpc/procedures.js";
+import type { TrpcLogger } from "../../src/trpc/context.js";
+
+// Test logger: drop-on-the-floor so router-internal warn/info/error don't
+// pollute vitest output. Tests that need to assert on log calls can construct
+// a spy and pass it explicitly via the optional `logger` arg.
+export const noopTestLogger: TrpcLogger = {
+  warn: () => {},
+  info: () => {},
+  error: () => {},
+  debug: () => {},
+};
 
 // Explicit annotations needed: tRPC v11's inferred caller types reference
 // an internal `unstable-core-do-not-import.d-*.mts` bundle, which TS flags
@@ -89,6 +100,7 @@ export async function callerFor(
     env,
     redis,
     ipAddress: null,
+    logger: noopTestLogger,
   });
 }
 
@@ -105,5 +117,6 @@ export async function anonCaller(
     env,
     redis,
     ipAddress: null,
+    logger: noopTestLogger,
   });
 }

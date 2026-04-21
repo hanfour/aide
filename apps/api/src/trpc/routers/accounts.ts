@@ -15,13 +15,6 @@ const uuid = z.string().uuid();
 const platformEnum = z.enum(["anthropic"]);
 const typeEnum = z.enum(["api_key", "oauth"]);
 
-// Drop credential-related joins; the row already excludes them, but we strip
-// any internal-only columns the API shouldn't surface to admins. Status,
-// schedulability, and oauth bookkeeping fields stay (admins need to see them).
-function scrubAccount<T extends Record<string, unknown>>(row: T): T {
-  return row;
-}
-
 function ensureGatewayEnabled(env: { ENABLE_GATEWAY: boolean }) {
   if (!env.ENABLE_GATEWAY) {
     throw new TRPCError({ code: "NOT_FOUND" });
@@ -88,7 +81,9 @@ export const accountsRouter = router({
           isNull(upstreamAccounts.deletedAt),
         ),
       );
-    return rows.map(scrubAccount);
+    // upstream_accounts holds no credential material (that's in
+    // credential_vault), so the SELECT * projection is safe to return as-is.
+    return rows;
   }),
 
   get: protectedProcedure
@@ -110,7 +105,7 @@ export const accountsRouter = router({
       if (!can(ctx.perm, { type: "account.read", orgId: row.orgId })) {
         throw new TRPCError({ code: "NOT_FOUND" });
       }
-      return scrubAccount(row);
+      return row;
     }),
 
   create: permissionProcedure(
@@ -192,7 +187,7 @@ export const accountsRouter = router({
       return account;
     });
 
-    return scrubAccount(insertedRow);
+    return insertedRow;
   }),
 
   update: protectedProcedure
@@ -248,7 +243,7 @@ export const accountsRouter = router({
         .where(eq(upstreamAccounts.id, input.id))
         .returning();
       if (!row) throw new TRPCError({ code: "NOT_FOUND" });
-      return scrubAccount(row);
+      return row;
     }),
 
   rotate: protectedProcedure

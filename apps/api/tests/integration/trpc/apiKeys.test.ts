@@ -14,6 +14,7 @@ import {
   makeTeam,
   makeUser,
   defaultTestEnv,
+  noopTestLogger,
 } from "../../factories/index.js";
 import { createCallerFactory, router } from "../../../src/trpc/procedures.js";
 import { apiKeysRouter } from "../../../src/trpc/routers/apiKeys.js";
@@ -40,6 +41,7 @@ async function callerFor(opts: {
     env: opts.env ?? defaultTestEnv,
     redis: opts.redis,
     ipAddress: opts.ipAddress ?? null,
+    logger: noopTestLogger,
   });
 }
 
@@ -557,10 +559,14 @@ describe("apiKeys router", () => {
     const list = await adminCaller.apiKeys.listOrg({ orgId: org.id });
     expect(list.map((r) => r.name).sort()).toEqual(["admin-key", "member-key"]);
     // Scrub assertions: org admins must never see raw key material or
-    // reveal-flow bookkeeping in the list response.
+    // any secret-derived / PII fields in the list response.
     expect(list[0]).not.toHaveProperty("keyHash");
     expect(list[0]).not.toHaveProperty("revealTokenHash");
     expect(list[0]).not.toHaveProperty("revealedByIp");
+    // Reveal-status fields ARE expected — they let the admin UI distinguish
+    // "admin-issued, pending reveal" from "claimed". Neither is secret-derived.
+    expect(list[0]).toHaveProperty("revealedAt");
+    expect(list[0]).toHaveProperty("revealTokenExpiresAt");
 
     await expect(
       memberCaller.apiKeys.listOrg({ orgId: org.id }),

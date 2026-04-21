@@ -8,7 +8,7 @@ import type { z } from "zod";
 import type { Redis } from "ioredis";
 import { can, type Action } from "@aide/auth";
 import type { ServerEnv } from "@aide/config";
-import type { TrpcContext } from "./context.js";
+import type { TrpcContext, TrpcLogger } from "./context.js";
 
 const t = initTRPC.context<TrpcContext>().create();
 
@@ -25,6 +25,7 @@ interface ProtectedCtx {
   env: ServerEnv;
   redis: Redis;
   ipAddress: string | null;
+  logger: TrpcLogger;
 }
 
 // Narrow user/perm to non-null by returning a new ctx object (tRPC v11 uses the
@@ -45,6 +46,7 @@ export const protectedProcedure = publicProcedure.use(async ({ ctx, next }) => {
       env: ctx.env,
       redis: ctx.redis,
       ipAddress: ctx.ipAddress,
+      logger: ctx.logger,
     },
   });
 });

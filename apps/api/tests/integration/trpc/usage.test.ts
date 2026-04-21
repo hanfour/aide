@@ -10,6 +10,7 @@ import {
   makeTeam,
   defaultTestEnv,
   defaultTestRedis,
+  noopTestLogger,
 } from "../../factories/index.js";
 import { createCallerFactory, router } from "../../../src/trpc/procedures.js";
 import { usageRouter } from "../../../src/trpc/routers/usage.js";
@@ -34,6 +35,7 @@ async function callerFor(opts: {
     env: opts.env ?? defaultTestEnv,
     redis: defaultTestRedis,
     ipAddress: null,
+    logger: noopTestLogger,
   });
 }
 

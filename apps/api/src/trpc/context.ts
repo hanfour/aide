@@ -1,4 +1,4 @@
-import type { FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyBaseLogger, FastifyReply, FastifyRequest } from "fastify";
 import type { Redis } from "ioredis";
 import type { Database } from "@aide/db";
 import type { UserPermissions } from "@aide/auth";
@@ -17,6 +17,15 @@ declare module "fastify" {
   }
 }
 
+// Subset of the Fastify/pino logger surface we expose on the trpc context.
+// Pick'd intentionally: routers only need leveled writes — we don't want
+// `child()`, `level=`, or other surface that would couple tRPC handlers to
+// pino internals (and would make it harder to swap loggers in tests).
+export type TrpcLogger = Pick<
+  FastifyBaseLogger,
+  "warn" | "info" | "error" | "debug"
+>;
+
 export interface TrpcContext {
   db: Database;
   user: { id: string; email: string } | null;
@@ -33,6 +42,10 @@ export interface TrpcContext {
   // api_keys.revealed_by_ip). Null when the caller is created outside an
   // HTTP request (e.g. the test harness).
   ipAddress: string | null;
+  // Per-request structured logger. In HTTP context this is `req.log` (a pino
+  // child with the reqId already bound). Tests inject a noop logger so they
+  // don't pollute test output with router-internal warnings.
+  logger: TrpcLogger;
 }
 
 export interface CreateContextDeps {
@@ -57,6 +70,9 @@ export function createContextFactory(deps: CreateContextDeps) {
       env: deps.env,
       redis: deps.redis,
       ipAddress: opts.req.ip ?? null,
+      // req.log is a pino child with the reqId already bound — exactly what
+      // we want for per-request structured logging from inside resolvers.
+      logger: opts.req.log,
     };
   };
 }

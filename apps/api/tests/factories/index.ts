@@ -8,4 +8,5 @@ export {
   defaultTestEnv,
   defaultTestRedis,
   makeTestRedis,
+  noopTestLogger,
 } from "./caller.js";

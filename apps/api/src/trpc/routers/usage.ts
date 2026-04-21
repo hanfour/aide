@@ -93,6 +93,11 @@ function ensureCanReadScope(perm: UserPermissions, scope: Scope) {
 function scopeWhere(scope: Scope, callerUserId: string): SQL[] {
   switch (scope.type) {
     case "own":
+      // No orgId filter: returns ALL rows the caller authored across every
+      // org. For v0.2.0 / single-org users this is equivalent to scoping by
+      // orgId (they only have one). For super_admins or future multi-org
+      // users, this reads as "my own requests anywhere" — semantically
+      // correct for "own".
       return [eq(usageLogs.userId, callerUserId)];
     case "user":
       return [

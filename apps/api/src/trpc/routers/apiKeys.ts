@@ -73,11 +73,19 @@ function hashRevealToken(pepperHex: string, token: string): string {
     .digest("hex");
 }
 
-// Resolve a user's primary org membership. Used by `issueOwn` where the
-// org isn't part of the input (a regular member doesn't pass orgId — the
-// system picks their canonical org). We pick the earliest-joined org for
-// determinism. NOT_FOUND if the user belongs to no org (defense in depth;
-// in production all real users should belong to at least one).
+/**
+ * Picks the user's earliest-joined org membership as their "primary" org for
+ * self-issue. Used by `issueOwn` where the org isn't part of the input (a
+ * regular member doesn't pass orgId — the system picks their canonical org).
+ * NOT_FOUND if the user belongs to no org (defense in depth; in production
+ * all real users should belong to at least one).
+ *
+ * KNOWN LIMITATION: This works while users belong to one org at a time
+ * (v0.2.0 invite flow). Once multi-org membership lands, "primary org"
+ * becomes ambiguous — a user can't choose which org's key to issue. Consider
+ * adding an `orgId` optional input on `apiKeys.issueOwn` so the caller can
+ * disambiguate.
+ */
 async function resolveUserPrimaryOrgId(
   db: Database,
   userId: string,
@@ -114,10 +122,17 @@ const ownColumns = {
 
 // Org-admin view adds ownership context (who owns the key, who issued it)
 // but still excludes keyHash / revealTokenHash / revealedByIp.
+//
+// Reveal-status fields (no key material): non-null revealTokenExpiresAt with
+// null revealedAt means "admin-issued, pending reveal"; non-null revealedAt
+// means "claimed". Surfacing these lets the admin UI distinguish pending
+// vs claimed without exposing any secret-derived value.
 const orgColumns = {
   ...ownColumns,
   userId: apiKeys.userId,
   issuedByUserId: apiKeys.issuedByUserId,
+  revealedAt: apiKeys.revealedAt,
+  revealTokenExpiresAt: apiKeys.revealTokenExpiresAt,
 } as const;
 
 export const apiKeysRouter = router({
@@ -251,8 +266,20 @@ export const apiKeysRouter = router({
       })
       .returning({ id: apiKeys.id, prefix: apiKeys.keyPrefix });
     if (!row) {
-      // Best-effort cleanup of the orphaned Redis stash; ignore errors.
-      await ctx.redis.del(revealKey(token)).catch(() => {});
+      // Best-effort cleanup of the orphaned Redis stash. Log at warn so ops
+      // can spot orphaned reveal stashes — the 24h TTL will eventually
+      // evict, but a never-claimed orphan means the admin will have to
+      // re-issue. The DB-insert failure itself is the primary signal; we
+      // still throw INTERNAL_SERVER_ERROR after.
+      await ctx.redis.del(revealKey(token)).catch((cleanupErr: unknown) => {
+        ctx.logger.warn(
+          {
+            err: cleanupErr instanceof Error ? cleanupErr.message : cleanupErr,
+            tokenPrefix: token.slice(0, 8),
+          },
+          "failed to clean up orphaned api-key reveal stash after db insert failure",
+        );
+      });
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",
         message: "failed to insert api_keys row",
