@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [api, web]
+        image: [api, web, gateway]
     steps:
       - uses: actions/checkout@v6
 
