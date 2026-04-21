@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "@aide/api-types";
 import { trpc } from "@/lib/trpc/client";
@@ -52,9 +52,7 @@ function Row({ row }: { row: UsageRow }) {
       >
         {formatRelative(row.createdAt)}
       </td>
-      <td className="px-3 py-2 font-mono text-xs">
-        {row.requestedModel}
-      </td>
+      <td className="px-3 py-2 font-mono text-xs">{row.requestedModel}</td>
       <td className="px-3 py-2">
         <Badge
           variant="secondary"
@@ -66,7 +64,10 @@ function Row({ row }: { row: UsageRow }) {
       <td className="px-3 py-2">
         <Badge
           variant="outline"
-          className={cn("font-mono text-[10px] font-medium", statusTone(row.statusCode))}
+          className={cn(
+            "font-mono text-[10px] font-medium",
+            statusTone(row.statusCode),
+          )}
         >
           {row.statusCode}
         </Badge>
@@ -86,6 +87,11 @@ function Row({ row }: { row: UsageRow }) {
 
 export function UsageTable({ scope, from, to }: Props) {
   const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    setPage(1);
+  }, [from, to, scope]);
+
   const query = trpc.usage.list.useQuery({
     scope,
     from,
@@ -103,7 +109,9 @@ export function UsageTable({ scope, from, to }: Props) {
   }
 
   const data = query.data;
-  const totalPages = data ? Math.max(1, Math.ceil(data.totalCount / PAGE_SIZE)) : 1;
+  const totalPages = data
+    ? Math.max(1, Math.ceil(data.totalCount / PAGE_SIZE))
+    : 1;
   const items = data?.items ?? [];
 
   return (
@@ -130,13 +138,27 @@ export function UsageTable({ scope, from, to }: Props) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground">
-                <th className="px-3 py-2 text-left font-medium">Created</th>
-                <th className="px-3 py-2 text-left font-medium">Model</th>
-                <th className="px-3 py-2 text-left font-medium">Surface</th>
-                <th className="px-3 py-2 text-left font-medium">Status</th>
-                <th className="px-3 py-2 text-right font-medium">Tokens</th>
-                <th className="px-3 py-2 text-right font-medium">Cost</th>
-                <th className="px-3 py-2 text-right font-medium">Duration</th>
+                <th scope="col" className="px-3 py-2 text-left font-medium">
+                  Created
+                </th>
+                <th scope="col" className="px-3 py-2 text-left font-medium">
+                  Model
+                </th>
+                <th scope="col" className="px-3 py-2 text-left font-medium">
+                  Surface
+                </th>
+                <th scope="col" className="px-3 py-2 text-left font-medium">
+                  Status
+                </th>
+                <th scope="col" className="px-3 py-2 text-right font-medium">
+                  Tokens
+                </th>
+                <th scope="col" className="px-3 py-2 text-right font-medium">
+                  Cost
+                </th>
+                <th scope="col" className="px-3 py-2 text-right font-medium">
+                  Duration
+                </th>
               </tr>
             </thead>
             <tbody>
