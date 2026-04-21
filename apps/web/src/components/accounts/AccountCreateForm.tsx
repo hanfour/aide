@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -83,6 +84,8 @@ export function AccountCreateForm({ orgId }: Props) {
     register,
     handleSubmit,
     watch,
+    setValue,
+    clearErrors,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -95,6 +98,22 @@ export function AccountCreateForm({ orgId }: Props) {
 
   const type = watch("type");
   const scopeType = watch("scopeType");
+
+  // Clear stale credentials validation error when the user toggles `type`.
+  // RHF + zodResolver only revalidates on submit/blur, so an OAuth-JSON error
+  // would otherwise persist after switching back to `api_key`.
+  useEffect(() => {
+    clearErrors("credentials");
+  }, [type, clearErrors]);
+
+  // Reset `teamId` when scope toggles back to `org`. RHF retains the value
+  // even though the <select> is conditionally unmounted, which is misleading
+  // if the user later toggles back to `team`.
+  useEffect(() => {
+    if (scopeType === "org") {
+      setValue("teamId", "");
+    }
+  }, [scopeType, setValue]);
 
   const credentialHint =
     type === "oauth"
@@ -128,7 +147,11 @@ export function AccountCreateForm({ orgId }: Props) {
 
       <div className="space-y-1.5">
         <Label htmlFor="platform">Platform</Label>
-        <select id="platform" className={SELECT_CLASS} {...register("platform")}>
+        <select
+          id="platform"
+          className={SELECT_CLASS}
+          {...register("platform")}
+        >
           <option value="anthropic">Anthropic</option>
         </select>
         <p className="text-xs text-muted-foreground">
@@ -211,7 +234,13 @@ export function AccountCreateForm({ orgId }: Props) {
               disabled={teamsLoading}
               {...register("teamId")}
             >
-              <option value="">— Select a team —</option>
+              {teamsLoading ? (
+                <option value="" disabled>
+                  Loading teams…
+                </option>
+              ) : (
+                <option value="">— Select a team —</option>
+              )}
               {teams?.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
@@ -219,7 +248,9 @@ export function AccountCreateForm({ orgId }: Props) {
               ))}
             </select>
             {errors.teamId && (
-              <p className="text-xs text-destructive">{errors.teamId.message}</p>
+              <p className="text-xs text-destructive">
+                {errors.teamId.message}
+              </p>
             )}
           </div>
         )}
@@ -248,7 +279,9 @@ export function AccountCreateForm({ orgId }: Props) {
 
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="outline" asChild>
-          <Link href={`/dashboard/organizations/${orgId}/accounts`}>Cancel</Link>
+          <Link href={`/dashboard/organizations/${orgId}/accounts`}>
+            Cancel
+          </Link>
         </Button>
         <Button type="submit" disabled={isSubmitting || create.isPending}>
           {create.isPending ? "Creating…" : "Create account"}
