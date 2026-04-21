@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "@aide/api-types";
 import { trpc } from "@/lib/trpc/client";
+import { formatRelative } from "@/lib/time";
 import { usePermissions } from "@/lib/usePermissions";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -17,38 +18,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { StatusBadge, deriveAccountStatus, toDate } from "./status";
+import { StatusBadge, deriveAccountStatus } from "./status";
 
 type AccountRow = inferRouterOutputs<AppRouter>["accounts"]["list"][number];
-
-// Module-level formatter: Intl.RelativeTimeFormat construction is non-trivial,
-// and we were re-creating it on every call. Hoisting keeps it cached for the
-// lifetime of the process.
-const RELATIVE_TIME_FORMAT = new Intl.RelativeTimeFormat(undefined, {
-  numeric: "auto",
-});
-
-function formatRelative(ts: Date | string | null): string {
-  const d = toDate(ts);
-  if (!d) return "—";
-  const diffMs = d.getTime() - Date.now();
-  const absSec = Math.abs(diffMs) / 1000;
-  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-    ["year", 60 * 60 * 24 * 365],
-    ["month", 60 * 60 * 24 * 30],
-    ["day", 60 * 60 * 24],
-    ["hour", 60 * 60],
-    ["minute", 60],
-    ["second", 1],
-  ];
-  for (const [unit, secs] of units) {
-    if (absSec >= secs || unit === "second") {
-      const value = Math.round(diffMs / 1000 / secs);
-      return RELATIVE_TIME_FORMAT.format(value, unit);
-    }
-  }
-  return d.toLocaleString();
-}
 
 interface AccountRowActionsProps {
   row: AccountRow;

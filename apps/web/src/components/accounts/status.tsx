@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { toDate } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
 export type AccountStatus =
@@ -71,16 +72,6 @@ export function deriveAccountStatus(
   }
 
   return "active";
-}
-
-export function toDate(v: Date | string | null): Date | null {
-  if (!v) return null;
-  if (v instanceof Date) return v;
-  // tRPC without a superjson transformer serializes Dates as ISO strings over
-  // the wire, so the runtime value here is typically a string even when the
-  // server-side type is Date. Normalize both.
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 export const STATUS_LABEL: Record<AccountStatus, string> = {

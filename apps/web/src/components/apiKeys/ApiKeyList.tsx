@@ -6,50 +6,13 @@ import { toast } from "sonner";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "@aide/api-types";
 import { trpc } from "@/lib/trpc/client";
+import { toDate, formatRelative } from "@/lib/time";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ApiKeyCreateDialog } from "./ApiKeyCreateDialog";
 
 type ApiKeyRow = inferRouterOutputs<AppRouter>["apiKeys"]["listOwn"][number];
-
-// Module-level formatter — matches the pattern in AccountList.tsx so
-// Intl.RelativeTimeFormat construction happens once per process, not per render.
-const RELATIVE_TIME_FORMAT = new Intl.RelativeTimeFormat(undefined, {
-  numeric: "auto",
-});
-
-// tRPC without a superjson transformer serializes Date columns as ISO strings,
-// so the inferred client-side type is `string | null` for timestamps. Accept
-// both shapes so callers don't have to pre-normalize.
-function toDate(v: Date | string | null): Date | null {
-  if (!v) return null;
-  if (v instanceof Date) return v;
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function formatRelative(ts: Date | string | null): string {
-  const d = toDate(ts);
-  if (!d) return "—";
-  const diffMs = d.getTime() - Date.now();
-  const absSec = Math.abs(diffMs) / 1000;
-  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-    ["year", 60 * 60 * 24 * 365],
-    ["month", 60 * 60 * 24 * 30],
-    ["day", 60 * 60 * 24],
-    ["hour", 60 * 60],
-    ["minute", 60],
-    ["second", 1],
-  ];
-  for (const [unit, secs] of units) {
-    if (absSec >= secs || unit === "second") {
-      const value = Math.round(diffMs / 1000 / secs);
-      return RELATIVE_TIME_FORMAT.format(value, unit);
-    }
-  }
-  return d.toLocaleString();
-}
 
 function formatCreated(ts: Date | string | null): string {
   const d = toDate(ts);
@@ -80,7 +43,7 @@ export function ApiKeyList() {
   const utils = trpc.useUtils();
   const [open, setOpen] = useState(false);
   const [revokingId, setRevokingId] = useState<string | null>(null);
-  const { data: keys, isLoading, error } = trpc.apiKeys.listOwn.useQuery({});
+  const { data: keys, isLoading, error } = trpc.apiKeys.listOwn.useQuery();
 
   const revoke = trpc.apiKeys.revoke.useMutation({
     onSuccess: () => {

@@ -100,7 +100,10 @@ export function ApiKeyCreateDialog({ open, onOpenChange }: Props) {
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
-              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200"
+              >
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>Save this key now. We can&apos;t show it again.</span>
               </div>
@@ -144,8 +147,8 @@ export function ApiKeyCreateDialog({ open, onOpenChange }: Props) {
             <DialogHeader>
               <DialogTitle>New API key</DialogTitle>
               <DialogDescription>
-                Generate a key to authenticate the AIDE gateway from your CLI
-                or scripts.
+                Generate a key to authenticate the AIDE gateway from your CLI or
+                scripts.
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
