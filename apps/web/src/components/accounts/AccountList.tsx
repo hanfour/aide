@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
-import { MoreHorizontal, Key, ShieldAlert } from "lucide-react";
+import { MoreHorizontal, Key, Plus, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "@aide/api-types";
@@ -133,6 +134,8 @@ interface AccountListProps {
 
 export function AccountList({ orgId }: AccountListProps) {
   const utils = trpc.useUtils();
+  const { can } = usePermissions();
+  const canCreate = can({ type: "account.create", orgId, teamId: null });
   const {
     data: accounts,
     isLoading,
@@ -159,114 +162,151 @@ export function AccountList({ orgId }: AccountListProps) {
     del.mutate({ id: row.id });
   };
 
+  const newAccountHref = `/dashboard/organizations/${orgId}/accounts/new`;
+
+  const headerCta = canCreate ? (
+    <div className="flex justify-end">
+      <Button size="sm" className="gap-1.5" asChild>
+        <Link href={newAccountHref}>
+          <Plus className="h-4 w-4" />
+          New account
+        </Link>
+      </Button>
+    </div>
+  ) : null;
+
   if (isLoading) {
     return (
-      <Card className="shadow-card p-6 text-sm text-muted-foreground">
-        Loading…
-      </Card>
+      <div className="space-y-4">
+        {headerCta}
+        <Card className="shadow-card p-6 text-sm text-muted-foreground">
+          Loading…
+        </Card>
+      </div>
     );
   }
 
   if (error) {
     return (
-      <Card className="shadow-card flex flex-col items-center p-10 text-center">
-        <ShieldAlert className="h-6 w-6 text-muted-foreground" />
-        <h3 className="mt-3 text-sm font-semibold">Unable to load accounts</h3>
-        <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-          {error.message}
-        </p>
-      </Card>
+      <div className="space-y-4">
+        {headerCta}
+        <Card className="shadow-card flex flex-col items-center p-10 text-center">
+          <ShieldAlert className="h-6 w-6 text-muted-foreground" />
+          <h3 className="mt-3 text-sm font-semibold">
+            Unable to load accounts
+          </h3>
+          <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+            {error.message}
+          </p>
+        </Card>
+      </div>
     );
   }
 
   if (!accounts || accounts.length === 0) {
     return (
-      <Card className="shadow-card flex flex-col items-center p-10 text-center">
-        <Key className="h-6 w-6 text-muted-foreground" />
-        <h3 className="mt-3 text-sm font-semibold">No upstream accounts yet</h3>
-        <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-          Add an Anthropic API key or OAuth credential to start routing
-          requests.
-        </p>
-      </Card>
+      <div className="space-y-4">
+        {headerCta}
+        <Card className="shadow-card flex flex-col items-center p-10 text-center">
+          <Key className="h-6 w-6 text-muted-foreground" />
+          <h3 className="mt-3 text-sm font-semibold">
+            No upstream accounts yet
+          </h3>
+          <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+            Add an Anthropic API key or OAuth credential to start routing
+            requests.
+          </p>
+          {canCreate && (
+            <Button size="sm" className="mt-4 gap-1.5" asChild>
+              <Link href={newAccountHref}>
+                <Plus className="h-4 w-4" />
+                New account
+              </Link>
+            </Button>
+          )}
+        </Card>
+      </div>
     );
   }
 
   return (
-    <Card className="shadow-card overflow-hidden">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground">
-            <th scope="col" className="px-4 py-2 text-left font-medium">
-              Name
-            </th>
-            <th scope="col" className="px-4 py-2 text-left font-medium">
-              Platform
-            </th>
-            <th scope="col" className="px-4 py-2 text-left font-medium">
-              Type
-            </th>
-            <th scope="col" className="px-4 py-2 text-left font-medium">
-              Status
-            </th>
-            <th scope="col" className="px-4 py-2 text-right font-medium">
-              Priority
-            </th>
-            <th scope="col" className="px-4 py-2 text-right font-medium">
-              Concurrency
-            </th>
-            <th scope="col" className="px-4 py-2 text-left font-medium">
-              Last used
-            </th>
-            <th scope="col" className="px-4 py-2 text-right font-medium"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {accounts.map((row) => {
-            const status = deriveAccountStatus(row);
-            const lastUsedTitle = row.lastUsedAt
-              ? new Date(row.lastUsedAt).toLocaleString()
-              : undefined;
-            return (
-              <tr
-                key={row.id}
-                className="border-b border-border last:border-0 hover:bg-accent/20"
-              >
-                <td className="px-4 py-2.5 font-medium">{row.name}</td>
-                <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                  {row.platform}
-                </td>
-                <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                  {row.type === "oauth" ? "OAuth" : "API key"}
-                </td>
-                <td className="px-4 py-2.5">
-                  <StatusBadge status={status} />
-                </td>
-                <td className="px-4 py-2.5 text-right tabular-nums">
-                  {row.priority}
-                </td>
-                <td className="px-4 py-2.5 text-right tabular-nums">
-                  {row.concurrency}
-                </td>
-                <td
-                  className="px-4 py-2.5 text-xs text-muted-foreground"
-                  title={lastUsedTitle}
+    <div className="space-y-4">
+      {headerCta}
+      <Card className="shadow-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground">
+              <th scope="col" className="px-4 py-2 text-left font-medium">
+                Name
+              </th>
+              <th scope="col" className="px-4 py-2 text-left font-medium">
+                Platform
+              </th>
+              <th scope="col" className="px-4 py-2 text-left font-medium">
+                Type
+              </th>
+              <th scope="col" className="px-4 py-2 text-left font-medium">
+                Status
+              </th>
+              <th scope="col" className="px-4 py-2 text-right font-medium">
+                Priority
+              </th>
+              <th scope="col" className="px-4 py-2 text-right font-medium">
+                Concurrency
+              </th>
+              <th scope="col" className="px-4 py-2 text-left font-medium">
+                Last used
+              </th>
+              <th scope="col" className="px-4 py-2 text-right font-medium"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {accounts.map((row) => {
+              const status = deriveAccountStatus(row);
+              const lastUsedTitle = row.lastUsedAt
+                ? new Date(row.lastUsedAt).toLocaleString()
+                : undefined;
+              return (
+                <tr
+                  key={row.id}
+                  className="border-b border-border last:border-0 hover:bg-accent/20"
                 >
-                  {formatRelative(row.lastUsedAt)}
-                </td>
-                <td className="px-4 py-2.5 text-right">
-                  <AccountRowActions
-                    row={row}
-                    orgId={orgId}
-                    onDelete={handleDelete}
-                    isDeleting={deletingId === row.id}
-                  />
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </Card>
+                  <td className="px-4 py-2.5 font-medium">{row.name}</td>
+                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                    {row.platform}
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                    {row.type === "oauth" ? "OAuth" : "API key"}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <StatusBadge status={status} />
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">
+                    {row.priority}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">
+                    {row.concurrency}
+                  </td>
+                  <td
+                    className="px-4 py-2.5 text-xs text-muted-foreground"
+                    title={lastUsedTitle}
+                  >
+                    {formatRelative(row.lastUsedAt)}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <AccountRowActions
+                      row={row}
+                      orgId={orgId}
+                      onDelete={handleDelete}
+                      isDeleting={deletingId === row.id}
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+    </div>
   );
 }
