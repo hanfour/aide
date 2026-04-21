@@ -321,9 +321,10 @@ translator lands post-4A. Use `/v1/messages` directly if streaming matters.
 |---|---|
 | `X-Forwarded-For` | Only trusted when the socket source is in `GATEWAY_TRUSTED_PROXIES`. |
 
-Idempotent-replay on `X-Request-Id` (the metric `gw_idempotency_hit_total`
-exists already) is planned for Plan 4B/4C — the env var
-`GATEWAY_IDEMPOTENCY_TTL_SEC` is accepted but no-ops in 4A.
+Idempotent-replay on `X-Request-Id` is planned for Plan 4B/4C. In 4A the
+gateway reads `GATEWAY_IDEMPOTENCY_TTL_SEC` only to validate its shape —
+neither route handler consults the cache, so the `gw_idempotency_hit_total`
+counter stays at zero.
 
 ---
 
@@ -344,10 +345,13 @@ in strict mode.
 | A specific user's own usage | `/dashboard/profile/usage` (tRPC `usage.summaryForSelf`) |
 | Raw per-request rows | SQL against `usage_logs` — not surfaced as a tRPC endpoint in 4A (Plan 4B evaluator will use this) |
 
-**Quota enforcement.** If `api_keys.quota_used_usd + estimated_cost >
-api_keys.quota_usd`, the gateway rejects with `402 quota_exceeded` before
-calling upstream. `quota_used_usd` is incremented atomically alongside the
-`usage_logs` insert.
+**Quota tracking.** Each completed request increments
+`api_keys.quota_used_usd` atomically alongside the `usage_logs` insert (see
+`apps/gateway/src/workers/writeUsageLogBatch.ts`). Pre-flight quota
+**enforcement** — rejecting with `402 quota_exceeded` before calling
+upstream — is planned for Plan 4B/4C. In 4A the `quota_usd` column is for
+reporting and dashboards only; if you need to cap a specific key right now,
+revoke it via `apiKeys.revoke` and re-issue with a smaller scope.
 
 **Pricing lookup.** Model prices come from a bundled
 `packages/gateway-core/pricing/litellm.json` snapshot, refreshed by a weekly

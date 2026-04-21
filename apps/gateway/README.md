@@ -154,28 +154,26 @@ docker compose exec redis redis-cli --scan --pattern 'aide:gw:*' | head
 #   aide:gw:state:account:{accountId}   — cached account state snapshot
 #   aide:gw:oauth-refresh:{accountId}   — per-account OAuth refresh lock
 #   aide:gw:key-reveal:{token}          — one-time URL reveal token (EXPIRE 86400)
-#   bull:aide:gw:queue:usage-log:*      — BullMQ internals (not keyPrefix-governed)
+#   aide:gw:usage-log:*                 — BullMQ queue internals (see below)
 #
-# `aide:gw:wait:user:{userId}`, `aide:gw:idem:{requestId}`, and
-# `aide:gw:sticky:{orgId}:{sessionId}` are reserved by keys.ts but not
-# populated in 4A — the wait-queue / idempotency / sticky features land
-# in Plan 4B/4C.
+# `aide:gw:{wait,idem,sticky}:*` are reserved by keys.ts but not populated
+# in 4A — the wait-queue / idempotency / sticky features land in Plan 4B/4C.
 ```
 
-BullMQ lives under its own prefix (`bull:<queueName>:*`) because it computes
-Redis keys inside Lua scripts and does not see ioredis's transparent
-`keyPrefix`. This is intentional — see the module header in
-`src/workers/usageLogQueue.ts`.
+BullMQ sets its own key namespace separately from ioredis's `keyPrefix`
+(its Lua scripts compute keys directly). `usageLogQueue.ts` sets BullMQ's
+prefix to `aide:gw` so its keys colocate with the rest — see the module
+header.
 
 ### BullMQ queue stats
 
-The usage-log queue is `aide:gw:queue:usage-log`. Expose via any BullMQ UI
+The usage-log queue is `aide:gw:usage-log`. Expose via any BullMQ UI
 (Bull Board / Arena), or poll directly:
 
 ```sh
-docker compose exec redis redis-cli --raw ZCARD bull:aide:gw:queue:usage-log:wait
-docker compose exec redis redis-cli --raw ZCARD bull:aide:gw:queue:usage-log:delayed
-docker compose exec redis redis-cli --raw LRANGE bull:aide:gw:queue:usage-log:failed 0 -1
+docker compose exec redis redis-cli --raw ZCARD aide:gw:usage-log:wait
+docker compose exec redis redis-cli --raw ZCARD aide:gw:usage-log:delayed
+docker compose exec redis redis-cli --raw LRANGE aide:gw:usage-log:failed 0 -1
 ```
 
 Or scrape `/metrics`:
