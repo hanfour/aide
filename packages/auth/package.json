@@ -11,6 +11,21 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./rbac": {
+      "types": "./dist/rbac/index.d.ts",
+      "import": "./dist/rbac/index.js",
+      "default": "./dist/rbac/index.js"
+    },
+    "./rbac/check": {
+      "types": "./dist/rbac/check.d.ts",
+      "import": "./dist/rbac/check.js",
+      "default": "./dist/rbac/check.js"
+    },
+    "./rbac/actions": {
+      "types": "./dist/rbac/actions.d.ts",
+      "import": "./dist/rbac/actions.js",
+      "default": "./dist/rbac/actions.js"
+    },
     "./package.json": "./package.json"
   },
   "files": ["dist"],
