@@ -7,7 +7,13 @@
 
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { AlertTriangle, CheckCircle2, Copy, KeyRound, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Copy,
+  KeyRound,
+  XCircle,
+} from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc/client";
 import { Button } from "@/components/ui/button";
@@ -114,7 +120,9 @@ export default function RevealApiKeyPage() {
           </CardDescription>
         </CardHeader>
         <CardFooter className="justify-center">
-          <Button onClick={() => router.push("/dashboard")}>Go to dashboard</Button>
+          <Button onClick={() => router.push("/dashboard/profile")}>
+            Go to profile
+          </Button>
         </CardFooter>
       </Shell>
     );
@@ -165,7 +173,9 @@ export default function RevealApiKeyPage() {
           </p>
         </CardContent>
         <CardFooter className="justify-center">
-          <Button onClick={() => router.push("/dashboard")}>Done</Button>
+          <Button onClick={() => router.push("/dashboard/profile")}>
+            Done
+          </Button>
         </CardFooter>
       </Shell>
     );
@@ -182,7 +192,7 @@ export default function RevealApiKeyPage() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div role="note" className={BANNER}>
+        <div role="status" className={BANNER}>
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
             This URL is valid for one-time use. Once you reveal the key you
