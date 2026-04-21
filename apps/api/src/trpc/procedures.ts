@@ -5,6 +5,7 @@ import {
   type TRPCUnsetMarker,
 } from "@trpc/server";
 import type { z } from "zod";
+import type { Redis } from "ioredis";
 import { can, type Action } from "@aide/auth";
 import type { ServerEnv } from "@aide/config";
 import type { TrpcContext } from "./context.js";
@@ -22,6 +23,8 @@ interface ProtectedCtx {
   user: { id: string; email: string };
   perm: NonNullable<TrpcContext["perm"]>;
   env: ServerEnv;
+  redis: Redis;
+  ipAddress: string | null;
 }
 
 // Narrow user/perm to non-null by returning a new ctx object (tRPC v11 uses the
@@ -40,6 +43,8 @@ export const protectedProcedure = publicProcedure.use(async ({ ctx, next }) => {
       user: ctx.user,
       perm: ctx.perm,
       env: ctx.env,
+      redis: ctx.redis,
+      ipAddress: ctx.ipAddress,
     },
   });
 });

@@ -1,4 +1,6 @@
 import type { TRPCRouterCaller } from "@trpc/server";
+import RedisMock from "ioredis-mock";
+import type { Redis } from "ioredis";
 import type { Database } from "@aide/db";
 import type { ServerEnv } from "@aide/config";
 import { resolvePermissions } from "@aide/auth";
@@ -61,11 +63,22 @@ export const defaultTestEnv: ServerEnv = {
   GATEWAY_QUEUE_SATURATE_THRESHOLD: 5000,
 };
 
+// ioredis-mock honors keyPrefix the same way the real client does, so tests
+// asserting against the underlying keyspace can use the prefixed form
+// (`aide:gw:key-reveal:<token>`) and verify both the gateway namespace
+// contract and the api-side stash semantics in one shot.
+export function makeTestRedis(): Redis {
+  return new RedisMock({ keyPrefix: "aide:gw:" }) as unknown as Redis;
+}
+
+export const defaultTestRedis: Redis = makeTestRedis();
+
 export async function callerFor(
   db: Database,
   userId: string,
   email = "x@x.test",
   env: ServerEnv = defaultTestEnv,
+  redis: Redis = defaultTestRedis,
 ): Promise<AppCallerInvocation> {
   const perm = await resolvePermissions(db, userId);
   return createCaller({
@@ -74,12 +87,15 @@ export async function callerFor(
     perm,
     reqId: "test",
     env,
+    redis,
+    ipAddress: null,
   });
 }
 
 export async function anonCaller(
   db: Database,
   env: ServerEnv = defaultTestEnv,
+  redis: Redis = defaultTestRedis,
 ): Promise<AppCallerInvocation> {
   return createCaller({
     db,
@@ -87,5 +103,7 @@ export async function anonCaller(
     perm: null,
     reqId: "test",
     env,
+    redis,
+    ipAddress: null,
   });
 }

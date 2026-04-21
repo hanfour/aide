@@ -10,6 +10,7 @@ import {
   makeOrg,
   makeUser,
   defaultTestEnv,
+  defaultTestRedis,
 } from "../../factories/index.js";
 import { createCallerFactory, router } from "../../../src/trpc/procedures.js";
 import { accountsRouter } from "../../../src/trpc/routers/accounts.js";
@@ -33,6 +34,8 @@ async function callerFor(
     perm,
     reqId: "test",
     env,
+    redis: defaultTestRedis,
+    ipAddress: null,
   });
 }
 
