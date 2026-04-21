@@ -92,7 +92,96 @@ docker compose exec -T postgres \
 
 Keep backups encrypted and off-host.
 
-## 6. Troubleshooting
+## 6. (Optional) Enable the gateway
+
+aide ships an optional **gateway** service (Plan 4A, v0.3.0+) that exposes
+Anthropic-compatible `/v1/messages` and OpenAI-compatible `/v1/chat/completions`
+endpoints to your users. It is fully opt-in — the base compose stack above
+runs api + web without it.
+
+If you don't plan to offer a shared upstream pool, skip this section. For the
+full operator + user guide, see [`GATEWAY.md`](./GATEWAY.md).
+
+### 6.1 What gets added
+
+- **`redis:7-alpine`** service — already part of the base compose file so
+  future features (sticky sessions, idempotency) can reuse it without another
+  compose change. Persists to the `redis_data` volume.
+- **`gateway`** service — a Fastify server on port 3002 gated behind the
+  `gateway` docker-compose profile. Not started unless you pass
+  `--profile gateway`.
+- Public image: `ghcr.io/hanfour/aide-gateway:${VERSION}` (multi-arch
+  `linux/amd64,linux/arm64`, published on every `v*` tag).
+
+### 6.2 New env vars
+
+Append to your `docker/.env`:
+
+| Var | Meaning |
+|---|---|
+| `GATEWAY_BASE_URL` | Public URL your users point their SDK at (e.g. `https://gateway.example.com`). Shown in the one-time key-reveal page. |
+| `CREDENTIAL_ENCRYPTION_KEY` | **Secret.** 32 bytes hex (64 chars). AES-256-GCM master key for the credential vault. Generate with `openssl rand -hex 32`. **Never commit this value.** |
+| `API_KEY_HASH_PEPPER` | **Secret.** 32 bytes hex (64 chars). HMAC-SHA256 pepper for API key hashing. Generate with `openssl rand -hex 32`. **Losing this value invalidates every issued key by design.** |
+| `GATEWAY_PORT` | Host port published for the gateway service. Default `3002`. |
+
+All other gateway vars (`GATEWAY_MAX_ACCOUNT_SWITCHES`,
+`GATEWAY_REDIS_FAILURE_MODE`, etc.) have sensible defaults and are documented
+in [`GATEWAY.md#2-configuration`](./GATEWAY.md#2-configuration).
+
+For production, inject `CREDENTIAL_ENCRYPTION_KEY` and `API_KEY_HASH_PEPPER`
+via Docker secrets or your orchestrator's secret mount — do not leave them in
+a plain `.env`. A simple pattern is to store them in a separate
+`.env.secrets` file (chmod 600, not in git) and reference it from the
+`gateway` service with `env_file: .env.secrets`.
+
+### 6.3 Start the gateway
+
+Once the vars are in `docker/.env`:
+
+```sh
+cd docker
+docker compose --profile gateway up -d
+docker compose --profile gateway logs -f gateway
+```
+
+What happens:
+1. `redis` was already up (base profile).
+2. `gateway` waits for `postgres` to be healthy + `migrate` to complete.
+3. On boot, `parseServerEnv` validates the secrets (64-char hex, URL shape,
+   etc.) and fails fast with a clear error if anything is missing.
+4. Fastify binds `0.0.0.0:3002`. `GET /health` returns `{"status":"ok"}`.
+
+**Put a TLS-terminating reverse proxy in front of port 3002** (Caddy /
+Traefik / Nginx / cloud LB) exactly as you already do for port 3000 (web).
+User-supplied API keys travel in the `x-api-key` header — plain HTTP is not
+acceptable.
+
+### 6.4 Updating the gateway
+
+Same workflow as the base stack (§4): bump `VERSION` in `.env`, then
+
+```sh
+docker compose --profile gateway pull
+docker compose --profile gateway up -d
+```
+
+The gateway has no migrations of its own beyond what `migrate` already
+ran — schema changes ship with new releases of `apps/api`.
+
+### 6.5 Feature flag (process-level)
+
+`ENABLE_GATEWAY=true` is baked into the gateway service definition. If you
+ever need to boot the gateway container in a "surface-off" mode (e.g. during
+incident response to take it out of rotation without tearing down the
+compose project), set `ENABLE_GATEWAY=false` in your env — the process will
+only serve `/health` returning `{"status":"disabled"}` and will not register
+`/v1/*` routes. It does **not** `process.exit` in this state, so your
+orchestrator won't restart-loop.
+
+See [`GATEWAY.md#10-feature-flag`](./GATEWAY.md#10-feature-flag) for the full
+gating layer list.
+
+## 7. Troubleshooting
 
 ### OAuth redirect errors
 
