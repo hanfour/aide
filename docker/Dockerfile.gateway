@@ -36,11 +36,18 @@ COPY packages/gateway-core packages/gateway-core
 RUN pnpm turbo run build --filter=@aide/gateway...
 RUN pnpm --filter=@aide/gateway deploy --prod /out
 
-# Sanity: confirm runtime resolution — fastify, ioredis, bullmq, undici, pg,
-# and the three @aide workspaces all reachable. If deploy --prod pruned
-# anything load-bearing, this fails here rather than at container start.
+# Sanity: confirm runtime resolution of every module gateway imports
+# directly. Prints the exact failing module name if pnpm deploy --prod
+# pruned something load-bearing, so this fails at image-build time rather
+# than first container boot.
+#
+# Note: pg is intentionally omitted — gateway does not `require('pg')`
+# itself; it goes through `@aide/db`, which declares pg as a runtime dep
+# and resolves it from its own node_modules subtree. Asserting pg at /out
+# level would fail because pnpm-deploy hoists a direct-dep-only subset
+# and leaves transitive deps in the nested .pnpm store.
 RUN cd /out \
-  && node -e "require('fastify'); require('ioredis'); require('bullmq'); require('undici'); require('pg'); require('@aide/gateway-core'); require('@aide/config'); require('@aide/db')"
+  && node -e "['fastify','ioredis','bullmq','undici','@aide/gateway-core','@aide/config','@aide/db'].forEach(m => { try { require(m); } catch (e) { console.error('sanity-require failed for', m, '-', e.code || e.message); process.exit(1); } })"
 
 ###############################################################################
 # Stage 3 — runtime: minimal image, non-root user, healthcheck
