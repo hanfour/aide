@@ -10,7 +10,12 @@ import { maybeRefreshOAuth } from "../runtime/oauthRefresh.js";
 import { callUpstreamMessages } from "../runtime/upstreamCall.js";
 import { acquireSlot, releaseSlot } from "../redis/slots.js";
 import { SmartBuffer } from "../runtime/smartBuffer.js";
+import {
+  StreamUsageExtractor,
+  type StreamUsageSnapshot,
+} from "../runtime/streamUsageExtractor.js";
 import type { SelectedAccount } from "../runtime/selectAccount.js";
+import { emitUsageLog } from "../runtime/usageLogging.js";
 
 export interface MessagesRouteOptions {
   env: ServerEnv;
@@ -140,6 +145,18 @@ async function runNonStreamFailover(
   requestId: string,
   signal: AbortSignal,
 ): Promise<void> {
+  // Capture start time BEFORE the failover loop so durationMs includes
+  // credential resolve + slot acquire + failover switches. Sub-task B of
+  // Plan 4A Part 7 — the usage-log row's `duration_ms` must reflect the
+  // full user-visible latency, not just the last upstream call.
+  const startedAtMs = Date.now();
+
+  // Pull the client-facing `model` out of the already-validated body so the
+  // usage-log payload's `requestedModel` matches what the caller sent.
+  // (The route handler above validates `body.model` is a non-empty string
+  // before invoking this function, so the cast is safe.)
+  const requestedModel = (req.body as { model: string }).model;
+
   const result = await runFailover({
     db: app.db,
     orgId: req.apiKey!.orgId,
@@ -177,7 +194,6 @@ async function runNonStreamFailover(
         // TODO(part-6): wait queue admission control
         // TODO(part-6): sticky session lookup
         // TODO(part-6): idempotency cache check
-        // TODO(part-7): usage_logs INSERT + api_keys.quota_used_usd UPDATE in same transaction
 
         const upstream = await callUpstreamMessages({
           baseUrl: opts.env.UPSTREAM_ANTHROPIC_BASE_URL,
@@ -194,6 +210,8 @@ async function runNonStreamFailover(
 
         if (upstream.status >= 400 && upstream.status < 500) {
           // 4xx errors are client errors — forward them directly without failover.
+          // No usage log: upstream returned no usage/model payload we can trust,
+          // and cost is zero anyway.
           return upstream;
         }
 
@@ -207,6 +225,37 @@ async function runNonStreamFailover(
             message: text.slice(0, 500),
           };
         }
+
+        // Success (2xx). Parse the body to extract usage + model, build the
+        // usage-log payload, and enqueue. We parse defensively — a
+        // malformed 2xx body yields zero usage (emitUsageLog never throws).
+        //
+        // Position rationale: the enqueue lives INSIDE the attempt callback
+        // on the success path so `account` is in scope without threading
+        // state out via a closure variable. Any failure after this point
+        // (reply.send errors, etc.) does not un-enqueue the job — which is
+        // the correct semantic: if upstream succeeded, we should bill.
+        let parsedUpstream: unknown = null;
+        try {
+          parsedUpstream = JSON.parse(upstream.body.toString("utf8"));
+        } catch {
+          // Malformed JSON — log at warn; emitUsageLog will record zero usage.
+          req.log.warn(
+            { requestId, accountId: account.id },
+            "upstream 2xx body was not valid JSON; usage log will record zeros",
+          );
+        }
+        await emitUsageLog({
+          app,
+          req,
+          requestedModel,
+          accountId: account.id,
+          upstreamResponse: parsedUpstream,
+          platform: "anthropic",
+          surface: "messages",
+          statusCode: upstream.status,
+          durationMs: Date.now() - startedAtMs,
+        });
 
         return upstream;
       } finally {
@@ -244,6 +293,15 @@ async function runStreamingFailover(
   // Take over the response — Fastify will not auto-send.
   reply.hijack();
 
+  // Capture start time BEFORE the failover loop so durationMs / firstTokenMs /
+  // bufferReleasedAtMs are all measured against the same user-visible start
+  // (matches the non-streaming path — Sub-task B).
+  const startedAtMs = Date.now();
+
+  // The client-facing `model` is validated in the /v1/messages handler above
+  // before this function is called, so the cast is safe.
+  const requestedModel = (req.body as { model: string }).model;
+
   await runFailover({
     db: app.db,
     orgId: req.apiKey!.orgId,
@@ -262,10 +320,28 @@ async function runStreamingFailover(
         throw new CapacityError();
       }
 
+      // Per-attempt state — reset on each failover retry so a successful
+      // second account doesn't inherit the first account's (failed) counters.
+      const extractor = new StreamUsageExtractor();
+      let firstTokenAtMs: number | null = null;
+      let bufferReleasedAtMs: number | null = null;
+      // Double-emit guard: protects against the narrow race where the
+      // `for await` upstream loop's `done: true` exit and a follow-up
+      // iteration's `req.raw.destroyed` check could BOTH fire an
+      // `emitUsageLog` call in the same microtask window, billing the
+      // user twice for one request.  Set BEFORE the awaited emit so any
+      // path that yields and re-enters sees the guard as tripped.
+      let emitted = false;
+
       const buffer = new SmartBuffer({
         windowMs: opts.env.GATEWAY_BUFFER_WINDOW_MS,
         windowBytes: opts.env.GATEWAY_BUFFER_WINDOW_BYTES,
         onCommit: (chunks: Buffer[]) => {
+          // Record the moment the gateway transitioned BUFFERING → COMMITTED
+          // — this is the earliest point any byte was released to the client.
+          if (bufferReleasedAtMs === null) {
+            bufferReleasedAtMs = Date.now();
+          }
           if (!reply.raw.headersSent) {
             reply.raw.writeHead(200, {
               "content-type": "text/event-stream",
@@ -325,14 +401,45 @@ async function runStreamingFailover(
         }
 
         // Stream loop — relay raw upstream SSE bytes through the smart buffer.
+        // Tap the extractor BEFORE SmartBuffer so usage extraction runs on the
+        // raw bytes regardless of buffer state (buffering vs passthrough).
         for await (const chunk of upstream.body) {
           if (req.raw.destroyed) {
-            // Client gone — abort upstream and exit (no failover; client is gone).
+            // Client disconnected mid-stream. We still emit a usage log so the
+            // partial work is visible (forensic + quota semantics: upstream
+            // consumed tokens, so the user pays). Status 499 reflects the
+            // client-closed-request convention and is distinct from the
+            // happy-path 200 path below.
+            if (emitted) return;
+            emitted = true;
+            await emitUsageLog({
+              app,
+              req,
+              requestedModel,
+              accountId: account.id,
+              upstreamResponse: buildUpstreamShape(extractor.snapshot()),
+              platform: "anthropic",
+              surface: "messages",
+              statusCode: 499,
+              durationMs: Date.now() - startedAtMs,
+              stream: true,
+              firstTokenMs:
+                firstTokenAtMs !== null ? firstTokenAtMs - startedAtMs : null,
+              bufferReleasedAtMs:
+                bufferReleasedAtMs !== null
+                  ? bufferReleasedAtMs - startedAtMs
+                  : null,
+            });
             return;
           }
-          await buffer.push(
-            Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk),
-          );
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          // Extractor tap: first — records when the gateway SAW bytes from
+          // upstream, independent of when SmartBuffer chooses to flush.
+          if (firstTokenAtMs === null) {
+            firstTokenAtMs = Date.now();
+          }
+          extractor.push(buf);
+          await buffer.push(buf);
         }
 
         // Upstream finished cleanly — flush any remaining buffered chunks.
@@ -347,14 +454,45 @@ async function runStreamingFailover(
           });
         }
         reply.raw.end();
+
+        // Happy-path completion: enqueue the usage-log row.  Placed AFTER
+        // reply.raw.end() so the client-visible response isn't gated on
+        // usage-log emission; emitUsageLog itself never throws.  Guarded
+        // by `emitted` so a same-tick race with the client-disconnect path
+        // can't double-bill.
+        if (emitted) return;
+        emitted = true;
+        await emitUsageLog({
+          app,
+          req,
+          requestedModel,
+          accountId: account.id,
+          upstreamResponse: buildUpstreamShape(extractor.snapshot()),
+          platform: "anthropic",
+          surface: "messages",
+          statusCode: 200,
+          durationMs: Date.now() - startedAtMs,
+          stream: true,
+          firstTokenMs:
+            firstTokenAtMs !== null ? firstTokenAtMs - startedAtMs : null,
+          bufferReleasedAtMs:
+            bufferReleasedAtMs !== null
+              ? bufferReleasedAtMs - startedAtMs
+              : null,
+        });
       } catch (err) {
         if (buffer.isFailoverEligible()) {
-          // Pre-commit error: discard buffered chunks, propagate to failover loop.
-          // Slot release is handled by the finally block below.
+          // Pre-commit error: discard buffered chunks, propagate to failover
+          // loop. Do NOT enqueue a usage log — the retry on another account
+          // (or the post-failover exhaustion branch) will produce its own
+          // log. Slot release is handled by the finally block below.
           buffer.discard();
           throw err;
         }
-        // Post-commit error: write SSE error event, log, end stream.
+        // Post-commit error: write SSE error event, log, end stream, and
+        // emit a usage-log row so the partial work is visible. statusCode is
+        // 200 because headers already flushed as 200 — the mid-body failure
+        // is what the `event: error` payload communicates.
         const errMsg = err instanceof Error ? err.message : String(err);
         try {
           reply.raw.write(
@@ -372,6 +510,31 @@ async function runStreamingFailover(
           { err: errMsg, accountId: account.id },
           "stream error after commit",
         );
+        // If the happy-path or client-disconnect emit already fired (e.g.
+        // the for-await loop completed cleanly and a downstream throw
+        // landed us here), skip the second emit to avoid double-billing.
+        if (emitted) {
+          return;
+        }
+        emitted = true;
+        await emitUsageLog({
+          app,
+          req,
+          requestedModel,
+          accountId: account.id,
+          upstreamResponse: buildUpstreamShape(extractor.snapshot()),
+          platform: "anthropic",
+          surface: "messages",
+          statusCode: 200,
+          durationMs: Date.now() - startedAtMs,
+          stream: true,
+          firstTokenMs:
+            firstTokenAtMs !== null ? firstTokenAtMs - startedAtMs : null,
+          bufferReleasedAtMs:
+            bufferReleasedAtMs !== null
+              ? bufferReleasedAtMs - startedAtMs
+              : null,
+        });
       } finally {
         await releaseSlot(app.redis, "account", account.id, requestId).catch(
           () => {},
@@ -426,4 +589,25 @@ function parseRetryAfter(
   if (typeof val !== "string") return undefined;
   const n = parseInt(val, 10);
   return Number.isNaN(n) ? undefined : n;
+}
+
+/**
+ * Wrap a streaming-usage snapshot into the object shape the shared
+ * `buildUsageLogPayload` → `extractUsageFromAnthropicResponse` helper
+ * expects. Keeping this local (and NOT extending `usageLogging.ts` to accept
+ * both shapes) avoids growing the shared helper's surface with a
+ * streaming-specific branch that only the `/v1/messages` stream route needs.
+ */
+function buildUpstreamShape(
+  snap: StreamUsageSnapshot,
+): Record<string, unknown> {
+  return {
+    model: snap.model,
+    usage: {
+      input_tokens: snap.input_tokens,
+      output_tokens: snap.output_tokens,
+      cache_creation_input_tokens: snap.cache_creation_tokens,
+      cache_read_input_tokens: snap.cache_read_tokens,
+    },
+  };
 }

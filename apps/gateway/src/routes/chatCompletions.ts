@@ -13,6 +13,7 @@ import { resolveCredential } from "../runtime/resolveCredential.js";
 import { maybeRefreshOAuth } from "../runtime/oauthRefresh.js";
 import { callUpstreamMessages } from "../runtime/upstreamCall.js";
 import { acquireSlot, releaseSlot } from "../redis/slots.js";
+import { emitUsageLog } from "../runtime/usageLogging.js";
 
 export interface ChatCompletionsRouteOptions {
   env: ServerEnv;
@@ -71,6 +72,15 @@ export async function chatCompletionsRoutes(
 
       const requestId = req.id;
       const upstreamBodyBuf = Buffer.from(JSON.stringify(anthropicBody));
+
+      // Capture start time BEFORE the failover loop so durationMs includes
+      // request translation + credential resolve + slot acquire + failover
+      // switches. See usageLogging.ts for payload semantics.
+      const startedAtMs = Date.now();
+      // Pull client-requested model from the already-validated body. This
+      // is the OpenAI model name (e.g., "gpt-4") the client sent — distinct
+      // from the Anthropic upstream model that comes back in `parsed.model`.
+      const requestedModel = body.model;
 
       try {
         const openaiResponse = await runFailover({
@@ -139,9 +149,58 @@ export async function chatCompletionsRoutes(
                 };
               }
 
-              // Parse Anthropic response and translate to OpenAI shape.
-              const parsed = JSON.parse(result.body.toString("utf8"));
-              return translateAnthropicToOpenAI(parsed);
+              // Parse Anthropic response defensively. A malformed 2xx body
+              // would otherwise throw synchronously and cascade into the
+              // failover loop as a 503, even though the upstream actually
+              // succeeded. Mirror messages.ts behaviour: parse in try/catch,
+              // record a zero-usage log row, then throw a 502 so the client
+              // sees an honest upstream-malformed error.
+              let parsed: unknown = null;
+              let parseErr: unknown = null;
+              try {
+                parsed = JSON.parse(result.body.toString("utf8"));
+              } catch (err) {
+                parseErr = err;
+                req.log.warn(
+                  {
+                    requestId,
+                    err: err instanceof Error ? err.message : String(err),
+                  },
+                  "upstream 2xx body was not valid JSON; emitting zero-usage log then failing",
+                );
+              }
+
+              // Enqueue usage-log INSIDE the attempt callback on the success
+              // path so `account`, `parsed`, and `startedAtMs` are all in
+              // scope without threading closure state out of the failover
+              // loop. emitUsageLog never throws — residual errors are logged
+              // but do not block the user response. `platform: "openai"` is
+              // the inbound surface (client speaks OpenAI); upstream remains
+              // Anthropic regardless. On parse failure, parsed === null and
+              // `extractUsageFromAnthropicResponse` zero-fills the row so the
+              // forensic entry still gets written.
+              await emitUsageLog({
+                app,
+                req,
+                requestedModel,
+                accountId: account.id,
+                upstreamResponse: parsed,
+                platform: "openai",
+                surface: "chat-completions",
+                statusCode: 200,
+                durationMs: Date.now() - startedAtMs,
+              });
+
+              if (parseErr !== null) {
+                // Treat malformed 2xx as a fatal upstream error. The failover
+                // loop classifier will surface this as 502 to the client —
+                // honest about what actually happened.
+                throw { status: 502, message: "upstream_malformed_json" };
+              }
+
+              return translateAnthropicToOpenAI(
+                parsed as Parameters<typeof translateAnthropicToOpenAI>[0],
+              );
             } finally {
               await releaseSlot(
                 app.redis,
