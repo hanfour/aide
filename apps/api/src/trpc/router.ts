@@ -7,6 +7,9 @@ import { usersRouter } from './routers/users.js'
 import { invitesRouter } from './routers/invites.js'
 import { rolesRouter } from './routers/roles.js'
 import { auditLogsRouter } from './routers/audit-logs.js'
+import { accountsRouter } from './routers/accounts.js'
+import { apiKeysRouter } from './routers/apiKeys.js'
+import { usageRouter } from './routers/usage.js'
 
 export const appRouter = router({
   me: meRouter,
@@ -16,7 +19,10 @@ export const appRouter = router({
   users: usersRouter,
   invites: invitesRouter,
   roles: rolesRouter,
-  auditLogs: auditLogsRouter
+  auditLogs: auditLogsRouter,
+  accounts: accountsRouter,
+  apiKeys: apiKeysRouter,
+  usage: usageRouter
 })
 
 export type AppRouter = typeof appRouter
