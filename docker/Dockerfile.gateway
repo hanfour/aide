@@ -1,0 +1,60 @@
+# syntax=docker/dockerfile:1.7
+
+###############################################################################
+# Base: Node 20 alpine with pnpm via corepack
+###############################################################################
+FROM node:20-alpine AS base
+RUN apk add --no-cache libc6-compat wget \
+  && corepack enable
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+WORKDIR /repo
+
+###############################################################################
+# Stage 1 — deps: install workspace deps from manifests only so source-only
+# changes keep the cached layer. Gateway's transitive workspace deps are
+# @aide/config, @aide/db, @aide/gateway-core — nothing else is needed.
+###############################################################################
+FROM base AS deps
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json tsconfig.base.json tsconfig.json ./
+COPY apps/gateway/package.json apps/gateway/package.json
+COPY packages/config/package.json packages/config/package.json
+COPY packages/db/package.json packages/db/package.json
+COPY packages/gateway-core/package.json packages/gateway-core/package.json
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+  pnpm install --frozen-lockfile
+
+###############################################################################
+# Stage 2 — build: compile @aide/gateway and its workspace deps with turbo,
+# then pnpm-deploy a self-contained prod bundle into /out
+###############################################################################
+FROM deps AS build
+COPY apps/gateway apps/gateway
+COPY packages/config packages/config
+COPY packages/db packages/db
+COPY packages/gateway-core packages/gateway-core
+RUN pnpm turbo run build --filter=@aide/gateway...
+RUN pnpm --filter=@aide/gateway deploy --prod /out
+
+# Sanity: confirm runtime resolution — fastify, ioredis, bullmq, undici, pg,
+# and the three @aide workspaces all reachable. If deploy --prod pruned
+# anything load-bearing, this fails here rather than at container start.
+RUN cd /out \
+  && node -e "require('fastify'); require('ioredis'); require('bullmq'); require('undici'); require('pg'); require('@aide/gateway-core'); require('@aide/config'); require('@aide/db')"
+
+###############################################################################
+# Stage 3 — runtime: minimal image, non-root user, healthcheck
+###############################################################################
+FROM node:20-alpine AS runtime
+RUN apk add --no-cache wget
+ENV NODE_ENV=production \
+    GATEWAY_PORT=3002
+WORKDIR /app
+# Non-root user (node image ships 1000:1000 already, but use a named pair)
+RUN addgroup -g 1001 -S aide && adduser -u 1001 -S aide -G aide
+COPY --from=build --chown=aide:aide /out /app
+USER aide
+EXPOSE 3002
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -qO- http://localhost:3002/health >/dev/null 2>&1 || exit 1
+CMD ["node", "/app/dist/server.js"]
