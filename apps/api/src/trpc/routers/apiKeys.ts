@@ -11,6 +11,7 @@ import {
   permissionProcedure,
   router,
 } from "../procedures.js";
+import { assertTeamBelongsToOrg } from "./_shared.js";
 
 const uuid = z.string().uuid();
 
@@ -133,6 +134,13 @@ export const apiKeysRouter = router({
     const pepper = requirePepper(ctx.env);
     const orgId = await resolveUserPrimaryOrgId(ctx.db, ctx.user.id);
 
+    // Cross-tenant integrity: if the caller pinned a team, it must live in
+    // their resolved org. Without this a member could self-issue a key whose
+    // team_id points at another org's team — corrupting routing/attribution.
+    if (input.teamId) {
+      await assertTeamBelongsToOrg(ctx.db, input.teamId, orgId);
+    }
+
     const { raw, prefix } = generateApiKey();
     const keyHash = hashApiKey(pepper, raw);
 
@@ -179,6 +187,38 @@ export const apiKeysRouter = router({
     ensureGatewayEnabled(ctx.env);
     const pepper = requirePepper(ctx.env);
     const baseUrl = requireGatewayBaseUrl(ctx.env);
+
+    // Cross-tenant integrity #1 — membership: RBAC only proves the caller is
+    // an admin in `orgId`, not that `targetUserId` is actually a member of
+    // that org. The api_keys schema has independent FKs to users and
+    // organizations, so without this check an org-A admin could write a
+    // {userId=X, orgId=A} row even though X has no relationship to A; X
+    // could then claim the reveal URL and end up holding a credential
+    // attributed to an org they don't belong to. FORBIDDEN (not NOT_FOUND)
+    // because the caller already has perms in orgId — no existence leak.
+    const [membership] = await ctx.db
+      .select({ userId: organizationMembers.userId })
+      .from(organizationMembers)
+      .where(
+        and(
+          eq(organizationMembers.userId, input.targetUserId),
+          eq(organizationMembers.orgId, input.orgId),
+        ),
+      )
+      .limit(1);
+    if (!membership) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "targetUserId is not a member of orgId",
+      });
+    }
+
+    // Cross-tenant integrity #2 — team-org binding: same independent-FK
+    // problem on api_keys.team_id. Run AFTER the membership check so the
+    // ordering of failures is deterministic when both inputs are bad.
+    if (input.teamId) {
+      await assertTeamBelongsToOrg(ctx.db, input.teamId, input.orgId);
+    }
 
     const { raw, prefix } = generateApiKey();
     const keyHash = hashApiKey(pepper, raw);

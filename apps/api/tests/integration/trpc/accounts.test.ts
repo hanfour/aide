@@ -8,6 +8,7 @@ import type { ServerEnv } from "@aide/config";
 import {
   setupTestDb,
   makeOrg,
+  makeTeam,
   makeUser,
   defaultTestEnv,
   defaultTestRedis,
@@ -178,6 +179,37 @@ describe("accounts router", () => {
       .where(eq(credentialVault.accountId, oauthAcct.id));
     expect(vault2!.oauthExpiresAt).not.toBeNull();
     expect(vault2!.oauthExpiresAt!.toISOString()).toBe(expiresIso);
+  });
+
+  it("create: teamId from a different org → FORBIDDEN (team-org binding guard)", async () => {
+    // org_admin in orgA passes RBAC for creating an account in orgA but
+    // pins teamId belonging to orgB. Without the team-org check the row
+    // would land with org_id=A and team_id=<orgB team>, corrupting
+    // team-scoped routing and usage attribution.
+    const orgA = await makeOrg(t.db);
+    const orgB = await makeOrg(t.db);
+    const teamInB = await makeTeam(t.db, orgB.id);
+    const admin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: orgA.id,
+      orgId: orgA.id,
+    });
+    const caller = await callerFor(t.db, admin.id);
+
+    await expect(
+      caller.accounts.create({
+        orgId: orgA.id,
+        teamId: teamInB.id,
+        name: "x-org-team",
+        platform: "anthropic",
+        type: "api_key",
+        credentials: "sk-x",
+      }),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: expect.stringContaining("team does not belong to org"),
+    });
   });
 
   it("create: returns NOT_FOUND when ENABLE_GATEWAY=false", async () => {

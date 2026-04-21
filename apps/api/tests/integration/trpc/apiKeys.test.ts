@@ -11,6 +11,7 @@ import type { ServerEnv } from "@aide/config";
 import {
   setupTestDb,
   makeOrg,
+  makeTeam,
   makeUser,
   defaultTestEnv,
 } from "../../factories/index.js";
@@ -171,6 +172,97 @@ describe("apiKeys router", () => {
     const stashed = await redis.get(`key-reveal:${token}`);
     expect(stashed).not.toBeNull();
     expect(stashed!.startsWith("ak_")).toBe(true);
+  });
+
+  it("issueForUser: targetUser is not a member of orgId → FORBIDDEN (cross-tenant credential issuance guard)", async () => {
+    // org_admin in orgA tries to issue a key for a user who only belongs to
+    // orgB. RBAC alone passes (admin in orgA), but the membership check
+    // must reject — otherwise the targeted user could later claim the
+    // reveal URL and hold a credential attributed to an org they don't
+    // belong to.
+    const orgA = await makeOrg(t.db);
+    const orgB = await makeOrg(t.db);
+    const adminA = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: orgA.id,
+      orgId: orgA.id,
+    });
+    const userInB = await makeUser(t.db, {
+      role: "member",
+      scopeType: "organization",
+      scopeId: orgB.id,
+      orgId: orgB.id,
+    });
+    const caller = await callerFor({ db: t.db, userId: adminA.id, redis });
+
+    await expect(
+      caller.apiKeys.issueForUser({
+        orgId: orgA.id,
+        targetUserId: userInB.id,
+        name: "x",
+      }),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: expect.stringContaining("member"),
+    });
+  });
+
+  it("issueOwn: teamId from a different org → FORBIDDEN (team-org binding guard)", async () => {
+    // Member in orgA self-issues a key but pins teamId belonging to orgB.
+    // Without the team-org check, the row would land with org_id=A and
+    // team_id=<orgB team>, corrupting team-scoped routing.
+    const orgA = await makeOrg(t.db);
+    const orgB = await makeOrg(t.db);
+    const teamInB = await makeTeam(t.db, orgB.id);
+    const member = await makeUser(t.db, {
+      role: "member",
+      scopeType: "organization",
+      scopeId: orgA.id,
+      orgId: orgA.id,
+    });
+    const caller = await callerFor({ db: t.db, userId: member.id, redis });
+
+    await expect(
+      caller.apiKeys.issueOwn({ name: "x", teamId: teamInB.id }),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: expect.stringContaining("team does not belong to org"),
+    });
+  });
+
+  it("issueForUser: teamId from a different org → FORBIDDEN (team-org binding guard)", async () => {
+    // org_admin in orgA targets a member of orgA (membership check passes)
+    // but supplies teamId that lives in orgB. The team-org check must
+    // reject so the inserted row can't cross-bind org and team.
+    const orgA = await makeOrg(t.db);
+    const orgB = await makeOrg(t.db);
+    const teamInB = await makeTeam(t.db, orgB.id);
+    const adminA = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: orgA.id,
+      orgId: orgA.id,
+    });
+    const targetA = await makeUser(t.db, {
+      role: "member",
+      scopeType: "organization",
+      scopeId: orgA.id,
+      orgId: orgA.id,
+    });
+    const caller = await callerFor({ db: t.db, userId: adminA.id, redis });
+
+    await expect(
+      caller.apiKeys.issueForUser({
+        orgId: orgA.id,
+        targetUserId: targetA.id,
+        name: "x",
+        teamId: teamInB.id,
+      }),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: expect.stringContaining("team does not belong to org"),
+    });
   });
 
   it("issueForUser: org_admin from a different org is FORBIDDEN", async () => {

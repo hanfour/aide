@@ -9,6 +9,7 @@ import {
   permissionProcedure,
   router,
 } from "../procedures.js";
+import { assertTeamBelongsToOrg } from "./_shared.js";
 
 const uuid = z.string().uuid();
 const platformEnum = z.enum(["anthropic"]);
@@ -134,6 +135,14 @@ export const accountsRouter = router({
   ).mutation(async ({ ctx, input }) => {
     ensureGatewayEnabled(ctx.env);
     const masterKeyHex = requireMasterKeyHex(ctx.env);
+
+    // Cross-tenant integrity: upstream_accounts.team_id is an independent FK
+    // to teams; without this check an org-A admin could write a row with
+    // org_id=A AND team_id=<team in org B>, corrupting team-scoped routing
+    // and usage attribution.
+    if (input.teamId) {
+      await assertTeamBelongsToOrg(ctx.db, input.teamId, input.orgId);
+    }
 
     let oauthExpiresAt: Date | null = null;
     if (input.type === "oauth") {
