@@ -1,98 +1,115 @@
-import { z } from 'zod'
-import { and, eq, isNull, sql } from 'drizzle-orm'
-import { TRPCError } from '@trpc/server'
-import { upstreamAccounts, credentialVault } from '@aide/db'
-import { encryptCredential } from '@aide/gateway-core'
-import { can } from '@aide/auth'
+import { z } from "zod";
+import { and, eq, isNull, sql } from "drizzle-orm";
+import { TRPCError } from "@trpc/server";
+import { upstreamAccounts, credentialVault } from "@aide/db";
+import { encryptCredential } from "@aide/gateway-core";
+import { can } from "@aide/auth";
 import {
   protectedProcedure,
   permissionProcedure,
-  router
-} from '../procedures.js'
+  router,
+} from "../procedures.js";
 
-const uuid = z.string().uuid()
-const platformEnum = z.enum(['anthropic'])
-const typeEnum = z.enum(['api_key', 'oauth'])
+const uuid = z.string().uuid();
+const platformEnum = z.enum(["anthropic"]);
+const typeEnum = z.enum(["api_key", "oauth"]);
 
 // Drop credential-related joins; the row already excludes them, but we strip
 // any internal-only columns the API shouldn't surface to admins. Status,
 // schedulability, and oauth bookkeeping fields stay (admins need to see them).
 function scrubAccount<T extends Record<string, unknown>>(row: T): T {
-  return row
+  return row;
 }
 
 function ensureGatewayEnabled(env: { ENABLE_GATEWAY: boolean }) {
   if (!env.ENABLE_GATEWAY) {
-    throw new TRPCError({ code: 'NOT_FOUND' })
+    throw new TRPCError({ code: "NOT_FOUND" });
   }
+}
+
+// Centralizes the CREDENTIAL_ENCRYPTION_KEY presence check. The env schema
+// requires this key whenever the gateway is enabled, so reaching the throw
+// branch indicates a misconfiguration upstream — guard so we never call
+// encryptCredential with undefined.
+function requireMasterKeyHex(env: {
+  CREDENTIAL_ENCRYPTION_KEY?: string;
+}): string {
+  const key = env.CREDENTIAL_ENCRYPTION_KEY;
+  if (!key) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "CREDENTIAL_ENCRYPTION_KEY not configured",
+    });
+  }
+  return key;
 }
 
 // Parse `expires_at` from an oauth credential payload. Accepts either an ISO
 // 8601 string or a unix timestamp (seconds OR milliseconds). Returns null if
 // missing or unparseable — caller decides whether that's acceptable.
 function parseOauthExpiresAt(credentialsJson: string): Date | null {
-  let parsed: unknown
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(credentialsJson)
+    parsed = JSON.parse(credentialsJson);
   } catch {
     throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: 'oauth credentials must be valid JSON'
-    })
+      code: "BAD_REQUEST",
+      message: "oauth credentials must be valid JSON",
+    });
   }
-  if (!parsed || typeof parsed !== 'object') return null
-  const raw = (parsed as Record<string, unknown>).expires_at
-  if (raw == null) return null
-  if (typeof raw === 'string') {
-    const d = new Date(raw)
-    return Number.isNaN(d.getTime()) ? null : d
+  if (!parsed || typeof parsed !== "object") return null;
+  const raw = (parsed as Record<string, unknown>).expires_at;
+  if (raw == null) return null;
+  if (typeof raw === "string") {
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? null : d;
   }
-  if (typeof raw === 'number' && Number.isFinite(raw)) {
+  if (typeof raw === "number" && Number.isFinite(raw)) {
     // Heuristic: anything below 10^12 is treated as seconds, otherwise ms.
-    const ms = raw < 1e12 ? raw * 1000 : raw
-    return new Date(ms)
+    const ms = raw < 1e12 ? raw * 1000 : raw;
+    return new Date(ms);
   }
-  return null
+  return null;
 }
 
 export const accountsRouter = router({
-  list: permissionProcedure(
-    z.object({ orgId: uuid }),
-    (_, input) => ({ type: 'account.read', orgId: input.orgId })
-  ).query(async ({ ctx, input }) => {
-    ensureGatewayEnabled(ctx.env)
+  list: permissionProcedure(z.object({ orgId: uuid }), (_, input) => ({
+    type: "account.read",
+    orgId: input.orgId,
+  })).query(async ({ ctx, input }) => {
+    ensureGatewayEnabled(ctx.env);
     const rows = await ctx.db
       .select()
       .from(upstreamAccounts)
       .where(
         and(
           eq(upstreamAccounts.orgId, input.orgId),
-          isNull(upstreamAccounts.deletedAt)
-        )
-      )
-    return rows.map(scrubAccount)
+          isNull(upstreamAccounts.deletedAt),
+        ),
+      );
+    return rows.map(scrubAccount);
   }),
 
   get: protectedProcedure
     .input(z.object({ id: uuid }))
     .query(async ({ ctx, input }) => {
-      ensureGatewayEnabled(ctx.env)
+      ensureGatewayEnabled(ctx.env);
       const [row] = await ctx.db
         .select()
         .from(upstreamAccounts)
         .where(
           and(
             eq(upstreamAccounts.id, input.id),
-            isNull(upstreamAccounts.deletedAt)
-          )
+            isNull(upstreamAccounts.deletedAt),
+          ),
         )
-        .limit(1)
+        .limit(1);
       // Don't leak existence: NOT_FOUND covers both missing and forbidden.
-      if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
-      if (!can(ctx.perm, { type: 'account.read', orgId: row.orgId })) {
-        throw new TRPCError({ code: 'NOT_FOUND' })
+      if (!row) throw new TRPCError({ code: "NOT_FOUND" });
+      if (!can(ctx.perm, { type: "account.read", orgId: row.orgId })) {
+        throw new TRPCError({ code: "NOT_FOUND" });
       }
-      return scrubAccount(row)
+      return scrubAccount(row);
     }),
 
   create: permissionProcedure(
@@ -107,28 +124,20 @@ export const accountsRouter = router({
       concurrency: z.number().int().min(1).max(1000).optional(),
       rateMultiplier: z.number().positive().max(10000).optional(),
       notes: z.string().max(10_000).optional(),
-      credentials: z.string().min(1).max(100_000)
+      credentials: z.string().min(1).max(100_000),
     }),
     (_, input) => ({
-      type: 'account.create',
+      type: "account.create",
       orgId: input.orgId,
-      teamId: input.teamId ?? null
-    })
+      teamId: input.teamId ?? null,
+    }),
   ).mutation(async ({ ctx, input }) => {
-    ensureGatewayEnabled(ctx.env)
-    const masterKeyHex = ctx.env.CREDENTIAL_ENCRYPTION_KEY
-    if (!masterKeyHex) {
-      // Should never happen — env schema requires this when gateway is on —
-      // but guard so we never call encryptCredential with undefined.
-      throw new TRPCError({
-        code: 'INTERNAL_SERVER_ERROR',
-        message: 'CREDENTIAL_ENCRYPTION_KEY not configured'
-      })
-    }
+    ensureGatewayEnabled(ctx.env);
+    const masterKeyHex = requireMasterKeyHex(ctx.env);
 
-    let oauthExpiresAt: Date | null = null
-    if (input.type === 'oauth') {
-      oauthExpiresAt = parseOauthExpiresAt(input.credentials)
+    let oauthExpiresAt: Date | null = null;
+    if (input.type === "oauth") {
+      oauthExpiresAt = parseOauthExpiresAt(input.credentials);
     }
 
     const insertedRow = await ctx.db.transaction(async (tx) => {
@@ -147,34 +156,34 @@ export const accountsRouter = router({
           rateMultiplier:
             input.rateMultiplier !== undefined
               ? input.rateMultiplier.toString()
-              : '1.0'
+              : "1.0",
         })
-        .returning()
+        .returning();
       if (!account) {
         throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: 'failed to insert upstream account'
-        })
+          code: "INTERNAL_SERVER_ERROR",
+          message: "failed to insert upstream account",
+        });
       }
 
       const sealed = encryptCredential({
         masterKeyHex,
         accountId: account.id,
-        plaintext: input.credentials
-      })
+        plaintext: input.credentials,
+      });
 
       await tx.insert(credentialVault).values({
         accountId: account.id,
         nonce: sealed.nonce,
         ciphertext: sealed.ciphertext,
         authTag: sealed.authTag,
-        oauthExpiresAt
-      })
+        oauthExpiresAt,
+      });
 
-      return account
-    })
+      return account;
+    });
 
-    return scrubAccount(insertedRow)
+    return scrubAccount(insertedRow);
   }),
 
   update: protectedProcedure
@@ -186,142 +195,151 @@ export const accountsRouter = router({
         schedulable: z.boolean().optional(),
         priority: z.number().int().min(0).max(1000).optional(),
         concurrency: z.number().int().min(1).max(1000).optional(),
-        rateMultiplier: z.number().positive().max(10000).optional()
-      })
+        rateMultiplier: z.number().positive().max(10000).optional(),
+      }),
     )
     .mutation(async ({ ctx, input }) => {
-      ensureGatewayEnabled(ctx.env)
+      ensureGatewayEnabled(ctx.env);
       const [existing] = await ctx.db
         .select({ id: upstreamAccounts.id, orgId: upstreamAccounts.orgId })
         .from(upstreamAccounts)
         .where(
           and(
             eq(upstreamAccounts.id, input.id),
-            isNull(upstreamAccounts.deletedAt)
-          )
+            isNull(upstreamAccounts.deletedAt),
+          ),
         )
-        .limit(1)
-      if (!existing) throw new TRPCError({ code: 'NOT_FOUND' })
+        .limit(1);
+      if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
       if (
         !can(ctx.perm, {
-          type: 'account.update',
+          type: "account.update",
           orgId: existing.orgId,
-          accountId: existing.id
+          accountId: existing.id,
         })
       ) {
-        throw new TRPCError({ code: 'FORBIDDEN' })
+        throw new TRPCError({ code: "FORBIDDEN" });
       }
 
-      const patch: Record<string, unknown> = { updatedAt: new Date() }
-      if (input.name !== undefined) patch.name = input.name
-      if (input.notes !== undefined) patch.notes = input.notes
-      if (input.schedulable !== undefined) patch.schedulable = input.schedulable
-      if (input.priority !== undefined) patch.priority = input.priority
-      if (input.concurrency !== undefined) patch.concurrency = input.concurrency
+      const patch: Record<string, unknown> = { updatedAt: new Date() };
+      if (input.name !== undefined) patch.name = input.name;
+      if (input.notes !== undefined) patch.notes = input.notes;
+      if (input.schedulable !== undefined)
+        patch.schedulable = input.schedulable;
+      if (input.priority !== undefined) patch.priority = input.priority;
+      if (input.concurrency !== undefined)
+        patch.concurrency = input.concurrency;
       if (input.rateMultiplier !== undefined) {
-        patch.rateMultiplier = input.rateMultiplier.toString()
+        patch.rateMultiplier = input.rateMultiplier.toString();
       }
 
       const [row] = await ctx.db
         .update(upstreamAccounts)
         .set(patch)
         .where(eq(upstreamAccounts.id, input.id))
-        .returning()
-      if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
-      return scrubAccount(row)
+        .returning();
+      if (!row) throw new TRPCError({ code: "NOT_FOUND" });
+      return scrubAccount(row);
     }),
 
   rotate: protectedProcedure
     .input(
       z.object({
         id: uuid,
-        credentials: z.string().min(1).max(100_000)
-      })
+        credentials: z.string().min(1).max(100_000),
+      }),
     )
     .mutation(async ({ ctx, input }) => {
-      ensureGatewayEnabled(ctx.env)
-      const masterKeyHex = ctx.env.CREDENTIAL_ENCRYPTION_KEY
-      if (!masterKeyHex) {
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: 'CREDENTIAL_ENCRYPTION_KEY not configured'
-        })
-      }
+      ensureGatewayEnabled(ctx.env);
+      const masterKeyHex = requireMasterKeyHex(ctx.env);
 
       const [existing] = await ctx.db
         .select({
           id: upstreamAccounts.id,
           orgId: upstreamAccounts.orgId,
-          type: upstreamAccounts.type
+          type: upstreamAccounts.type,
         })
         .from(upstreamAccounts)
         .where(
           and(
             eq(upstreamAccounts.id, input.id),
-            isNull(upstreamAccounts.deletedAt)
-          )
+            isNull(upstreamAccounts.deletedAt),
+          ),
         )
-        .limit(1)
-      if (!existing) throw new TRPCError({ code: 'NOT_FOUND' })
+        .limit(1);
+      if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
       if (
         !can(ctx.perm, {
-          type: 'account.rotate',
+          type: "account.rotate",
           orgId: existing.orgId,
-          accountId: existing.id
+          accountId: existing.id,
         })
       ) {
-        throw new TRPCError({ code: 'FORBIDDEN' })
+        throw new TRPCError({ code: "FORBIDDEN" });
       }
 
-      let oauthExpiresAt: Date | null = null
-      if (existing.type === 'oauth') {
-        oauthExpiresAt = parseOauthExpiresAt(input.credentials)
+      let oauthExpiresAt: Date | null = null;
+      if (existing.type === "oauth") {
+        oauthExpiresAt = parseOauthExpiresAt(input.credentials);
       }
 
       const sealed = encryptCredential({
         masterKeyHex,
         accountId: existing.id,
-        plaintext: input.credentials
-      })
+        plaintext: input.credentials,
+      });
 
-      const rotatedAt = new Date()
-      await ctx.db
+      const rotatedAt = new Date();
+      // Use `.returning()` so we can verify a vault row actually existed for
+      // this account. Without this, a missing row (legacy data, partial
+      // migration, or fixtures that bypass `create`) would silently no-op
+      // and we'd report success without persisting the new ciphertext.
+      const updated = await ctx.db
         .update(credentialVault)
         .set({
           nonce: sealed.nonce,
           ciphertext: sealed.ciphertext,
           authTag: sealed.authTag,
           oauthExpiresAt,
-          rotatedAt
+          rotatedAt,
         })
         .where(eq(credentialVault.accountId, existing.id))
+        .returning({ id: credentialVault.id });
+      if (updated.length !== 1) {
+        // From the caller's perspective, the credential they're trying to
+        // rotate doesn't exist — surface NOT_FOUND rather than a 500.
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "credential_vault row missing for account",
+        });
+      }
 
-      return { id: existing.id, rotatedAt }
+      return { id: existing.id, rotatedAt };
     }),
 
   delete: protectedProcedure
     .input(z.object({ id: uuid }))
     .mutation(async ({ ctx, input }) => {
-      ensureGatewayEnabled(ctx.env)
+      ensureGatewayEnabled(ctx.env);
       const [existing] = await ctx.db
         .select({ id: upstreamAccounts.id, orgId: upstreamAccounts.orgId })
         .from(upstreamAccounts)
         .where(
           and(
             eq(upstreamAccounts.id, input.id),
-            isNull(upstreamAccounts.deletedAt)
-          )
+            isNull(upstreamAccounts.deletedAt),
+          ),
         )
-        .limit(1)
-      if (!existing) throw new TRPCError({ code: 'NOT_FOUND' })
+        .limit(1);
+      if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
       if (
         !can(ctx.perm, {
-          type: 'account.delete',
+          type: "account.delete",
           orgId: existing.orgId,
-          accountId: existing.id
+          accountId: existing.id,
         })
       ) {
-        throw new TRPCError({ code: 'FORBIDDEN' })
+        throw new TRPCError({ code: "FORBIDDEN" });
       }
 
       await ctx.db
@@ -329,9 +347,9 @@ export const accountsRouter = router({
         .set({
           deletedAt: sql`NOW()`,
           schedulable: false,
-          updatedAt: sql`NOW()`
+          updatedAt: sql`NOW()`,
         })
-        .where(eq(upstreamAccounts.id, input.id))
-      return { ok: true as const }
-    })
-})
+        .where(eq(upstreamAccounts.id, input.id));
+      return { ok: true as const };
+    }),
+});

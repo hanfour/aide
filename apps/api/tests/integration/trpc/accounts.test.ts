@@ -305,6 +305,101 @@ describe("accounts router", () => {
     expect(decrypted).toBe("sk-new-secret");
   });
 
+  it("rotate: throws NOT_FOUND when credential_vault row is missing", async () => {
+    // Mimic legacy/partially-migrated data: insert an upstream_accounts row
+    // directly WITHOUT the corresponding credential_vault row. Before the
+    // .returning() check, rotate would silently no-op and report success.
+    const org = await makeOrg(t.db);
+    const admin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const [bareAcct] = await t.db
+      .insert(upstreamAccounts)
+      .values({
+        orgId: org.id,
+        name: "no-vault",
+        platform: "anthropic",
+        type: "api_key",
+      })
+      .returning();
+
+    const caller = await callerFor(t.db, admin.id);
+    await expect(
+      caller.accounts.rotate({
+        id: bareAcct!.id,
+        credentials: "sk-rotate-nope",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("rotate: returns FORBIDDEN when caller is org_admin on a different org", async () => {
+    const org = await makeOrg(t.db);
+    const otherOrg = await makeOrg(t.db);
+    const admin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const otherAdmin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: otherOrg.id,
+      orgId: otherOrg.id,
+    });
+
+    const caller = await callerFor(t.db, admin.id);
+    const created = await caller.accounts.create({
+      orgId: org.id,
+      name: "rotate-mine",
+      platform: "anthropic",
+      type: "api_key",
+      credentials: "sk-rotate-mine",
+    });
+
+    const otherCaller = await callerFor(t.db, otherAdmin.id);
+    await expect(
+      otherCaller.accounts.rotate({
+        id: created.id,
+        credentials: "sk-pwned",
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("delete: returns FORBIDDEN when caller is org_admin on a different org", async () => {
+    const org = await makeOrg(t.db);
+    const otherOrg = await makeOrg(t.db);
+    const admin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const otherAdmin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: otherOrg.id,
+      orgId: otherOrg.id,
+    });
+
+    const caller = await callerFor(t.db, admin.id);
+    const created = await caller.accounts.create({
+      orgId: org.id,
+      name: "delete-mine",
+      platform: "anthropic",
+      type: "api_key",
+      credentials: "sk-delete-mine",
+    });
+
+    const otherCaller = await callerFor(t.db, otherAdmin.id);
+    await expect(
+      otherCaller.accounts.delete({ id: created.id }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
   it("delete: soft-deletes and excludes from subsequent list", async () => {
     const org = await makeOrg(t.db);
     const admin = await makeUser(t.db, {
