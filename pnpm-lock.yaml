@@ -54,6 +54,9 @@ importers:
       '@aide/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@aide/gateway-core':
+        specifier: workspace:*
+        version: link:../../packages/gateway-core
       '@fastify/cookie':
         specifier: ^11.0.0
         version: 11.0.2

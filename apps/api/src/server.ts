@@ -6,7 +6,7 @@ import { healthRoutes } from "./rest/health.js";
 import { cookiesPlugin } from "./plugins/cookies.js";
 import { authPlugin } from "./plugins/auth.js";
 import { appRouter } from "./trpc/router.js";
-import { createContext } from "./trpc/context.js";
+import { createContextFactory } from "./trpc/context.js";
 
 export async function buildServer() {
   const env = parseServerEnv();
@@ -48,7 +48,7 @@ export async function buildServer() {
         prefix: "",
         trpcOptions: {
           router: appRouter,
-          createContext,
+          createContext: createContextFactory(env),
         },
       });
     },
