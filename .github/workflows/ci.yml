@@ -104,6 +104,16 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # Gateway depends on Redis for BullMQ queue + slot accounting. Matches
+      # the REDIS_URL env below; must be running before the gateway starts.
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql://aide:aide_ci@localhost:5432/aide
       AUTH_SECRET: ci-00000000000000000000000000000000
@@ -119,6 +129,17 @@ jobs:
       TEST_SEED_TOKEN: ${{ secrets.CI_TEST_SEED_TOKEN || 'e2e-test-token-0000000000000000000000' }}
       # Auth.js v5 rejects non-AUTH_URL hosts by default; CI runs on localhost.
       AUTH_TRUST_HOST: "true"
+      # Gateway wiring. Keep these in lockstep with
+      # apps/web/e2e/fixtures/gateway-env.ts. The 64-hex keys are E2E-only
+      # padding to satisfy parseServerEnv's HEX_64_REGEX — never reuse.
+      ENABLE_GATEWAY: "true"
+      GATEWAY_PORT: "3002"
+      GATEWAY_BASE_URL: http://localhost:3002
+      REDIS_URL: redis://localhost:6379
+      CREDENTIAL_ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      API_KEY_HASH_PEPPER: "1111111111111111111111111111111111111111111111111111111111111111"
+      UPSTREAM_ANTHROPIC_BASE_URL: http://localhost:4100
+      FAKE_ANTHROPIC_PORT: "4100"
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v5
@@ -130,7 +151,7 @@ jobs:
       - name: Apply migrations
         run: pnpm --filter @aide/db db:migrate
       - name: Build workspaces
-        run: pnpm turbo run build --filter=@aide/api --filter=@aide/web
+        run: pnpm turbo run build --filter=@aide/api --filter=@aide/web --filter=@aide/gateway
       - name: Install Playwright browsers
         run: pnpm --filter @aide/web exec playwright install --with-deps chromium
       - name: Start api (NODE_ENV=test + test-seed gate active)
@@ -143,8 +164,23 @@ jobs:
           NODE_ENV=production nohup \
             pnpm --filter @aide/web start > web.log 2>&1 &
           echo $! > web.pid
-      - name: Wait for api + web
-        run: npx wait-on http://localhost:3001/health http://localhost:3000/sign-in --timeout 60000
+      - name: Start fake Anthropic upstream
+        run: |
+          nohup pnpm --filter @aide/web exec tsx e2e/fixtures/run-fake-anthropic.ts \
+            > fake-anthropic.log 2>&1 &
+          echo $! > fake-anthropic.pid
+      - name: Start gateway (production build)
+        run: |
+          nohup pnpm --filter @aide/gateway start > gateway.log 2>&1 &
+          echo $! > gateway.pid
+      - name: Wait for api + web + gateway + fake upstream
+        run: |
+          npx wait-on \
+            http://localhost:3001/health \
+            http://localhost:3000/sign-in \
+            http://localhost:3002/health \
+            http://localhost:4100/ \
+            --timeout 60000
       - name: Playwright
         run: pnpm --filter @aide/web exec playwright test --config e2e/playwright.config.ts
       - name: Upload Playwright report on failure
@@ -156,7 +192,7 @@ jobs:
             apps/web/playwright-report/
             apps/web/e2e/.playwright/
           retention-days: 7
-      - name: Upload api + web logs on failure
+      - name: Upload api + web + gateway + fake-upstream logs on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -164,9 +200,13 @@ jobs:
           path: |
             api.log
             web.log
+            gateway.log
+            fake-anthropic.log
           retention-days: 7
       - name: Stop background servers
         if: always()
         run: |
           kill $(cat api.pid) 2>/dev/null || true
           kill $(cat web.pid) 2>/dev/null || true
+          kill $(cat gateway.pid) 2>/dev/null || true
+          kill $(cat fake-anthropic.pid) 2>/dev/null || true
