@@ -77,7 +77,7 @@ test("admin-issued one-time URL: issue → reveal in second context → gateway 
   await adminPage.getByLabel("Credentials").fill("sk-ant-fake-e2e-issue");
   await adminPage.getByRole("button", { name: /create account/i }).click();
   await expect(adminPage).toHaveURL(
-    new RegExp(`/dashboard/organizations/${orgId}/accounts$`),
+    new RegExp(`^.*/dashboard/organizations/${orgId}/accounts$`),
   );
 
   await adminPage.goto(
@@ -98,6 +98,9 @@ test("admin-issued one-time URL: issue → reveal in second context → gateway 
   await expect(revealUrlCode).toBeVisible();
   const revealUrl = (await revealUrlCode.textContent())?.trim();
   expect(revealUrl, "admin dialog should show a reveal URL").toBeTruthy();
+  // Token is `randomBytes(32).toString('base64url')` from the issueForUser
+  // mutation (apps/api/src/trpc/routers/apiKeys.ts) — base64url alphabet
+  // is [A-Za-z0-9_-], no padding.
   expect(revealUrl).toMatch(/\/api-keys\/reveal\/[A-Za-z0-9_-]+$/);
   await issueDialog.getByRole("button", { name: /done/i }).click();
 

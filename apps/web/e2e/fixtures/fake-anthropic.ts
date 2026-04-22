@@ -14,7 +14,11 @@
  * (streaming, 4xx) lives in gateway integration tests.
  */
 
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import type { AddressInfo } from "node:net";
 
 export interface FakeRequest {
@@ -60,11 +64,7 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   }
 }
 
-function sendJson(
-  res: ServerResponse,
-  status: number,
-  payload: unknown,
-): void {
+function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
   res.end(JSON.stringify(payload));
@@ -94,20 +94,30 @@ export async function startFakeAnthropic(
       }
       sendJson(res, 404, { error: "not_found" });
     })().catch((err) => {
-      sendJson(res, 500, { error: "fake_upstream_failure", detail: String(err) });
+      sendJson(res, 500, {
+        error: "fake_upstream_failure",
+        detail: String(err),
+      });
     });
   });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(opts.port ?? 0, "127.0.0.1", () => {
+    // Bind to 0.0.0.0 instead of 127.0.0.1 so probes via `localhost` work
+    // regardless of IPv4-vs-IPv6 resolution order (CI runners' /etc/gai.conf
+    // is not consistent across images). The fake is still loopback-only
+    // because nothing on the public network can route to an ephemeral CI
+    // runner — 0.0.0.0 here is pragmatism, not a security change.
+    server.listen(opts.port ?? 0, "0.0.0.0", () => {
       server.removeListener("error", reject);
       resolve();
     });
   });
 
   const addr = server.address() as AddressInfo;
-  const url = `http://127.0.0.1:${addr.port}`;
+  // Callers probe via `localhost:<port>`; advertising that here keeps us
+  // consistent with wait-on / playwright webServer readiness URLs.
+  const url = `http://localhost:${addr.port}`;
 
   const close = (): Promise<void> =>
     new Promise((resolve, reject) =>

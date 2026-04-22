@@ -56,8 +56,10 @@ test("gateway happy path: admin → account → self-issued key → request → 
   // Submit redirects to the accounts list. Wait until the navigation
   // completes before we touch the profile page — otherwise the list query
   // can still be in flight when we move on.
+  // Anchor both ends: regex test() matches substring by default, so an
+  // unrelated page URL that happens to end with `/accounts` would pass.
   await expect(page).toHaveURL(
-    new RegExp(`/dashboard/organizations/${orgId}/accounts$`),
+    new RegExp(`^.*/dashboard/organizations/${orgId}/accounts$`),
   );
 
   // ── 2. Self-issue a platform API key; capture the raw value ────────────

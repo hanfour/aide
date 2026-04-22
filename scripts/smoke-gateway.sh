@@ -161,13 +161,19 @@ KEY_PREFIX="${API_KEY:0:8}"
 # not be visible the moment POST /v1/messages returns.
 ATTEMPTS=15
 for ((i=1; i<=ATTEMPTS; i++)); do
-  count="$(psql "${DATABASE_URL}" --tuples-only --no-align --command "
-    SELECT count(*)
-    FROM usage_logs ul
-    JOIN api_keys ak ON ak.id = ul.api_key_id
-    WHERE ak.key_prefix = '${KEY_PREFIX}'
-      AND ul.created_at > now() - interval '5 minutes';
-  " 2>/dev/null | tr -d '[:space:]' )"
+  # Pass KEY_PREFIX via psql's --set mechanism so it's interpolated as a
+  # properly-quoted SQL literal (:'prefix') rather than shell-concatenated
+  # into the query. Base62 keys are safe to concat, but --set keeps future
+  # prefix-format changes from introducing injection risk.
+  count="$(psql "${DATABASE_URL}" --tuples-only --no-align \
+    --set=prefix="${KEY_PREFIX}" \
+    --command "
+      SELECT count(*)
+      FROM usage_logs ul
+      JOIN api_keys ak ON ak.id = ul.api_key_id
+      WHERE ak.key_prefix = :'prefix'
+        AND ul.created_at > now() - interval '5 minutes';
+    " 2>/dev/null | tr -d '[:space:]' )"
   if [[ "${count}" =~ ^[0-9]+$ ]] && (( count >= 1 )); then
     ok "usage_logs row found for key_prefix=${KEY_PREFIX} (count=${count})"
     exit 0

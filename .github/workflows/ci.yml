@@ -136,8 +136,11 @@ jobs:
       GATEWAY_PORT: "3002"
       GATEWAY_BASE_URL: http://localhost:3002
       REDIS_URL: redis://localhost:6379
-      CREDENTIAL_ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
-      API_KEY_HASH_PEPPER: "1111111111111111111111111111111111111111111111111111111111111111"
+      # Secrets fallback to the same E2E-only 64-hex padding used by
+      # apps/web/e2e/fixtures/gateway-env.ts. Override in repo-level secrets
+      # if a staging-pinned workflow needs a real key.
+      CREDENTIAL_ENCRYPTION_KEY: ${{ secrets.E2E_CREDENTIAL_ENCRYPTION_KEY || '0000000000000000000000000000000000000000000000000000000000000000' }}
+      API_KEY_HASH_PEPPER: ${{ secrets.E2E_API_KEY_HASH_PEPPER || '1111111111111111111111111111111111111111111111111111111111111111' }}
       UPSTREAM_ANTHROPIC_BASE_URL: http://localhost:4100
       FAKE_ANTHROPIC_PORT: "4100"
     steps:
@@ -169,18 +172,38 @@ jobs:
           nohup pnpm --filter @aide/web exec tsx e2e/fixtures/run-fake-anthropic.ts \
             > fake-anthropic.log 2>&1 &
           echo $! > fake-anthropic.pid
+          # Fail loud if the process crashed on boot — otherwise the wait-on
+          # timeout is the only signal and obscures env / resolution errors.
+          # `sleep 2` is enough for any startup error to surface.
+          sleep 2
+          if ! kill -0 "$(cat fake-anthropic.pid)" 2>/dev/null; then
+            echo "::error::fake-anthropic exited early; log follows"
+            cat fake-anthropic.log
+            exit 1
+          fi
       - name: Start gateway (production build)
         run: |
-          nohup pnpm --filter @aide/gateway start > gateway.log 2>&1 &
+          # NODE_ENV is enforced by parseServerEnv (packages/config/src/env.ts)
+          # as one of development|test|production — missing it crashes the
+          # gateway at boot. Matches the api step's inline NODE_ENV=test.
+          NODE_ENV=test nohup pnpm --filter @aide/gateway start > gateway.log 2>&1 &
           echo $! > gateway.pid
+          sleep 2
+          if ! kill -0 "$(cat gateway.pid)" 2>/dev/null; then
+            echo "::error::gateway exited early; log follows"
+            cat gateway.log
+            exit 1
+          fi
       - name: Wait for api + web + gateway + fake upstream
         run: |
+          # 120s timeout — Next.js cold start alone can eat 30-40s on a cold
+          # ubuntu-latest runner; leave headroom for gateway + fake too.
           npx wait-on \
             http://localhost:3001/health \
             http://localhost:3000/sign-in \
             http://localhost:3002/health \
             http://localhost:4100/ \
-            --timeout 60000
+            --timeout 120000
       - name: Playwright
         run: pnpm --filter @aide/web exec playwright test --config e2e/playwright.config.ts
       - name: Upload Playwright report on failure
