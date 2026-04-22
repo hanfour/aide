@@ -197,7 +197,10 @@ jobs:
           # NODE_ENV is enforced by parseServerEnv (packages/config/src/env.ts)
           # as one of development|test|production — missing it crashes the
           # gateway at boot. Matches the api step's inline NODE_ENV=test.
-          NODE_ENV=test nohup pnpm --filter @aide/gateway start > gateway.log 2>&1 &
+          # LOG_LEVEL=debug so next spec failure (e.g. credential decrypt,
+          # slot acquire, upstream call) surfaces its actual cause instead of
+          # a bare 503 `all_upstreams_failed`.
+          NODE_ENV=test LOG_LEVEL=debug nohup pnpm --filter @aide/gateway start > gateway.log 2>&1 &
           echo $! > gateway.pid
           sleep 2
           if ! kill -0 "$(cat gateway.pid)" 2>/dev/null; then
