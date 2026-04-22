@@ -13,6 +13,10 @@ import {
   createUsageLogQueue,
   type UsageLogJobPayload,
 } from "./workers/usageLogQueue.js";
+import {
+  createBodyCaptureQueue,
+  type BodyCaptureJobPayload,
+} from "./workers/bodyCaptureQueue.js";
 import { UsageLogWorker } from "./workers/usageLogWorker.js";
 import { BillingAudit } from "./workers/billingAudit.js";
 
@@ -28,6 +32,13 @@ declare module "fastify" {
      * call `enqueueUsageLog(fastify.usageLogQueue, payload, { fallback: ... })`.
      */
     usageLogQueue?: Queue<UsageLogJobPayload>;
+    /**
+     * BullMQ body-capture queue. Decorated only when ENABLE_GATEWAY=true AND no
+     * test-injected Redis was provided (same test-mode escape hatch as
+     * `usageLogQueue`). Route handlers check for presence before enqueueing;
+     * undefined means test mode — silently skip.
+     */
+    bodyCaptureQueue?: Queue<BodyCaptureJobPayload>;
   }
 }
 
@@ -73,6 +84,7 @@ export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
   // BullMQ wiring: skip when a test injected its own Redis (see BuildOpts docs).
   if (opts.redis === undefined) {
     await wireUsageLogPipeline(app, opts.env);
+    await wireBodyCapturePipeline(app, opts.env);
   } else {
     app.log.debug(
       "buildServer: opts.redis injected — skipping BullMQ queue/worker/audit (test mode)",
@@ -183,6 +195,56 @@ async function wireUsageLogPipeline(
       app.log.debug(
         { err: err.message },
         "bullmq redis quit failed (likely already closed)",
+      );
+    });
+  });
+}
+
+/**
+ * Build the dedicated BullMQ Redis connection + Queue for body capture and
+ * wire onClose teardown. The worker is managed externally (bodyCaptureWorker.ts)
+ * and not started here — only the queue is decorated so route handlers can enqueue.
+ *
+ * Uses a separate Redis connection from usageLogPipeline (same rationale: BullMQ
+ * Lua scripts cannot share the prefixed `fastify.redis` client).
+ */
+async function wireBodyCapturePipeline(
+  app: FastifyInstance,
+  env: ServerEnv,
+): Promise<void> {
+  const redisUrl = env.REDIS_URL;
+  if (!redisUrl) {
+    throw new Error(
+      "REDIS_URL required to wire BullMQ body-capture pipeline (ENABLE_GATEWAY=true)",
+    );
+  }
+
+  const bullmqRedis = new Redis(redisUrl, {
+    enableAutoPipelining: true,
+    maxRetriesPerRequest: null,
+  });
+
+  bullmqRedis.on("error", (err: Error) => {
+    app.log.warn({ err: err.message }, "body capture bullmq redis error");
+  });
+
+  const queue = createBodyCaptureQueue({ connection: bullmqRedis });
+
+  app.decorate("bodyCaptureQueue", queue);
+
+  app.addHook("onClose", async () => {
+    try {
+      await queue.close();
+    } catch (err) {
+      app.log.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "body capture queue close failed",
+      );
+    }
+    await bullmqRedis.quit().catch((err: Error) => {
+      app.log.debug(
+        { err: err.message },
+        "body capture bullmq redis quit failed (likely already closed)",
       );
     });
   });

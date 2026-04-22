@@ -16,6 +16,7 @@ import {
 } from "../runtime/streamUsageExtractor.js";
 import type { SelectedAccount } from "../runtime/selectAccount.js";
 import { emitUsageLog } from "../runtime/usageLogging.js";
+import { emitBodyCapture } from "../runtime/bodyCapture.js";
 
 export interface MessagesRouteOptions {
   env: ServerEnv;
@@ -256,6 +257,14 @@ async function runNonStreamFailover(
           statusCode: upstream.status,
           durationMs: Date.now() - startedAtMs,
         });
+        await emitBodyCapture({
+          app,
+          req,
+          requestId,
+          requestBodyJson: upstreamBodyBuf.toString("utf8"),
+          responseBody: parsedUpstream,
+          stream: false,
+        });
 
         return upstream;
       } catch (err) {
@@ -447,6 +456,21 @@ async function runStreamingFailover(
                   ? bufferReleasedAtMs - startedAtMs
                   : null,
             });
+            // STREAMING DEFERRAL (Plan 4B Task 3.5b): stream transcript
+            // assembly requires buffer reconstruction work in
+            // streamUsageExtractor. Capturing request body + placeholder
+            // here; real transcript wired in Task 3.5b.
+            await emitBodyCapture({
+              app,
+              req,
+              requestId,
+              requestBodyJson: upstreamBodyBuf.toString("utf8"),
+              responseBody: {
+                stream: true,
+                note: "transcript_reconstruction_deferred",
+              },
+              stream: true,
+            });
             return;
           }
           const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -496,6 +520,21 @@ async function runStreamingFailover(
             bufferReleasedAtMs !== null
               ? bufferReleasedAtMs - startedAtMs
               : null,
+        });
+        // STREAMING DEFERRAL (Plan 4B Task 3.5b): stream transcript
+        // assembly requires buffer reconstruction work in
+        // streamUsageExtractor. Capturing request body + placeholder
+        // here; real transcript wired in Task 3.5b.
+        await emitBodyCapture({
+          app,
+          req,
+          requestId,
+          requestBodyJson: upstreamBodyBuf.toString("utf8"),
+          responseBody: {
+            stream: true,
+            note: "transcript_reconstruction_deferred",
+          },
+          stream: true,
         });
       } catch (err) {
         if (buffer.isFailoverEligible()) {
@@ -551,6 +590,22 @@ async function runStreamingFailover(
             bufferReleasedAtMs !== null
               ? bufferReleasedAtMs - startedAtMs
               : null,
+        });
+        // STREAMING DEFERRAL (Plan 4B Task 3.5b): stream transcript
+        // assembly requires buffer reconstruction work in
+        // streamUsageExtractor. Capturing request body + placeholder
+        // here; real transcript wired in Task 3.5b.
+        await emitBodyCapture({
+          app,
+          req,
+          requestId,
+          requestBodyJson: upstreamBodyBuf.toString("utf8"),
+          responseBody: {
+            stream: true,
+            note: "transcript_reconstruction_deferred",
+          },
+          stream: true,
+          attemptErrors: errMsg,
         });
       } finally {
         await releaseSlot(app.redis, "account", account.id, requestId).catch(

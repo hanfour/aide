@@ -21,6 +21,7 @@ export interface GatewayMetrics {
   usagePersistLostTotal: Counter<string>;
   billingDriftTotal: Counter<string>;
   billingMonotonicityViolationTotal: Counter<string>;
+  bodyCaptureEnqueuedTotal: Counter<"result">;
 }
 
 declare module "fastify" {
@@ -142,6 +143,13 @@ export const metricsPlugin = fp(async (fastify) => {
     registers: [register],
   });
 
+  const bodyCaptureEnqueuedTotal = new Counter({
+    name: "gw_body_capture_enqueued_total",
+    help: "Body capture job enqueue attempts",
+    labelNames: ["result"] as const,
+    registers: [register],
+  });
+
   // Materialize zero values so unlabeled metrics appear in scrape output
   waitQueueDepth.set(0);
   idempotencyHitTotal.inc(0);
@@ -168,5 +176,6 @@ export const metricsPlugin = fp(async (fastify) => {
     usagePersistLostTotal,
     billingDriftTotal,
     billingMonotonicityViolationTotal,
+    bodyCaptureEnqueuedTotal,
   });
 });
