@@ -143,6 +143,9 @@ jobs:
       API_KEY_HASH_PEPPER: ${{ secrets.E2E_API_KEY_HASH_PEPPER || '1111111111111111111111111111111111111111111111111111111111111111' }}
       UPSTREAM_ANTHROPIC_BASE_URL: http://localhost:4100
       FAKE_ANTHROPIC_PORT: "4100"
+      # Gateway debug logging so 503 root causes surface in gateway.log.
+      # Promote to warn once e2e is stable.
+      LOG_LEVEL: "debug"
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v5
@@ -197,10 +200,9 @@ jobs:
           # NODE_ENV is enforced by parseServerEnv (packages/config/src/env.ts)
           # as one of development|test|production — missing it crashes the
           # gateway at boot. Matches the api step's inline NODE_ENV=test.
-          # LOG_LEVEL=debug so next spec failure (e.g. credential decrypt,
-          # slot acquire, upstream call) surfaces its actual cause instead of
-          # a bare 503 `all_upstreams_failed`.
-          NODE_ENV=test LOG_LEVEL=debug nohup pnpm --filter @aide/gateway start > gateway.log 2>&1 &
+          # LOG_LEVEL=debug is set at the job-level env block so every
+          # process in this run uses it consistently.
+          NODE_ENV=test nohup pnpm --filter @aide/gateway start > gateway.log 2>&1 &
           echo $! > gateway.pid
           sleep 2
           if ! kill -0 "$(cat gateway.pid)" 2>/dev/null; then
