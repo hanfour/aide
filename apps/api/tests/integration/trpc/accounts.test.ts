@@ -161,7 +161,13 @@ describe("accounts router", () => {
         authTag: vault1!.authTag,
       },
     });
-    expect(plain).toBe("sk-ant-rotate-1");
+    // accounts.create wraps the raw UI-supplied credential with the gateway
+    // envelope ({type, api_key}) so resolveCredential can discriminate on
+    // type at the gateway side. See buildCredentialPlaintext in accounts.ts.
+    expect(JSON.parse(plain)).toEqual({
+      type: "api_key",
+      api_key: "sk-ant-rotate-1",
+    });
 
     const expiresIso = new Date(Date.now() + 3600_000).toISOString();
     const oauthAcct = await caller.accounts.create({
@@ -339,7 +345,11 @@ describe("accounts router", () => {
         authTag: after!.authTag,
       },
     });
-    expect(decrypted).toBe("sk-new-secret");
+    // rotate wraps the same way create does — see buildCredentialPlaintext.
+    expect(JSON.parse(decrypted)).toEqual({
+      type: "api_key",
+      api_key: "sk-new-secret",
+    });
   });
 
   it("rotate: throws NOT_FOUND when credential_vault row is missing", async () => {
