@@ -2,7 +2,10 @@ export interface UsageRow {
   requestId: string;
   requestedModel: string;
   inputTokens: number;
+  outputTokens: number;
   cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalCost: number | string;
 }
 
 export interface BodyRow {

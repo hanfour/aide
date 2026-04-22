@@ -1,23 +1,10 @@
 import type { BodyRow, SignalResult } from "./types.js";
+import { bucketUserAgent, type UaBucket } from "./uaBucket.js";
 
-type ClientBucket = "claude-code" | "cursor" | "raw-sdk" | "other";
+type ClientBucket = UaBucket;
 
 function classifyUA(ua: string | null): ClientBucket {
-  if (ua === null) return "other";
-
-  const lower = ua.toLowerCase();
-
-  if (lower.includes("claude-code")) return "claude-code";
-  if (lower.includes("cursor")) return "cursor";
-  if (
-    lower.includes("anthropic-ai/sdk") ||
-    lower.includes("anthropic-sdk") ||
-    lower.includes("python-anthropic")
-  ) {
-    return "raw-sdk";
-  }
-
-  return "other";
+  return bucketUserAgent(ua);
 }
 
 export function collectClientMix(input: {
