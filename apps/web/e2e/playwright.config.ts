@@ -139,13 +139,15 @@ export default defineConfig({
           },
         },
         {
-          // Fake Anthropic upstream. Playwright probes with GET /, which the
-          // fake answers with 200 JSON so wait-on / the webServer readiness
-          // check pass cleanly (see fake-anthropic.ts).
+          // Fake Anthropic upstream. Self-contained .mjs so `node` runs it
+          // directly — no tsx / pnpm exec wrapper chain (the wrapper chain
+          // was producing a live-but-unreachable child under nohup on CI,
+          // see run-fake-anthropic.mjs module header).
           //
-          // `pnpm --filter @aide/web exec` runs inside apps/web, so the
-          // script path is relative to the web app root.
-          command: `pnpm --filter @aide/web exec tsx e2e/fixtures/run-fake-anthropic.ts`,
+          // Probes GET / and receives 200 JSON so wait-on / the webServer
+          // readiness check pass cleanly.
+          command: `node apps/web/e2e/fixtures/run-fake-anthropic.mjs`,
+          cwd: "../..",
           url: `http://localhost:${FAKE_ANTHROPIC_PORT}/`,
           timeout: 30_000,
           reuseExistingServer: true,

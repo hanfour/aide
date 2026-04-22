@@ -169,15 +169,26 @@ jobs:
           echo $! > web.pid
       - name: Start fake Anthropic upstream
         run: |
-          nohup pnpm --filter @aide/web exec tsx e2e/fixtures/run-fake-anthropic.ts \
+          # Run via plain `node` on the self-contained .mjs. Previous iteration
+          # went through `pnpm --filter @aide/web exec tsx …` which produced a
+          # live-but-unreachable child under nohup on GitHub Actions runners
+          # (server logged "listening" yet wait-on timed out; kill -0 still
+          # passed, pointing at an orphaned wrapper chain).
+          nohup node apps/web/e2e/fixtures/run-fake-anthropic.mjs \
             > fake-anthropic.log 2>&1 &
           echo $! > fake-anthropic.pid
-          # Fail loud if the process crashed on boot — otherwise the wait-on
-          # timeout is the only signal and obscures env / resolution errors.
-          # `sleep 2` is enough for any startup error to surface.
           sleep 2
           if ! kill -0 "$(cat fake-anthropic.pid)" 2>/dev/null; then
             echo "::error::fake-anthropic exited early; log follows"
+            cat fake-anthropic.log
+            exit 1
+          fi
+          # Post-boot sanity: verify the port is actually reachable. Cheaper
+          # feedback than the downstream wait-on step and unambiguous when
+          # the process is up but its listen() didn't take hold.
+          if ! curl -sf --max-time 5 "http://localhost:4100/" -o /dev/null; then
+            echo "::error::fake-anthropic port 4100 not reachable despite live pid"
+            ss -tlnp 2>&1 | head -20 || true
             cat fake-anthropic.log
             exit 1
           fi
