@@ -111,28 +111,39 @@ test("gateway happy path: admin → account → self-issued key → request → 
   expect(gwBody.role).toBe("assistant");
   expect(gwBody.content[0]?.text).toBe("ok");
 
-  // ── 4. Assert the usage row surfaces on /dashboard/profile/usage ───────
-  // Usage logs are written asynchronously by the BullMQ worker, so retry
-  // with reload until the `Requests` KPI card shows a non-zero integer or
-  // the timeout elapses.
+  // ── 4. Assert the usage row surfaces via `usage.summary` tRPC ──────────
+  // Poll the tRPC endpoint directly instead of scraping the dashboard DOM —
+  // the BullMQ worker flushes usage rows asynchronously (~1s), and the
+  // dashboard's React-Query layer + KPI rendering layer add extra timing
+  // variables that make DOM polling brittle. `page.request` reuses the
+  // browser context's auth cookies, so the call lands on the same server
+  // session signed in above.
+  //
+  // We still navigate to /dashboard/profile/usage first so a human looking
+  // at the trace sees the signed-in user's view before the assertion.
   await page.goto("/dashboard/profile/usage");
   await expect(async () => {
-    // networkidle waits for the trpc usage.summary query to settle post-reload
-    // so we don't read the loading-skeleton's "—" placeholder on a fast iter.
-    await page.reload({ waitUntil: "networkidle" });
-    // The page has TWO elements with text "Requests": the KPI label in
-    // UsageSummaryCards AND the CardTitle of the UsageTable section. Scope
-    // to the KPI card by matching on the `.uppercase` class tailwind applies
-    // to KPI labels only — the CardTitle uses plain font-medium.
-    const requestsLabel = page.locator("div.uppercase", {
-      hasText: "Requests",
-    });
-    const requestsValue = requestsLabel
-      .locator("xpath=..")
-      .locator(".font-mono");
-    const text = (await requestsValue.textContent())?.trim() ?? "";
-    expect(text, `usage requests card still reads "${text}"`).toMatch(
-      /^[1-9]\d*$/,
+    const from = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    const to = new Date().toISOString();
+    const input = encodeURIComponent(
+      JSON.stringify({
+        "0": { json: { scope: { type: "own" }, from, to } },
+      }),
     );
+    const res = await page.request.get(
+      `/trpc/usage.summary?batch=1&input=${input}`,
+    );
+    expect(
+      res.status(),
+      `usage.summary trpc call failed: ${await res.text()}`,
+    ).toBe(200);
+    const body = (await res.json()) as Array<{
+      result?: { data?: { json?: { totalRequests?: number } } };
+    }>;
+    const totalRequests = body[0]?.result?.data?.json?.totalRequests;
+    expect(
+      totalRequests,
+      `usage.summary saw ${totalRequests} requests; full body=${JSON.stringify(body)}`,
+    ).toBeGreaterThan(0);
   }).toPass({ timeout: 15_000, intervals: [500, 1000, 2000] });
 });
