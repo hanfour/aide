@@ -59,8 +59,14 @@ const server = createServer((req, res) => {
     // Consume body for POST so connections close cleanly even on unknown paths.
     if (method === "POST") await readBody(req);
 
-    // GET / + /health are wait-on / webServer readiness probes.
-    if (method === "GET" && (url === "/" || url === "/health")) {
+    // GET / + /health are wait-on / webServer readiness probes. Accept HEAD
+    // too — wait-on 9.x issues HEAD by default for HTTP URLs; a bare GET-only
+    // handler would fall through to the 404 path and cause wait-on to retry
+    // until the 120s timeout elapses.
+    if (
+      (method === "GET" || method === "HEAD") &&
+      (url === "/" || url === "/health")
+    ) {
       sendJson(res, 200, { ok: true });
       return;
     }
