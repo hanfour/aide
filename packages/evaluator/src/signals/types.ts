@@ -1,3 +1,20 @@
+export interface UsageRow {
+  requestId: string;
+  requestedModel: string;
+  inputTokens: number;
+  cacheReadTokens: number;
+}
+
+export interface BodyRow {
+  requestId: string;
+  stopReason: string | null;
+  clientUserAgent: string | null;
+  clientSessionId: string | null;
+  requestParams: unknown;
+  responseBody: unknown;
+  requestBody: unknown;
+}
+
 export interface Evidence {
   requestId?: string;
   quote: string;
