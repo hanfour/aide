@@ -23,6 +23,7 @@ COPY packages/auth/package.json packages/auth/package.json
 COPY packages/config/package.json packages/config/package.json
 COPY packages/core/package.json packages/core/package.json
 COPY packages/db/package.json packages/db/package.json
+COPY packages/gateway-core/package.json packages/gateway-core/package.json
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
   pnpm install --frozen-lockfile
 
@@ -37,6 +38,7 @@ COPY packages/auth packages/auth
 COPY packages/config packages/config
 COPY packages/core packages/core
 COPY packages/db packages/db
+COPY packages/gateway-core packages/gateway-core
 RUN pnpm turbo run build --filter=@aide/api...
 RUN pnpm --filter=@aide/api deploy --prod /out
 
@@ -49,7 +51,7 @@ RUN rm -f /out/dist/rest/testSeed.js /out/dist/rest/testSeed.js.map
 # reachable. If deploy --prod pruned anything load-bearing, this fails here
 # rather than at container start.
 RUN cd /out \
-  && node -e "require('drizzle-orm'); require('pg'); require('@aide/db'); require('@aide/auth'); require('@aide/config')"
+  && node -e "require('drizzle-orm'); require('pg'); require('@aide/db'); require('@aide/auth'); require('@aide/config'); require('@aide/gateway-core')"
 
 ###############################################################################
 # Stage 3 — runtime: minimal image, non-root user, healthcheck
