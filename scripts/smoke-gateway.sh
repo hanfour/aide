@@ -13,7 +13,7 @@
 #
 # Required env:
 #   GATEWAY_URL — e.g. https://gateway.example.com  (no trailing slash)
-#   API_KEY     — a self-issued or admin-issued platform key (`sk-aide-...`)
+#   API_KEY     — a self-issued or admin-issued platform key (`ak_...`)
 #
 # Optional env:
 #   MODEL         — Anthropic model slug (default: claude-3-haiku-20240307)
@@ -26,7 +26,7 @@
 #   >0 first failing step; stderr shows the reason
 #
 # Usage:
-#   GATEWAY_URL=https://gateway.example.com API_KEY=sk-aide-... \
+#   GATEWAY_URL=https://gateway.example.com API_KEY=ak_... \
 #     ./scripts/smoke-gateway.sh
 #
 # Intended for the v0.3.0 release checklist (Plan 4A Part 13). Safe to run
@@ -37,7 +37,7 @@ set -euo pipefail
 # ── Config ──────────────────────────────────────────────────────────────────
 
 : "${GATEWAY_URL:?GATEWAY_URL is required, e.g. https://gateway.example.com}"
-: "${API_KEY:?API_KEY is required (sk-aide-...)}"
+: "${API_KEY:?API_KEY is required (ak_...)}"
 
 MODEL="${MODEL:-claude-3-haiku-20240307}"
 TIMEOUT="${TIMEOUT:-15}"

@@ -121,7 +121,7 @@ test("admin-issued one-time URL: issue → reveal in second context → gateway 
   const memberKeyCode = memberPage.locator("#apiKeyRaw");
   await expect(memberKeyCode).toBeVisible();
   const rawKey = (await memberKeyCode.textContent())?.trim();
-  expect(rawKey).toMatch(/^sk-aide-/);
+  expect(rawKey).toMatch(/^ak_/);
 
   // ── Member uses the key against the gateway ────────────────────────────
   const gwResponse = await memberPage.request.post(

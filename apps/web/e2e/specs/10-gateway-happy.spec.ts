@@ -74,7 +74,7 @@ test("gateway happy path: admin → account → self-issued key → request → 
   await expect(keyCode).toBeVisible();
   const rawKey = (await keyCode.textContent())?.trim();
   expect(rawKey, "reveal panel should surface the raw key").toBeTruthy();
-  expect(rawKey).toMatch(/^sk-aide-/);
+  expect(rawKey).toMatch(/^ak_/);
   // Dismiss the dialog. Its teardown effect drops the raw value from state.
   await dialog.getByRole("button", { name: /done/i }).click();
 
@@ -115,13 +115,19 @@ test("gateway happy path: admin → account → self-issued key → request → 
   // the timeout elapses.
   await page.goto("/dashboard/profile/usage");
   await expect(async () => {
-    await page.reload();
+    // networkidle waits for the trpc usage.summary query to settle post-reload
+    // so we don't read the loading-skeleton's "—" placeholder on a fast iter.
+    await page.reload({ waitUntil: "networkidle" });
     const requestsLabel = page.getByText("Requests", { exact: true });
     // The KPI card renders <div>Requests</div><div class="font-mono">1</div>
     // as direct children inside a <Card>. Walk up one level and pick the
     // font-mono sibling — that's the value div.
-    const requestsValue = requestsLabel.locator("xpath=..").locator(".font-mono");
+    const requestsValue = requestsLabel
+      .locator("xpath=..")
+      .locator(".font-mono");
     const text = (await requestsValue.textContent())?.trim() ?? "";
-    expect(text, `usage requests card still reads "${text}"`).toMatch(/^[1-9]\d*$/);
+    expect(text, `usage requests card still reads "${text}"`).toMatch(
+      /^[1-9]\d*$/,
+    );
   }).toPass({ timeout: 15_000, intervals: [500, 1000, 2000] });
 });
