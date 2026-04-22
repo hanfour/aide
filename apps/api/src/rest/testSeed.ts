@@ -12,6 +12,10 @@ import {
   roleAssignments,
   invites,
   auditLogs,
+  usageLogs,
+  apiKeys,
+  credentialVault,
+  upstreamAccounts,
 } from "@aide/db";
 import type { ServerEnv } from "@aide/config/env";
 
@@ -80,8 +84,20 @@ export const testSeedRoutes =
       if (body.reset) {
         // audit_logs.actor_user_id is ON DELETE SET NULL, so TRUNCATE users
         // CASCADE won't automatically clean audit rows. List them explicitly.
+        //
+        // Gateway tables listed first (child-first). FK chain:
+        //   usage_logs → api_keys, upstream_accounts, users
+        //   credential_vault → upstream_accounts
+        //   api_keys → users, organizations
+        //   upstream_accounts → organizations, teams
+        // CASCADE would cover most of this transitively, but listing them
+        // explicitly keeps intent obvious and matches existing style.
         await db.execute(sql`
           TRUNCATE TABLE
+            ${usageLogs},
+            ${apiKeys},
+            ${credentialVault},
+            ${upstreamAccounts},
             ${auditLogs},
             ${invites},
             ${roleAssignments},
@@ -96,7 +112,8 @@ export const testSeedRoutes =
         `);
       }
 
-      const insertedOrgs: Array<{ id: string; slug: string; name: string }> = [];
+      const insertedOrgs: Array<{ id: string; slug: string; name: string }> =
+        [];
       for (const o of body.orgs) {
         const [row] = await db
           .insert(organizations)

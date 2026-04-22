@@ -41,6 +41,42 @@ function requireMasterKeyHex(env: {
 // Parse `expires_at` from an oauth credential payload. Accepts either an ISO
 // 8601 string or a unix timestamp (seconds OR milliseconds). Returns null if
 // missing or unparseable — caller decides whether that's acceptable.
+// Shape the UI-supplied credential string into the JSON envelope the gateway
+// expects. `resolveCredential` (apps/gateway/src/runtime/resolveCredential.ts)
+// discriminates on a top-level `type` field and reads typed sub-fields off
+// the same object — passing the user's raw string (either a bare `sk-ant-...`
+// or an untagged OAuth JSON blob) would fail with `CredentialFormatError` at
+// every request.
+function buildCredentialPlaintext(
+  type: "api_key" | "oauth",
+  input: string,
+): string {
+  if (type === "api_key") {
+    return JSON.stringify({ type: "api_key", api_key: input });
+  }
+  // oauth — merge user-pasted `{ access_token, refresh_token, expires_at, ... }`
+  // with the authoritative `type: "oauth"` discriminator.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input);
+  } catch {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "oauth credentials must be valid JSON",
+    });
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "oauth credentials must be a JSON object",
+    });
+  }
+  return JSON.stringify({
+    ...(parsed as Record<string, unknown>),
+    type: "oauth",
+  });
+}
+
 function parseOauthExpiresAt(credentialsJson: string): Date | null {
   let parsed: unknown;
   try {
@@ -173,7 +209,7 @@ export const accountsRouter = router({
       const sealed = encryptCredential({
         masterKeyHex,
         accountId: account.id,
-        plaintext: input.credentials,
+        plaintext: buildCredentialPlaintext(input.type, input.credentials),
       });
 
       await tx.insert(credentialVault).values({
@@ -290,7 +326,10 @@ export const accountsRouter = router({
       const sealed = encryptCredential({
         masterKeyHex,
         accountId: existing.id,
-        plaintext: input.credentials,
+        plaintext: buildCredentialPlaintext(
+          existing.type as "api_key" | "oauth",
+          input.credentials,
+        ),
       });
 
       const rotatedAt = new Date();

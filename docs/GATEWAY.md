@@ -37,7 +37,7 @@ bring-up see [`SELF_HOSTING.md`](./SELF_HOSTING.md); for local development see
 **Separation of concerns.** The gateway is strictly a data plane: it speaks
 HTTP to Anthropic on behalf of one of several **upstream accounts** owned by
 the org, and it authenticates inbound calls with **platform-issued API keys**
-(`sk-aide-...`). It has no session cookies, no tRPC, no admin UI. All CRUD for
+(`ak_...`). It has no session cookies, no tRPC, no admin UI. All CRUD for
 accounts and keys happens on `apps/api` via tRPC, behind the existing RBAC +
 session cookie auth.
 
@@ -167,7 +167,8 @@ The scheduler skips soft-deleted rows immediately. Restore by clearing
 
 ## 4. API key distribution
 
-Platform-issued keys (`sk-aide-...`) are what your users paste into their SDK.
+Platform-issued keys (`ak_...`, 64 chars total) are what your users paste
+into their SDK.
 They are **hashed** before storage — `key_hash =
 HMAC-SHA256(API_KEY_HASH_PEPPER, raw_key)` — and the raw string is shown
 exactly once. Two issuance flows are supported.
@@ -251,7 +252,7 @@ Publish `GATEWAY_BASE_URL` to your users. Everything below assumes
 
 ```sh
 curl -X POST https://gateway.example.com/v1/messages \
-  -H "x-api-key: sk-aide-REPLACE_ME" \
+  -H "x-api-key: ak_REPLACE_ME" \
   -H "anthropic-version: 2023-06-01" \
   -H "content-type: application/json" \
   -d '{
@@ -267,7 +268,7 @@ curl -X POST https://gateway.example.com/v1/messages \
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({
-  apiKey: "sk-aide-REPLACE_ME",
+  apiKey: "ak_REPLACE_ME",
   baseURL: "https://gateway.example.com",
 });
 
@@ -282,7 +283,7 @@ const msg = await client.messages.create({
 
 ```sh
 export ANTHROPIC_BASE_URL=https://gateway.example.com
-export ANTHROPIC_API_KEY=sk-aide-REPLACE_ME
+export ANTHROPIC_API_KEY=ak_REPLACE_ME
 claude
 ```
 
@@ -301,7 +302,7 @@ forwarded verbatim.
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  apiKey: "sk-aide-REPLACE_ME",
+  apiKey: "ak_REPLACE_ME",
   baseURL: "https://gateway.example.com/v1",
 });
 
@@ -522,7 +523,7 @@ Verify by hashing a known key and checking the DB:
 
 ```sh
 # Inside the gateway container
-echo -n "sk-aide-known_test_key" \
+echo -n "ak_known_test_key" \
   | openssl dgst -sha256 -hmac "$API_KEY_HASH_PEPPER" \
   | awk '{print $2}'
 # → compare against one row's key_hash in api_keys

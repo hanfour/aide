@@ -258,6 +258,23 @@ async function runNonStreamFailover(
         });
 
         return upstream;
+      } catch (err) {
+        // Log at warn so every attempt failure (credential decrypt, upstream
+        // HTTP error, connection refused, etc.) surfaces in ops output.
+        // Without this the only signal is the terminal 503
+        // `all_upstreams_failed` which swallows the classifier's reason.
+        req.log.warn(
+          {
+            requestId,
+            accountId: account.id,
+            err:
+              err instanceof Error
+                ? { name: err.name, message: err.message, stack: err.stack }
+                : err,
+          },
+          "gateway attempt failed",
+        );
+        throw err;
       } finally {
         await releaseSlot(app.redis, "account", account.id, requestId).catch(
           () => {
