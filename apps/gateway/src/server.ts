@@ -19,6 +19,10 @@ import {
 } from "./workers/bodyCaptureQueue.js";
 import { UsageLogWorker } from "./workers/usageLogWorker.js";
 import { BillingAudit } from "./workers/billingAudit.js";
+import {
+  startBodyPurgeCron,
+  type BodyPurgeCronHandle,
+} from "./workers/bodyPurge.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -89,6 +93,28 @@ export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
     app.log.debug(
       "buildServer: opts.redis injected — skipping BullMQ queue/worker/audit (test mode)",
     );
+  }
+
+  // Body retention purge cron — Plan 4B Task 3.6.
+  // Runs every 4h, purges request_bodies where retention_until <= now().
+  // Skip when a test injected its own Redis (same gate as BullMQ wiring above —
+  // tests that need cron coverage call purgeExpiredBodies() directly).
+  if (opts.redis === undefined) {
+    let purgeCronHandle: BodyPurgeCronHandle | undefined;
+    if (app.db) {
+      purgeCronHandle = startBodyPurgeCron({
+        db: app.db,
+        metrics: {
+          deletedTotal: app.gwMetrics.bodyPurgeDeletedTotal,
+          durationSeconds: app.gwMetrics.bodyPurgeDurationSeconds,
+          lagHours: app.gwMetrics.bodyPurgeLagHours,
+        },
+        logger: app.log,
+      });
+      app.addHook("onClose", async () => {
+        purgeCronHandle?.stop();
+      });
+    }
   }
 
   return app;

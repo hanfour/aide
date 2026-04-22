@@ -22,6 +22,9 @@ export interface GatewayMetrics {
   billingDriftTotal: Counter<string>;
   billingMonotonicityViolationTotal: Counter<string>;
   bodyCaptureEnqueuedTotal: Counter<"result">;
+  bodyPurgeDeletedTotal: Counter<string>;
+  bodyPurgeDurationSeconds: Histogram<string>;
+  bodyPurgeLagHours: Gauge<string>;
 }
 
 declare module "fastify" {
@@ -150,6 +153,25 @@ export const metricsPlugin = fp(async (fastify) => {
     registers: [register],
   });
 
+  const bodyPurgeDeletedTotal = new Counter({
+    name: "gw_body_purge_deleted_total",
+    help: "Total request_bodies rows purged by retention cron",
+    registers: [register],
+  });
+
+  const bodyPurgeDurationSeconds = new Histogram({
+    name: "gw_body_purge_duration_seconds",
+    help: "Duration of body purge cron tick in seconds",
+    buckets: [0.1, 0.5, 1, 5, 10, 30, 60, 300],
+    registers: [register],
+  });
+
+  const bodyPurgeLagHours = new Gauge({
+    name: "gw_body_purge_lag_hours",
+    help: "Hours between oldest-overdue retention_until and now (0 when queue clean)",
+    registers: [register],
+  });
+
   // Materialize zero values so unlabeled metrics appear in scrape output
   waitQueueDepth.set(0);
   idempotencyHitTotal.inc(0);
@@ -177,5 +199,8 @@ export const metricsPlugin = fp(async (fastify) => {
     billingDriftTotal,
     billingMonotonicityViolationTotal,
     bodyCaptureEnqueuedTotal,
+    bodyPurgeDeletedTotal,
+    bodyPurgeDurationSeconds,
+    bodyPurgeLagHours,
   });
 });
