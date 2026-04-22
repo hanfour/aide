@@ -120,10 +120,13 @@ test("gateway happy path: admin → account → self-issued key → request → 
     // networkidle waits for the trpc usage.summary query to settle post-reload
     // so we don't read the loading-skeleton's "—" placeholder on a fast iter.
     await page.reload({ waitUntil: "networkidle" });
-    const requestsLabel = page.getByText("Requests", { exact: true });
-    // The KPI card renders <div>Requests</div><div class="font-mono">1</div>
-    // as direct children inside a <Card>. Walk up one level and pick the
-    // font-mono sibling — that's the value div.
+    // The page has TWO elements with text "Requests": the KPI label in
+    // UsageSummaryCards AND the CardTitle of the UsageTable section. Scope
+    // to the KPI card by matching on the `.uppercase` class tailwind applies
+    // to KPI labels only — the CardTitle uses plain font-medium.
+    const requestsLabel = page.locator("div.uppercase", {
+      hasText: "Requests",
+    });
     const requestsValue = requestsLabel
       .locator("xpath=..")
       .locator(".font-mono");
