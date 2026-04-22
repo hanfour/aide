@@ -10,3 +10,4 @@ export * from "./apiKeys.js";
 export * from "./usageLogs.js";
 export * from "./rubrics.js";
 export * from "./requestBodies.js";
+export * from "./evaluationReports.js";
