@@ -58,4 +58,23 @@ export type Action =
   | { type: "usage.read_own" }
   | { type: "usage.read_user"; orgId: string; targetUserId: string }
   | { type: "usage.read_team"; orgId: string; teamId: string }
-  | { type: "usage.read_org"; orgId: string };
+  | { type: "usage.read_org"; orgId: string }
+  | { type: "content_capture.read"; orgId: string }
+  | { type: "content_capture.toggle"; orgId: string }
+  | { type: "report.read_own" }
+  | { type: "report.read_user"; orgId: string; targetUserId: string }
+  | { type: "report.read_team"; orgId: string; teamId: string }
+  | { type: "report.read_org"; orgId: string }
+  | {
+      type: "report.rerun";
+      orgId: string;
+      targetUserId: string;
+      periodStart: string;
+    }
+  | { type: "report.export_own" }
+  | { type: "report.delete_own" }
+  | { type: "rubric.read"; orgId: string }
+  | { type: "rubric.create"; orgId: string }
+  | { type: "rubric.update"; orgId: string; rubricId: string }
+  | { type: "rubric.delete"; orgId: string; rubricId: string }
+  | { type: "evaluator.read_status"; orgId: string };

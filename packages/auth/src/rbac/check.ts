@@ -193,5 +193,30 @@ export function can(perm: UserPermissions, action: Action): boolean {
       );
     case "usage.read_org":
       return rolesAt(perm, "organization", action.orgId).has("org_admin");
+    case "content_capture.read":
+    case "content_capture.toggle":
+      return rolesAt(perm, "organization", action.orgId).has("org_admin");
+    case "report.read_own":
+    case "report.export_own":
+    case "report.delete_own":
+      return true;
+    case "report.read_user":
+      if (action.targetUserId === perm.userId) return true;
+      return rolesAt(perm, "organization", action.orgId).has("org_admin");
+    case "report.read_team":
+      return (
+        rolesAt(perm, "team", action.teamId).has("team_manager") ||
+        rolesAt(perm, "organization", action.orgId).has("org_admin")
+      );
+    case "report.read_org":
+    case "report.rerun":
+      return rolesAt(perm, "organization", action.orgId).has("org_admin");
+    case "rubric.read":
+    case "rubric.create":
+    case "rubric.update":
+    case "rubric.delete":
+      return rolesAt(perm, "organization", action.orgId).has("org_admin");
+    case "evaluator.read_status":
+      return rolesAt(perm, "organization", action.orgId).has("org_admin");
   }
 }
