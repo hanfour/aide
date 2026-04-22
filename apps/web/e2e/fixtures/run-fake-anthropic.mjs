@@ -77,8 +77,30 @@ const server = createServer((req, res) => {
 // Drop the host argument so Node picks its dual-stack default (::) on
 // systems with bindv6only=0, falling back to 0.0.0.0 otherwise. Matters on
 // GitHub Actions runners where `localhost` resolution order is variable.
-server.listen(port, () => {
-  console.log(`[fake-anthropic] listening on http://localhost:${port}`);
+// Explicit 0.0.0.0 forces IPv4 binding — CI runners with bindv6only=1 would
+// otherwise reject IPv4 connects when we default to `::`. Log the raw
+// address() output too, so next-failure diagnostics aren't ambiguous.
+server.listen(port, "0.0.0.0", () => {
+  const addr = server.address();
+  console.log(
+    `[fake-anthropic] listening on http://localhost:${port} (addr=${JSON.stringify(addr)}, pid=${process.pid})`,
+  );
+});
+
+server.on("close", () => {
+  console.log("[fake-anthropic] server close event");
+});
+server.on("error", (err) => {
+  console.error("[fake-anthropic] server error", err);
+});
+process.on("exit", (code) => {
+  console.log(`[fake-anthropic] process exit code=${code}`);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[fake-anthropic] uncaughtException", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[fake-anthropic] unhandledRejection", reason);
 });
 
 const shutdown = (signal) => {

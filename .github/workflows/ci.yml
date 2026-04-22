@@ -205,15 +205,48 @@ jobs:
             cat gateway.log
             exit 1
           fi
+      - name: Pre-wait diagnostics
+        run: |
+          # Surface the actual state of each backend at the start of the wait
+          # step — unambiguously tells us whether a process went away between
+          # its own "Start" step and this point.
+          echo "=== process state ==="
+          for svc in api web fake-anthropic gateway; do
+            pidfile="${svc}.pid"
+            if [[ -f "$pidfile" ]]; then
+              pid=$(cat "$pidfile")
+              if kill -0 "$pid" 2>/dev/null; then
+                echo "  $svc pid=$pid ALIVE"
+              else
+                echo "  $svc pid=$pid DEAD"
+              fi
+            else
+              echo "  $svc no pidfile"
+            fi
+          done
+          echo "=== listening tcp ports ==="
+          ss -tlnp 2>/dev/null | head -30 || netstat -tlnp 2>/dev/null | head -30 || true
+          echo "=== direct http probe (2s each) ==="
+          for url in http://127.0.0.1:3001/health http://localhost:3001/health \
+                     http://127.0.0.1:3000/sign-in http://localhost:3000/sign-in \
+                     http://127.0.0.1:3002/health http://localhost:3002/health \
+                     http://127.0.0.1:4100/ http://localhost:4100/; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$url" || echo 'timeout')
+            echo "  $url -> $code"
+          done
+          echo "=== fake-anthropic.log ==="
+          cat fake-anthropic.log || true
       - name: Wait for api + web + gateway + fake upstream
         run: |
           # 120s timeout — Next.js cold start alone can eat 30-40s on a cold
           # ubuntu-latest runner; leave headroom for gateway + fake too.
+          # Use 127.0.0.1 (not localhost) across the board so we're immune to
+          # IPv4/IPv6 resolution order differences between runner images.
           npx wait-on \
-            http://localhost:3001/health \
-            http://localhost:3000/sign-in \
-            http://localhost:3002/health \
-            http://localhost:4100/ \
+            http://127.0.0.1:3001/health \
+            http://127.0.0.1:3000/sign-in \
+            http://127.0.0.1:3002/health \
+            http://127.0.0.1:4100/ \
             --timeout 120000
       - name: Playwright
         run: pnpm --filter @aide/web exec playwright test --config e2e/playwright.config.ts
