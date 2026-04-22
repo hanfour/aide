@@ -40,17 +40,35 @@ Starting with **v0.2.0** aide also ships as a self-hostable web platform with
 organization-scoped RBAC, invites, and an audit log. Use this mode if you want
 a shared workspace for a team rather than a per-engineer CLI report.
 
+**v0.3.0** adds an opt-in **gateway** that proxies Anthropic-native
+(`/v1/messages`) and OpenAI-compatible (`/v1/chat/completions`) traffic
+through a shared pool of upstream accounts:
+
+- Admins donate `sk-ant-...` API keys or OAuth bundles extracted from Claude
+  Code; the gateway's scheduler picks one per request based on priority,
+  concurrency, and rate-limit state.
+- Each user self-issues or receives an admin-issued platform API key
+  (`ak_...`) that authenticates against the gateway.
+- Usage + cost (per Anthropic/OpenAI token pricing) lands in a `usage_logs`
+  table, surfaced via per-user and per-org dashboards.
+
 Quick start:
 ```sh
 cd docker
-cp .env.example .env   # fill in OAuth + bootstrap email
-docker compose up -d
+cp .env.example .env   # fill in OAuth + bootstrap email (+ gateway secrets if enabling)
+docker compose up -d                      # api + web + postgres + redis
+docker compose --profile gateway up -d    # opt-in: add gateway service
 ```
 
-Images are published to `ghcr.io/hanfour/aide-api` and `ghcr.io/hanfour/aide-web`
-on every `v*` tag. The full self-hosting guide — including OAuth setup, env
-reference, updating, and backup — lives at
-[`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
+Images are published on every `v*` tag to:
+- `ghcr.io/hanfour/aide-api`
+- `ghcr.io/hanfour/aide-web`
+- `ghcr.io/hanfour/aide-gateway` — new in v0.3.0
+
+All three are multi-arch (`linux/amd64`, `linux/arm64`). Operator guides:
+
+- Self-hosting bring-up (api + web + gateway): [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md)
+- Gateway operator + user reference: [`docs/GATEWAY.md`](docs/GATEWAY.md)
 
 CLI mode and platform mode share no runtime state; pick whichever fits.
 
