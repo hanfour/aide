@@ -125,9 +125,13 @@ test("gateway happy path: admin → account → self-issued key → request → 
   await expect(async () => {
     const from = new Date(Date.now() - 30 * 86_400_000).toISOString();
     const to = new Date().toISOString();
+    // tRPC v11 batch GET without a transformer: `input` is the raw record
+    // `{<index>: <procedureInput>}`. The `{json: ...}` wrapping is only used
+    // when a client-side transformer (e.g. superjson) is configured —
+    // apps/web's client config at apps/web/src/lib/trpc/Provider.tsx has none.
     const input = encodeURIComponent(
       JSON.stringify({
-        "0": { json: { scope: { type: "own" }, from, to } },
+        "0": { scope: { type: "own" }, from, to },
       }),
     );
     const res = await page.request.get(
@@ -138,9 +142,9 @@ test("gateway happy path: admin → account → self-issued key → request → 
       `usage.summary trpc call failed: ${await res.text()}`,
     ).toBe(200);
     const body = (await res.json()) as Array<{
-      result?: { data?: { json?: { totalRequests?: number } } };
+      result?: { data?: { totalRequests?: number } };
     }>;
-    const totalRequests = body[0]?.result?.data?.json?.totalRequests;
+    const totalRequests = body[0]?.result?.data?.totalRequests;
     expect(
       totalRequests,
       `usage.summary saw ${totalRequests} requests; full body=${JSON.stringify(body)}`,
