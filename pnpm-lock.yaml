@@ -127,6 +127,9 @@ importers:
       '@aide/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@aide/evaluator':
+        specifier: workspace:*
+        version: link:../../packages/evaluator
       '@aide/gateway-core':
         specifier: workspace:*
         version: link:../../packages/gateway-core
