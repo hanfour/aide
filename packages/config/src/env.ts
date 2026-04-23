@@ -24,6 +24,7 @@ export const serverEnvSchema = z
       .regex(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/),
     BOOTSTRAP_DEFAULT_ORG_NAME: z.string().min(1),
     ENABLE_SWAGGER: booleanUnion.default(false),
+    ENABLE_EVALUATOR: booleanUnion.default(false),
     LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
     API_INTERNAL_URL: z.string().url().optional(),
     ENABLE_TEST_SEED: booleanUnion.default(false),

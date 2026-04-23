@@ -3,19 +3,14 @@ import { z } from "zod";
 import { eq, sql } from "drizzle-orm";
 import { organizations, auditLogs, requestBodies } from "@aide/db";
 import { can } from "@aide/auth";
-import { router, protectedProcedure } from "../procedures.js";
+import { router } from "../procedures.js";
+import { evaluatorProcedure } from "./_evaluatorGate.js";
 
 const orgIdInput = z.object({ orgId: z.string().uuid() });
 
 const settingsPatch = z.object({
   contentCaptureEnabled: z.boolean().optional(),
-  retentionDaysOverride: z
-    .number()
-    .int()
-    .min(1)
-    .max(365)
-    .nullable()
-    .optional(),
+  retentionDaysOverride: z.number().int().min(1).max(365).nullable().optional(),
   llmEvalEnabled: z.boolean().optional(),
   llmEvalAccountId: z.string().uuid().nullable().optional(),
   llmEvalModel: z.string().nullable().optional(),
@@ -25,7 +20,7 @@ const settingsPatch = z.object({
 });
 
 export const contentCaptureRouter = router({
-  getSettings: protectedProcedure
+  getSettings: evaluatorProcedure
     .input(orgIdInput)
     .query(async ({ ctx, input }) => {
       if (
@@ -55,7 +50,7 @@ export const contentCaptureRouter = router({
       return org;
     }),
 
-  setSettings: protectedProcedure
+  setSettings: evaluatorProcedure
     .input(orgIdInput.extend({ patch: settingsPatch }))
     .mutation(async ({ ctx, input }) => {
       if (
@@ -106,7 +101,7 @@ export const contentCaptureRouter = router({
       return { success: true };
     }),
 
-  wipeExistingCaptures: protectedProcedure
+  wipeExistingCaptures: evaluatorProcedure
     .input(orgIdInput)
     .mutation(async ({ ctx, input }) => {
       if (

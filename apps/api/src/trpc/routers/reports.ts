@@ -10,7 +10,8 @@ import {
   usageLogs,
 } from "@aide/db";
 import { can } from "@aide/auth";
-import { router, protectedProcedure } from "../procedures.js";
+import { router } from "../procedures.js";
+import { evaluatorProcedure } from "./_evaluatorGate.js";
 
 // ─── Evaluator queue constants (duplicated from apps/gateway to avoid cross-package import) ──
 // TODO Task 6.4b: extract these to a shared @aide/queue package and wire ctx.evaluatorQueue
@@ -77,7 +78,7 @@ export const reportsRouter = router({
    * The owner always sees their full LLM fields.
    * Requires `report.read_own`.
    */
-  getOwnLatest: protectedProcedure.query(async ({ ctx }) => {
+  getOwnLatest: evaluatorProcedure.query(async ({ ctx }) => {
     if (!can(ctx.perm, { type: "report.read_own" })) {
       throw new TRPCError({ code: "FORBIDDEN" });
     }
@@ -99,7 +100,7 @@ export const reportsRouter = router({
    * The owner always sees their full LLM fields.
    * Requires `report.read_own`.
    */
-  getOwnRange: protectedProcedure
+  getOwnRange: evaluatorProcedure
     .input(dateRange)
     .query(async ({ ctx, input }) => {
       if (!can(ctx.perm, { type: "report.read_own" })) {
@@ -128,7 +129,7 @@ export const reportsRouter = router({
    *   - targetUserId === caller's own id (self-access), OR
    *   - caller is org_admin for the org.
    */
-  getUser: protectedProcedure
+  getUser: evaluatorProcedure
     .input(
       z.object({
         orgId: z.string().uuid(),
@@ -172,7 +173,7 @@ export const reportsRouter = router({
    * LLM fields are visible only to org_admins; team_managers see them redacted.
    * Requires `report.read_team` — granted when caller is team_manager or org_admin.
    */
-  getTeam: protectedProcedure
+  getTeam: evaluatorProcedure
     .input(
       z.object({
         orgId: z.string().uuid(),
@@ -218,7 +219,7 @@ export const reportsRouter = router({
    * Caller must be org_admin (report.read_org), and therefore always sees
    * full LLM fields — no redaction applied at this scope.
    */
-  getOrg: protectedProcedure
+  getOrg: evaluatorProcedure
     .input(
       z.object({
         orgId: z.string().uuid(),
@@ -256,7 +257,7 @@ export const reportsRouter = router({
    * is undefined (test mode / not yet wired), returns { enqueued: 0, targets: N,
    * testMode: true } without calling BullMQ.
    */
-  rerun: protectedProcedure
+  rerun: evaluatorProcedure
     .input(
       z.object({
         orgId: z.string().uuid(),
@@ -372,7 +373,7 @@ export const reportsRouter = router({
    * Satisfies GDPR "right to access" without cross-cutting crypto.
    * Requires `report.export_own` (always-true for authenticated users).
    */
-  exportOwn: protectedProcedure.query(async ({ ctx }) => {
+  exportOwn: evaluatorProcedure.query(async ({ ctx }) => {
     if (!can(ctx.perm, { type: "report.export_own" })) {
       throw new TRPCError({ code: "FORBIDDEN" });
     }
@@ -410,7 +411,7 @@ export const reportsRouter = router({
    * scope: "bodies" deletes request bodies only; "bodies_and_reports" also
    * removes evaluation reports. Requires `report.delete_own` (always-true).
    */
-  deleteOwn: protectedProcedure
+  deleteOwn: evaluatorProcedure
     .input(
       z.object({
         orgId: z.string().uuid(),
@@ -443,7 +444,7 @@ export const reportsRouter = router({
    * background worker that polls for approved requests (out of scope here).
    * RBAC: reuses `report.rerun` as the org_admin gate (no dedicated action yet).
    */
-  approveDelete: protectedProcedure
+  approveDelete: evaluatorProcedure
     .input(
       z.object({
         orgId: z.string().uuid(),
@@ -482,7 +483,7 @@ export const reportsRouter = router({
    * Reject a pending GDPR delete request with a mandatory reason.
    * Sets rejectedAt + rejectedReason. Same org_admin RBAC as approveDelete.
    */
-  rejectDelete: protectedProcedure
+  rejectDelete: evaluatorProcedure
     .input(
       z.object({
         orgId: z.string().uuid(),

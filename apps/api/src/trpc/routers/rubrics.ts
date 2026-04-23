@@ -5,7 +5,8 @@ import { organizations, rubrics, usageLogs } from "@aide/db";
 import { can } from "@aide/auth";
 import { rubricSchema, scoreWithRules } from "@aide/evaluator";
 import type { UsageRow } from "@aide/evaluator";
-import { router, protectedProcedure } from "../procedures.js";
+import { router } from "../procedures.js";
+import { evaluatorProcedure } from "./_evaluatorGate.js";
 
 // ─── Input primitives ─────────────────────────────────────────────────────────
 
@@ -21,35 +22,33 @@ export const rubricsRouter = router({
    *   - org's own custom rubrics
    * Requires `rubric.read` on the org.
    */
-  list: protectedProcedure
-    .input(orgIdInput)
-    .query(async ({ ctx, input }) => {
-      if (!can(ctx.perm, { type: "rubric.read", orgId: input.orgId })) {
-        throw new TRPCError({ code: "FORBIDDEN" });
-      }
+  list: evaluatorProcedure.input(orgIdInput).query(async ({ ctx, input }) => {
+    if (!can(ctx.perm, { type: "rubric.read", orgId: input.orgId })) {
+      throw new TRPCError({ code: "FORBIDDEN" });
+    }
 
-      const rows = await ctx.db
-        .select({
-          id: rubrics.id,
-          orgId: rubrics.orgId,
-          name: rubrics.name,
-          description: rubrics.description,
-          version: rubrics.version,
-          isDefault: rubrics.isDefault,
-          createdAt: rubrics.createdAt,
-          updatedAt: rubrics.updatedAt,
-        })
-        .from(rubrics)
-        .where(
-          and(
-            isNull(rubrics.deletedAt),
-            or(eq(rubrics.orgId, input.orgId), isNull(rubrics.orgId)),
-          ),
-        )
-        .orderBy(desc(rubrics.isDefault), desc(rubrics.createdAt));
+    const rows = await ctx.db
+      .select({
+        id: rubrics.id,
+        orgId: rubrics.orgId,
+        name: rubrics.name,
+        description: rubrics.description,
+        version: rubrics.version,
+        isDefault: rubrics.isDefault,
+        createdAt: rubrics.createdAt,
+        updatedAt: rubrics.updatedAt,
+      })
+      .from(rubrics)
+      .where(
+        and(
+          isNull(rubrics.deletedAt),
+          or(eq(rubrics.orgId, input.orgId), isNull(rubrics.orgId)),
+        ),
+      )
+      .orderBy(desc(rubrics.isDefault), desc(rubrics.createdAt));
 
-      return rows;
-    }),
+    return rows;
+  }),
 
   /**
    * Get a single rubric with its full definition.
@@ -57,38 +56,34 @@ export const rubricsRouter = router({
    * whose permissions include `rubric.read` on at least one org. Org-scoped
    * rubrics are gated by `rubric.read` on that specific org.
    */
-  get: protectedProcedure
-    .input(rubricIdInput)
-    .query(async ({ ctx, input }) => {
-      const row = await ctx.db
-        .select()
-        .from(rubrics)
-        .where(
-          and(eq(rubrics.id, input.rubricId), isNull(rubrics.deletedAt)),
-        )
-        .limit(1)
-        .then((r) => r[0]);
+  get: evaluatorProcedure.input(rubricIdInput).query(async ({ ctx, input }) => {
+    const row = await ctx.db
+      .select()
+      .from(rubrics)
+      .where(and(eq(rubrics.id, input.rubricId), isNull(rubrics.deletedAt)))
+      .limit(1)
+      .then((r) => r[0]);
 
-      if (!row) throw new TRPCError({ code: "NOT_FOUND" });
+    if (!row) throw new TRPCError({ code: "NOT_FOUND" });
 
-      // Platform defaults have no org scope — allow any authenticated user.
-      // Org-custom rubrics require rubric.read on the owning org.
-      if (
-        row.orgId !== null &&
-        !can(ctx.perm, { type: "rubric.read", orgId: row.orgId })
-      ) {
-        throw new TRPCError({ code: "FORBIDDEN" });
-      }
+    // Platform defaults have no org scope — allow any authenticated user.
+    // Org-custom rubrics require rubric.read on the owning org.
+    if (
+      row.orgId !== null &&
+      !can(ctx.perm, { type: "rubric.read", orgId: row.orgId })
+    ) {
+      throw new TRPCError({ code: "FORBIDDEN" });
+    }
 
-      return row;
-    }),
+    return row;
+  }),
 
   /**
    * Create a new org-scoped rubric. The `definition` field is validated against
    * `rubricSchema` from `@aide/evaluator` before insertion.
    * Requires `rubric.create` on the org.
    */
-  create: protectedProcedure
+  create: evaluatorProcedure
     .input(
       orgIdInput.extend({
         name: z.string().min(1).max(200),
@@ -138,7 +133,7 @@ export const rubricsRouter = router({
    * definition. If `definition` is provided it is re-validated against
    * `rubricSchema`. Requires `rubric.update` on the org + rubric.
    */
-  update: protectedProcedure
+  update: evaluatorProcedure
     .input(
       rubricIdInput.extend({
         orgId: z.string().uuid(),
@@ -201,7 +196,7 @@ export const rubricsRouter = router({
    * currently set as the org's active rubric — the caller must call
    * `setActive(null)` first. Requires `rubric.delete` on the org + rubric.
    */
-  delete: protectedProcedure
+  delete: evaluatorProcedure
     .input(rubricIdInput.extend({ orgId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       if (
@@ -249,7 +244,7 @@ export const rubricsRouter = router({
    * and must be either a platform default or owned by this org.
    * Requires `rubric.update` on the org.
    */
-  setActive: protectedProcedure
+  setActive: evaluatorProcedure
     .input(orgIdInput.extend({ rubricId: z.string().uuid().nullable() }))
     .mutation(async ({ ctx, input }) => {
       if (
@@ -266,9 +261,7 @@ export const rubricsRouter = router({
         const row = await ctx.db
           .select({ orgId: rubrics.orgId })
           .from(rubrics)
-          .where(
-            and(eq(rubrics.id, input.rubricId), isNull(rubrics.deletedAt)),
-          )
+          .where(and(eq(rubrics.id, input.rubricId), isNull(rubrics.deletedAt)))
           .limit(1)
           .then((r) => r[0]);
 
@@ -310,7 +303,7 @@ export const rubricsRouter = router({
    *
    * Requires `rubric.read` on the org.
    */
-  dryRun: protectedProcedure
+  dryRun: evaluatorProcedure
     .input(
       orgIdInput.extend({
         rubricId: z.string().uuid(),
@@ -326,9 +319,7 @@ export const rubricsRouter = router({
       const rubricRow = await ctx.db
         .select()
         .from(rubrics)
-        .where(
-          and(eq(rubrics.id, input.rubricId), isNull(rubrics.deletedAt)),
-        )
+        .where(and(eq(rubrics.id, input.rubricId), isNull(rubrics.deletedAt)))
         .limit(1)
         .then((r) => r[0]);
 
