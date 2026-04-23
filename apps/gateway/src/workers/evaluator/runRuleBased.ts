@@ -1,24 +1,28 @@
 /**
  * Rule-based evaluator worker logic (Plan 4B Part 4, Task 4.2).
  *
- * Pure-ish function that fetches usage logs and request bodies for a given
- * user/period, decrypts body blobs, scores them via the rule engine, and
- * upserts the resulting report into `evaluation_reports`.
+ * Exports two functions:
+ *   - `runRuleBased`           — fetches, decrypts, and scores data; NO DB write.
+ *   - `upsertEvaluationReport` — persists a report (with optional LLM columns).
+ *
+ * The split enables `runEvaluation` (Task 5.3) to merge LLM results before the
+ * DB write, and enables the dry-run endpoint (Part 6) to call the scorer without
+ * persisting anything.
  */
 
-import { sql, and, eq, gte, lt, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, lt } from "drizzle-orm";
 import type { Database } from "@aide/db";
-import { usageLogs, requestBodies, evaluationReports } from "@aide/db";
+import { evaluationReports, requestBodies, usageLogs } from "@aide/db";
 import { decryptBody } from "../../capture/encrypt.js";
 import {
   scoreWithRules,
+  type BodyRow,
+  type Report,
   type Rubric,
   type UsageRow,
-  type BodyRow,
 } from "@aide/evaluator";
-import type { DataQuality } from "@aide/evaluator";
 
-// ── Input / Output types ─────────────────────────────────────────────────────
+// ── RunRuleBased input / output ───────────────────────────────────────────────
 
 export interface RunRuleBasedInput {
   db: Database;
@@ -27,29 +31,59 @@ export interface RunRuleBasedInput {
   userId: string;
   periodStart: Date;
   periodEnd: Date;
-  periodType: "daily" | "weekly" | "monthly";
   rubric: Rubric;
+  /** Optional: pre-computed set of truncated request IDs (for testing). */
+  truncatedRequestIds?: Set<string>;
+}
+
+export interface RunRuleBasedResult {
+  report: Report;
+  /** true when the evaluation window contained no usage rows. */
+  skipped: boolean;
+  /** Decrypted body rows — needed by runLlmDeepAnalysis. */
+  bodies: BodyRow[];
+}
+
+// ── UpsertEvaluationReport input ─────────────────────────────────────────────
+
+export interface UpsertEvaluationReportInput {
+  db: Database;
+  orgId: string;
+  userId: string;
+  teamId?: string | null;
+  periodStart: Date;
+  periodEnd: Date;
+  periodType: "daily" | "weekly" | "monthly";
   rubricId: string;
   rubricVersion: string;
   triggeredBy: "cron" | "admin_rerun" | "manual";
   triggeredByUser: string | null;
+  report: Report;
+  llm: {
+    narrative: string;
+    evidence: unknown;
+    model: string;
+    calledAt: Date;
+    costUsd: number;
+    upstreamAccountId: string | null;
+  } | null;
 }
 
-export interface RunRuleBasedResult {
-  /** null if the window was empty (skipped=true). */
-  reportId: string | null;
-  totalScore: number;
-  dataQuality: DataQuality;
-  /** true when the evaluation window contained no usage rows. */
-  skipped: boolean;
-}
+// ── runRuleBased ─────────────────────────────────────────────────────────────
 
-// ── Main function ────────────────────────────────────────────────────────────
-
+/**
+ * Fetch usage logs and request bodies for the given user/period, decrypt body
+ * blobs, and score the data via the rule engine.
+ *
+ * Does NOT write anything to the database — call `upsertEvaluationReport`
+ * afterwards (typically via `runEvaluation`).
+ *
+ * Returns `{ skipped: true }` when the window contains no usage rows.
+ */
 export async function runRuleBased(
   input: RunRuleBasedInput,
 ): Promise<RunRuleBasedResult> {
-  const { db, masterKeyHex, orgId, userId, periodStart, periodEnd } = input;
+  const { db, masterKeyHex, userId, periodStart, periodEnd } = input;
 
   // 1. Fetch usage_logs in window
   const usageRowsRaw = await db
@@ -65,16 +99,37 @@ export async function runRuleBased(
 
   if (usageRowsRaw.length === 0) {
     return {
-      reportId: null,
-      totalScore: 0,
-      dataQuality: {
-        capturedRequests: 0,
-        missingBodies: 0,
-        truncatedBodies: 0,
-        totalRequests: 0,
-        coverageRatio: 0,
+      report: {
+        totalScore: 0,
+        sectionScores: [],
+        signalsSummary: {
+          requests: 0,
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          total_cost: 0,
+          cache_read_ratio: 0,
+          refusal_rate: 0,
+          model_mix: {},
+          client_mix: {},
+          model_diversity: 0,
+          tool_diversity: 0,
+          iteration_count: 0,
+          client_mix_ratio: 0,
+          body_capture_coverage: 0,
+          period: { requestCount: 0, bodyCount: 0 },
+        },
+        dataQuality: {
+          capturedRequests: 0,
+          missingBodies: 0,
+          truncatedBodies: 0,
+          totalRequests: 0,
+          coverageRatio: 0,
+        },
       },
       skipped: true,
+      bodies: [],
     };
   }
 
@@ -124,11 +179,11 @@ export async function runRuleBased(
     totalCost: u.totalCost,
   }));
 
-  const truncatedRequestIds = new Set(
-    bodyRowsRaw
-      .filter((b) => b.bodyTruncated)
-      .map((b) => b.requestId),
-  );
+  const truncatedRequestIds =
+    input.truncatedRequestIds ??
+    new Set(
+      bodyRowsRaw.filter((b) => b.bodyTruncated).map((b) => b.requestId),
+    );
 
   // 5. Score with rules
   const report = scoreWithRules({
@@ -138,26 +193,56 @@ export async function runRuleBased(
     truncatedRequestIds,
   });
 
-  // 6. Upsert into evaluation_reports (unique on userId + periodStart + periodType)
-  const inserted = await db
+  return { report, skipped: false, bodies: bodyRows };
+}
+
+// ── upsertEvaluationReport ───────────────────────────────────────────────────
+
+/**
+ * Upsert an evaluation_reports row.
+ *
+ * Handles both:
+ *   - rule-based-only (llm: null) → LLM columns left NULL
+ *   - with LLM results (llm: {...}) → LLM columns populated
+ *
+ * Returns the inserted/updated row ID, or null if nothing came back.
+ */
+export async function upsertEvaluationReport(
+  input: UpsertEvaluationReportInput,
+): Promise<string | null> {
+  const base = {
+    orgId: input.orgId,
+    userId: input.userId,
+    teamId: input.teamId ?? null,
+    periodStart: input.periodStart,
+    periodEnd: input.periodEnd,
+    periodType: input.periodType,
+    rubricId: input.rubricId,
+    rubricVersion: input.rubricVersion,
+    totalScore: String(input.report.totalScore),
+    // jsonb columns — cast to unknown to satisfy Drizzle's strict typing
+    sectionScores: input.report.sectionScores as unknown,
+    signalsSummary: input.report.signalsSummary as unknown,
+    dataQuality: input.report.dataQuality as unknown,
+    triggeredBy: input.triggeredBy,
+    triggeredByUser: input.triggeredByUser,
+  };
+
+  const withLlm = input.llm
+    ? {
+        ...base,
+        llmNarrative: input.llm.narrative,
+        llmEvidence: input.llm.evidence as unknown,
+        llmModel: input.llm.model,
+        llmCalledAt: input.llm.calledAt,
+        llmCostUsd: String(input.llm.costUsd),
+        llmUpstreamAccountId: input.llm.upstreamAccountId,
+      }
+    : base;
+
+  const inserted = await input.db
     .insert(evaluationReports)
-    .values({
-      orgId,
-      userId,
-      teamId: null,
-      periodStart,
-      periodEnd,
-      periodType: input.periodType,
-      rubricId: input.rubricId,
-      rubricVersion: input.rubricVersion,
-      totalScore: String(report.totalScore),
-      // jsonb columns — cast to unknown to satisfy Drizzle's strict typing
-      sectionScores: report.sectionScores as unknown,
-      signalsSummary: report.signalsSummary as unknown,
-      dataQuality: report.dataQuality as unknown,
-      triggeredBy: input.triggeredBy,
-      triggeredByUser: input.triggeredByUser,
-    })
+    .values(withLlm)
     .onConflictDoUpdate({
       target: [
         evaluationReports.userId,
@@ -165,25 +250,13 @@ export async function runRuleBased(
         evaluationReports.periodType,
       ],
       set: {
-        totalScore: String(report.totalScore),
-        sectionScores: report.sectionScores as unknown,
-        signalsSummary: report.signalsSummary as unknown,
-        dataQuality: report.dataQuality as unknown,
-        rubricVersion: input.rubricVersion,
-        rubricId: input.rubricId,
-        triggeredBy: input.triggeredBy,
-        triggeredByUser: input.triggeredByUser,
+        ...withLlm,
         updatedAt: new Date(),
       },
     })
     .returning({ id: evaluationReports.id });
 
-  return {
-    reportId: inserted[0]?.id ?? null,
-    totalScore: report.totalScore,
-    dataQuality: report.dataQuality,
-    skipped: false,
-  };
+  return inserted[0]?.id ?? null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

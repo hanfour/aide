@@ -1,9 +1,11 @@
 /**
- * Integration tests for runRuleBased (Plan 4B Part 4, Task 4.2).
+ * Integration tests for runRuleBased + upsertEvaluationReport
+ * (Plan 4B Part 4, Task 4.2; updated for Task 5.3 refactor).
  *
  * Stands up a real Postgres testcontainer. Tests call `runRuleBased` directly
  * (no Redis/BullMQ needed — the worker layer is trivially thin and covered
- * elsewhere).
+ * elsewhere). Where DB persistence is needed, tests call `upsertEvaluationReport`
+ * explicitly — mirroring what `runEvaluation` does in production.
  *
  * Test cases:
  *   1. Empty window       — no usage rows → skipped=true, no DB insert
@@ -35,7 +37,10 @@ import {
   type Database,
 } from "@aide/db";
 import { encryptBody } from "../../../src/capture/encrypt.js";
-import { runRuleBased } from "../../../src/workers/evaluator/runRuleBased.js";
+import {
+  runRuleBased,
+  upsertEvaluationReport,
+} from "../../../src/workers/evaluator/runRuleBased.js";
 import { platformDefaultRubric } from "../../../src/workers/evaluator/fixtures/platformDefault.js";
 
 const require = createRequire(import.meta.url);
@@ -149,7 +154,7 @@ beforeEach(async () => {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeBaseInput() {
+function makeRuleBasedInput() {
   return {
     db,
     masterKeyHex: TEST_MASTER_KEY,
@@ -157,12 +162,28 @@ function makeBaseInput() {
     userId,
     periodStart: PERIOD_START,
     periodEnd: PERIOD_END,
-    periodType: "daily" as const,
     rubric: platformDefaultRubric,
+  };
+}
+
+function makeUpsertInput(
+  report: Parameters<typeof upsertEvaluationReport>[0]["report"],
+  overrides: Partial<Parameters<typeof upsertEvaluationReport>[0]> = {},
+) {
+  return {
+    db,
+    orgId,
+    userId,
+    periodStart: PERIOD_START,
+    periodEnd: PERIOD_END,
+    periodType: "daily" as const,
     rubricId,
     rubricVersion: STUB_RUBRIC_VERSION,
     triggeredBy: "cron" as const,
     triggeredByUser: null,
+    report,
+    llm: null,
+    ...overrides,
   };
 }
 
@@ -243,39 +264,45 @@ async function seedRequestBody(requestId: string): Promise<void> {
 describe("runRuleBased — integration", () => {
   it("1. empty window → returns skipped=true, no evaluation_reports row inserted", async () => {
     // No usage_logs seeded for this user+period
-    const result = await runRuleBased(makeBaseInput());
+    const result = await runRuleBased(makeRuleBasedInput());
 
     expect(result.skipped).toBe(true);
-    expect(result.reportId).toBeNull();
-    expect(result.totalScore).toBe(0);
-    expect(result.dataQuality.totalRequests).toBe(0);
-    expect(result.dataQuality.capturedRequests).toBe(0);
-    expect(result.dataQuality.coverageRatio).toBe(0);
+    expect(result.bodies).toHaveLength(0);
+    expect(result.report.dataQuality.totalRequests).toBe(0);
+    expect(result.report.dataQuality.capturedRequests).toBe(0);
+    expect(result.report.dataQuality.coverageRatio).toBe(0);
 
-    // Confirm nothing was inserted
+    // Confirm nothing was inserted (no upsert called when skipped)
     const rows = await db.select().from(evaluationReports);
     expect(rows).toHaveLength(0);
   });
 
-  it("2. happy path → seeds usage+bodies → scores → upserts evaluation_reports row", async () => {
+  it("2. happy path → seeds usage+bodies → scores → upserts evaluation_reports row via upsertEvaluationReport", async () => {
     const requestId = "req-rule-happy-001";
     await seedUsageLog(requestId);
     await seedRequestBody(requestId);
 
-    const result = await runRuleBased(makeBaseInput());
+    const result = await runRuleBased(makeRuleBasedInput());
 
     expect(result.skipped).toBe(false);
-    expect(result.reportId).toBeTruthy();
-    expect(typeof result.totalScore).toBe("number");
-    expect(result.dataQuality.totalRequests).toBe(1);
-    expect(result.dataQuality.capturedRequests).toBe(1);
-    expect(result.dataQuality.coverageRatio).toBe(1);
+    expect(result.bodies).toHaveLength(1);
+    expect(typeof result.report.totalScore).toBe("number");
+    expect(result.report.dataQuality.totalRequests).toBe(1);
+    expect(result.report.dataQuality.capturedRequests).toBe(1);
+    expect(result.report.dataQuality.coverageRatio).toBe(1);
+
+    // Persist via upsertEvaluationReport (what runEvaluation does in production)
+    const reportId = await upsertEvaluationReport(
+      makeUpsertInput(result.report),
+    );
+
+    expect(reportId).toBeTruthy();
 
     // Verify row exists in DB
     const rows = await db
       .select()
       .from(evaluationReports)
-      .where(eq(evaluationReports.id, result.reportId!));
+      .where(eq(evaluationReports.id, reportId!));
 
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
@@ -297,17 +324,20 @@ describe("runRuleBased — integration", () => {
     await seedRequestBody(requestId);
 
     // First run
-    const result1 = await runRuleBased(makeBaseInput());
+    const result1 = await runRuleBased(makeRuleBasedInput());
     expect(result1.skipped).toBe(false);
-    expect(result1.reportId).toBeTruthy();
+    const reportId1 = await upsertEvaluationReport(
+      makeUpsertInput(result1.report, { triggeredBy: "cron" }),
+    );
+    expect(reportId1).toBeTruthy();
 
     // Second run — same period, same user, should upsert not insert
-    const result2 = await runRuleBased({
-      ...makeBaseInput(),
-      triggeredBy: "admin_rerun",
-    });
+    const result2 = await runRuleBased(makeRuleBasedInput());
     expect(result2.skipped).toBe(false);
-    expect(result2.reportId).toBeTruthy();
+    const reportId2 = await upsertEvaluationReport(
+      makeUpsertInput(result2.report, { triggeredBy: "admin_rerun" }),
+    );
+    expect(reportId2).toBeTruthy();
 
     // Only 1 row should exist
     const count = await db
@@ -330,20 +360,26 @@ describe("runRuleBased — integration", () => {
     await seedUsageLog(requestId);
     // Intentionally NOT seeding request_bodies
 
-    const result = await runRuleBased(makeBaseInput());
+    const result = await runRuleBased(makeRuleBasedInput());
 
     expect(result.skipped).toBe(false);
-    expect(result.reportId).toBeTruthy();
-    expect(result.dataQuality.totalRequests).toBe(1);
-    expect(result.dataQuality.capturedRequests).toBe(0);
-    expect(result.dataQuality.coverageRatio).toBe(0);
-    expect(result.dataQuality.missingBodies).toBe(1);
+    expect(result.bodies).toHaveLength(0);
+    expect(result.report.dataQuality.totalRequests).toBe(1);
+    expect(result.report.dataQuality.capturedRequests).toBe(0);
+    expect(result.report.dataQuality.coverageRatio).toBe(0);
+    expect(result.report.dataQuality.missingBodies).toBe(1);
+
+    // Persist via upsertEvaluationReport
+    const reportId = await upsertEvaluationReport(
+      makeUpsertInput(result.report),
+    );
+    expect(reportId).toBeTruthy();
 
     // Verify row was inserted
     const rows = await db
       .select()
       .from(evaluationReports)
-      .where(eq(evaluationReports.id, result.reportId!));
+      .where(eq(evaluationReports.id, reportId!));
     expect(rows).toHaveLength(1);
   });
 });

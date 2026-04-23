@@ -33,6 +33,7 @@ export const serverEnvSchema = z
     ENABLE_GATEWAY: booleanUnion.default(false),
     GATEWAY_PORT: z.coerce.number().int().min(1).max(65535).default(3002),
     GATEWAY_BASE_URL: z.string().url().optional(),
+    GATEWAY_LOCAL_BASE_URL: z.string().url().default("http://localhost:3002"),
     REDIS_URL: z.string().url().optional(),
     CREDENTIAL_ENCRYPTION_KEY: z
       .string()

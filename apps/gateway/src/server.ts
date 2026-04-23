@@ -21,6 +21,7 @@ import {
   createEvaluatorQueue,
   type EvaluatorJobPayload,
 } from "./workers/evaluator/queue.js";
+import { createEvaluatorWorker } from "./workers/evaluator/worker.js";
 import { UsageLogWorker } from "./workers/usageLogWorker.js";
 import { BillingAudit } from "./workers/billingAudit.js";
 import {
@@ -326,6 +327,13 @@ async function wireEvaluatorPipeline(
     );
   }
 
+  const credentialEncryptionKey = env.CREDENTIAL_ENCRYPTION_KEY;
+  if (!credentialEncryptionKey) {
+    throw new Error(
+      "CREDENTIAL_ENCRYPTION_KEY required to wire evaluator pipeline (ENABLE_GATEWAY=true)",
+    );
+  }
+
   const bullmqRedis = new Redis(redisUrl, {
     enableAutoPipelining: true,
     maxRetriesPerRequest: null,
@@ -335,11 +343,38 @@ async function wireEvaluatorPipeline(
     app.log.warn({ err: err.message }, "evaluator bullmq redis error");
   });
 
+  // A separate un-prefixed Redis connection for the worker's LLM eval calls
+  // (same rationale as bullmqRedis — must not share the prefixed fastify.redis).
+  const workerRedis = new Redis(redisUrl, {
+    enableAutoPipelining: true,
+    maxRetriesPerRequest: null,
+  });
+
+  workerRedis.on("error", (err: Error) => {
+    app.log.warn({ err: err.message }, "evaluator worker redis error");
+  });
+
   const queue = createEvaluatorQueue({ connection: bullmqRedis });
+
+  const worker = createEvaluatorWorker({
+    connection: bullmqRedis,
+    db: app.db,
+    redis: workerRedis,
+    masterKeyHex: credentialEncryptionKey,
+    gatewayBaseUrl: env.GATEWAY_LOCAL_BASE_URL,
+  });
 
   app.decorate("evaluatorQueue", queue);
 
   app.addHook("onClose", async () => {
+    try {
+      await worker.close();
+    } catch (err) {
+      app.log.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "evaluator worker close failed",
+      );
+    }
     try {
       await queue.close();
     } catch (err) {
@@ -348,6 +383,12 @@ async function wireEvaluatorPipeline(
         "evaluator queue close failed",
       );
     }
+    await workerRedis.quit().catch((err: Error) => {
+      app.log.debug(
+        { err: err.message },
+        "evaluator worker redis quit failed (likely already closed)",
+      );
+    });
     await bullmqRedis.quit().catch((err: Error) => {
       app.log.debug(
         { err: err.message },

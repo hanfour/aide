@@ -2,7 +2,8 @@
  * BullMQ evaluator worker factory (Plan 4B Part 4, Task 4.2).
  *
  * Consumes `evaluator` queue jobs. Each job fetches usage data for the given
- * user/period, scores it via the rule engine, and upserts an evaluation_report.
+ * user/period, scores it via the rule engine (+ optional LLM deep analysis),
+ * and upserts an evaluation_report.
  *
  * Concurrency is kept at 2 (not 4 like body capture) because evaluator jobs
  * are CPU and DB heavy — fetch + decrypt + aggregate.
@@ -10,13 +11,15 @@
 
 import { Worker, type WorkerOptions } from "bullmq";
 import type { Redis } from "ioredis";
+import { eq } from "drizzle-orm";
 import type { Database } from "@aide/db";
+import { organizations } from "@aide/db";
 import {
   EVALUATOR_QUEUE_NAME,
   EVALUATOR_QUEUE_PREFIX,
   EvaluatorJobPayload,
 } from "./queue.js";
-import { runRuleBased } from "./runRuleBased.js";
+import { runEvaluation } from "./runEvaluation.js";
 import { createRubricResolver } from "./rubricResolver.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -24,7 +27,9 @@ import { createRubricResolver } from "./rubricResolver.js";
 export interface CreateEvaluatorWorkerOptions {
   connection: Redis;
   db: Database;
+  redis: Redis;
   masterKeyHex: string;
+  gatewayBaseUrl: string;
   concurrency?: number;
 }
 
@@ -34,7 +39,9 @@ export interface CreateEvaluatorWorkerOptions {
  * Build a BullMQ Worker wired to the `aide:gw:evaluator` queue.
  *
  * The worker validates the job payload via Zod, resolves the appropriate rubric
- * for the org (custom or platform-default), then delegates to `runRuleBased`.
+ * for the org (custom or platform-default), reads the org's llm_eval_enabled
+ * flag, then delegates to `runEvaluation` which combines rule-based scoring
+ * with optional LLM deep analysis.
  *
  * The rubric resolver is created once at the factory level so cache persists
  * across jobs.
@@ -56,9 +63,19 @@ export function createEvaluatorWorker(
         orgId: payload.orgId,
       });
 
-      await runRuleBased({
+      // Fetch org's llm_eval_enabled flag
+      const org = await opts.db
+        .select({ llmEvalEnabled: organizations.llmEvalEnabled })
+        .from(organizations)
+        .where(eq(organizations.id, payload.orgId))
+        .limit(1)
+        .then((r) => r[0]);
+
+      await runEvaluation({
         db: opts.db,
+        redis: opts.redis,
         masterKeyHex: opts.masterKeyHex,
+        gatewayBaseUrl: opts.gatewayBaseUrl,
         orgId: payload.orgId,
         userId: payload.userId,
         periodStart: new Date(payload.periodStart),
@@ -69,6 +86,7 @@ export function createEvaluatorWorker(
         rubricVersion: resolved.rubricVersion,
         triggeredBy: payload.triggeredBy,
         triggeredByUser: payload.triggeredByUser,
+        llmEvalEnabled: org?.llmEvalEnabled ?? false,
       });
     },
     {
