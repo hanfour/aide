@@ -6,3 +6,5 @@ export { EvidenceRow } from "./EvidenceRow";
 export type { EvidenceItem, SignalHitDisplay } from "./EvidenceRow";
 export { ReportDetail } from "./ReportDetail";
 export { MemberScoreCell } from "./MemberScoreCell";
+export { TeamAggregate } from "./TeamAggregate";
+export { TeamLeaderboard } from "./TeamLeaderboard";
