@@ -17,7 +17,7 @@ import {
   EvaluatorJobPayload,
 } from "./queue.js";
 import { runRuleBased } from "./runRuleBased.js";
-import { platformDefaultRubric } from "./fixtures/platformDefault.js";
+import { createRubricResolver } from "./rubricResolver.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -33,19 +33,29 @@ export interface CreateEvaluatorWorkerOptions {
 /**
  * Build a BullMQ Worker wired to the `aide:gw:evaluator` queue.
  *
- * The worker validates the job payload via Zod, then delegates to
- * `runRuleBased`. The stub `platformDefaultRubric` is used until Task 4.4
- * wires up `rubricResolver`.
+ * The worker validates the job payload via Zod, resolves the appropriate rubric
+ * for the org (custom or platform-default), then delegates to `runRuleBased`.
+ *
+ * The rubric resolver is created once at the factory level so cache persists
+ * across jobs.
  */
 export function createEvaluatorWorker(
   opts: CreateEvaluatorWorkerOptions,
 ): Worker<EvaluatorJobPayload, void> {
+  // Create resolver ONCE at factory level so cache persists across jobs
+  const resolver = createRubricResolver();
+
   return new Worker<EvaluatorJobPayload, void>(
     EVALUATOR_QUEUE_NAME,
     async (job) => {
       const payload = EvaluatorJobPayload.parse(job.data);
 
-      // Task 4.2: use stub platform rubric — Task 4.4 replaces with rubricResolver
+      // Resolve rubric: org custom → platform-default by locale
+      const resolved = await resolver.resolve({
+        db: opts.db,
+        orgId: payload.orgId,
+      });
+
       await runRuleBased({
         db: opts.db,
         masterKeyHex: opts.masterKeyHex,
@@ -54,9 +64,9 @@ export function createEvaluatorWorker(
         periodStart: new Date(payload.periodStart),
         periodEnd: new Date(payload.periodEnd),
         periodType: payload.periodType,
-        rubric: platformDefaultRubric,
-        rubricId: "00000000-0000-0000-0000-000000000000", // STUB — Task 4.4 resolves real rubric id
-        rubricVersion: platformDefaultRubric.version,
+        rubric: resolved.rubric,
+        rubricId: resolved.rubricId,
+        rubricVersion: resolved.rubricVersion,
         triggeredBy: payload.triggeredBy,
         triggeredByUser: payload.triggeredByUser,
       });
