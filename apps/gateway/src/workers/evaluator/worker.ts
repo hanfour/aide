@@ -19,7 +19,7 @@ import {
   EVALUATOR_QUEUE_PREFIX,
   EvaluatorJobPayload,
 } from "./queue.js";
-import { runEvaluation } from "./runEvaluation.js";
+import { runEvaluation, type EvaluationMetrics } from "./runEvaluation.js";
 import { createRubricResolver } from "./rubricResolver.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -31,6 +31,7 @@ export interface CreateEvaluatorWorkerOptions {
   masterKeyHex: string;
   gatewayBaseUrl: string;
   concurrency?: number;
+  metrics?: EvaluationMetrics;
 }
 
 // ── Factory ──────────────────────────────────────────────────────────────────
@@ -52,7 +53,7 @@ export function createEvaluatorWorker(
   // Create resolver ONCE at factory level so cache persists across jobs
   const resolver = createRubricResolver();
 
-  return new Worker<EvaluatorJobPayload, void>(
+  const worker = new Worker<EvaluatorJobPayload, void>(
     EVALUATOR_QUEUE_NAME,
     async (job) => {
       const payload = EvaluatorJobPayload.parse(job.data);
@@ -87,6 +88,7 @@ export function createEvaluatorWorker(
         triggeredBy: payload.triggeredBy,
         triggeredByUser: payload.triggeredByUser,
         llmEvalEnabled: org?.llmEvalEnabled ?? false,
+        metrics: opts.metrics,
       });
     },
     {
@@ -95,4 +97,13 @@ export function createEvaluatorWorker(
       concurrency: opts.concurrency ?? 2,
     } satisfies WorkerOptions,
   );
+
+  // Handle DLQ: track jobs that have exhausted all retries
+  worker.on("failed", (job, err) => {
+    if (job && job.attemptsMade >= (job.opts.attempts ?? 3)) {
+      opts.metrics?.gwEvalDlqCount?.inc?.();
+    }
+  });
+
+  return worker;
 }

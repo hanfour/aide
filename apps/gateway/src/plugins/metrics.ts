@@ -25,6 +25,11 @@ export interface GatewayMetrics {
   bodyPurgeDeletedTotal: Counter<string>;
   bodyPurgeDurationSeconds: Histogram<string>;
   bodyPurgeLagHours: Gauge<string>;
+  gwEvalLlmCalledTotal: Counter<"result">;
+  gwEvalLlmCostUsd: Counter<string>;
+  gwEvalLlmFailedTotal: Counter<"reason">;
+  gwEvalLlmParseFailedTotal: Counter<string>;
+  gwEvalDlqCount: Gauge<string>;
 }
 
 declare module "fastify" {
@@ -172,6 +177,38 @@ export const metricsPlugin = fp(async (fastify) => {
     registers: [register],
   });
 
+  const gwEvalLlmCalledTotal = new Counter({
+    name: "gw_eval_llm_called_total",
+    help: "LLM deep analysis calls attempted (before knowing success/fail)",
+    labelNames: ["result"] as const,
+    registers: [register],
+  });
+
+  const gwEvalLlmCostUsd = new Counter({
+    name: "gw_eval_llm_cost_usd",
+    help: "Cumulative cost of LLM deep analysis calls in USD",
+    registers: [register],
+  });
+
+  const gwEvalLlmFailedTotal = new Counter({
+    name: "gw_eval_llm_failed_total",
+    help: "LLM deep analysis failures by reason",
+    labelNames: ["reason"] as const,
+    registers: [register],
+  });
+
+  const gwEvalLlmParseFailedTotal = new Counter({
+    name: "gw_eval_llm_parse_failed_total",
+    help: "LLM deep analysis responses that failed JSON/schema validation",
+    registers: [register],
+  });
+
+  const gwEvalDlqCount = new Gauge({
+    name: "gw_eval_dlq_count",
+    help: "Evaluator jobs in BullMQ DLQ (failed after all retry attempts)",
+    registers: [register],
+  });
+
   // Materialize zero values so unlabeled metrics appear in scrape output
   waitQueueDepth.set(0);
   idempotencyHitTotal.inc(0);
@@ -181,6 +218,11 @@ export const metricsPlugin = fp(async (fastify) => {
   usagePersistLostTotal.inc(0);
   billingDriftTotal.inc(0);
   billingMonotonicityViolationTotal.inc(0);
+  gwEvalLlmCalledTotal.inc(0);
+  gwEvalLlmCostUsd.inc(0);
+  gwEvalLlmFailedTotal.inc(0);
+  gwEvalLlmParseFailedTotal.inc(0);
+  gwEvalDlqCount.set(0);
   // Histograms appear as _count/_sum=0 without an explicit observation
 
   fastify.decorate("gwMetrics", {
@@ -202,5 +244,10 @@ export const metricsPlugin = fp(async (fastify) => {
     bodyPurgeDeletedTotal,
     bodyPurgeDurationSeconds,
     bodyPurgeLagHours,
+    gwEvalLlmCalledTotal,
+    gwEvalLlmCostUsd,
+    gwEvalLlmFailedTotal,
+    gwEvalLlmParseFailedTotal,
+    gwEvalDlqCount,
   });
 });

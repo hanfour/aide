@@ -20,7 +20,7 @@ import {
   upsertEvaluationReport,
   type UpsertEvaluationReportInput,
 } from "./runRuleBased.js";
-import { runLlmDeepAnalysis } from "./runLlm.js";
+import { runLlmDeepAnalysis, type LlmMetrics } from "./runLlm.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -32,6 +32,11 @@ import { runLlmDeepAnalysis } from "./runLlm.js";
 export const LLM_MIN_COVERAGE_RATIO = 0.5;
 
 // ── Input / Output types ─────────────────────────────────────────────────────
+
+export interface EvaluationMetrics extends LlmMetrics {
+  gwEvalLlmCalledTotal?: { inc: (labels: { result: string }) => void };
+  gwEvalLlmCostUsd?: { inc: (value: number) => void };
+}
 
 export interface RunEvaluationInput {
   db: Database;
@@ -54,6 +59,8 @@ export interface RunEvaluationInput {
   fetchImpl?: typeof fetch;
   /** For test injection — overrides sleep delays in LLM cost lookup. */
   sleepMs?: (ms: number) => Promise<void>;
+  /** For metric emission (test injection). */
+  metrics?: EvaluationMetrics;
 }
 
 export interface RunEvaluationResult {
@@ -111,6 +118,19 @@ export async function runEvaluation(
       bodies: rb.bodies,
       fetchImpl: input.fetchImpl,
       sleepMs: input.sleepMs,
+      metrics: input.metrics,
+    });
+
+    if (llmResult !== null) {
+      input.metrics?.gwEvalLlmCalledTotal?.inc({ result: "success" });
+      input.metrics?.gwEvalLlmCostUsd?.inc(llmResult.costUsd);
+    } else {
+      input.metrics?.gwEvalLlmCalledTotal?.inc({ result: "fetch_failed" });
+    }
+  } else if (input.llmEvalEnabled) {
+    // Skipped due to low coverage (llmEvalEnabled is true, but coverage < 0.5)
+    input.metrics?.gwEvalLlmCalledTotal?.inc({
+      result: "skipped_low_coverage",
     });
   }
 
