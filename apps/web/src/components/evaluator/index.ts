@@ -8,3 +8,5 @@ export { ReportDetail } from "./ReportDetail";
 export { MemberScoreCell } from "./MemberScoreCell";
 export { TeamAggregate } from "./TeamAggregate";
 export { TeamLeaderboard } from "./TeamLeaderboard";
+export { ProfileBanner } from "./ProfileBanner";
+export { ProfileEvaluation } from "./ProfileEvaluation";
