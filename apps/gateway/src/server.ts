@@ -17,12 +17,20 @@ import {
   createBodyCaptureQueue,
   type BodyCaptureJobPayload,
 } from "./workers/bodyCaptureQueue.js";
+import {
+  createEvaluatorQueue,
+  type EvaluatorJobPayload,
+} from "./workers/evaluator/queue.js";
 import { UsageLogWorker } from "./workers/usageLogWorker.js";
 import { BillingAudit } from "./workers/billingAudit.js";
 import {
   startBodyPurgeCron,
   type BodyPurgeCronHandle,
 } from "./workers/bodyPurge.js";
+import {
+  startEvaluatorCron,
+  type EvaluatorCronHandle,
+} from "./workers/evaluator/cron.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -43,6 +51,12 @@ declare module "fastify" {
      * undefined means test mode — silently skip.
      */
     bodyCaptureQueue?: Queue<BodyCaptureJobPayload>;
+    /**
+     * BullMQ evaluator queue. Decorated only when ENABLE_GATEWAY=true AND no
+     * test-injected Redis was provided (same test-mode escape hatch as other
+     * queues). Cron handler subscribes to this queue to enqueue daily jobs.
+     */
+    evaluatorQueue?: Queue<EvaluatorJobPayload>;
   }
 }
 
@@ -89,6 +103,7 @@ export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
   if (opts.redis === undefined) {
     await wireUsageLogPipeline(app, opts.env);
     await wireBodyCapturePipeline(app, opts.env);
+    await wireEvaluatorPipeline(app, opts.env);
   } else {
     app.log.debug(
       "buildServer: opts.redis injected — skipping BullMQ queue/worker/audit (test mode)",
@@ -113,6 +128,21 @@ export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
       });
       app.addHook("onClose", async () => {
         purgeCronHandle?.stop();
+      });
+    }
+
+    // Daily evaluator cron — Plan 4B Part 4, Task 4.3.
+    // Runs every 24h at 00:05 UTC, enqueues daily evaluator jobs for all users
+    // in orgs with contentCaptureEnabled=true.
+    let evaluatorCronHandle: EvaluatorCronHandle | undefined;
+    if (app.db && app.evaluatorQueue) {
+      evaluatorCronHandle = startEvaluatorCron({
+        db: app.db,
+        queue: app.evaluatorQueue,
+        logger: app.log,
+      });
+      app.addHook("onClose", async () => {
+        evaluatorCronHandle?.stop();
       });
     }
   }
@@ -271,6 +301,57 @@ async function wireBodyCapturePipeline(
       app.log.debug(
         { err: err.message },
         "body capture bullmq redis quit failed (likely already closed)",
+      );
+    });
+  });
+}
+
+/**
+ * Build the dedicated BullMQ Redis connection + Queue for evaluator cron
+ * and wire onClose teardown. The cron is started in buildServer and manages
+ * itself via the EvaluatorCronHandle; only the queue is decorated here so the
+ * cron can enqueue jobs.
+ *
+ * Uses a separate Redis connection from other pipelines (same rationale: BullMQ
+ * Lua scripts cannot share the prefixed `fastify.redis` client).
+ */
+async function wireEvaluatorPipeline(
+  app: FastifyInstance,
+  env: ServerEnv,
+): Promise<void> {
+  const redisUrl = env.REDIS_URL;
+  if (!redisUrl) {
+    throw new Error(
+      "REDIS_URL required to wire BullMQ evaluator pipeline (ENABLE_GATEWAY=true)",
+    );
+  }
+
+  const bullmqRedis = new Redis(redisUrl, {
+    enableAutoPipelining: true,
+    maxRetriesPerRequest: null,
+  });
+
+  bullmqRedis.on("error", (err: Error) => {
+    app.log.warn({ err: err.message }, "evaluator bullmq redis error");
+  });
+
+  const queue = createEvaluatorQueue({ connection: bullmqRedis });
+
+  app.decorate("evaluatorQueue", queue);
+
+  app.addHook("onClose", async () => {
+    try {
+      await queue.close();
+    } catch (err) {
+      app.log.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "evaluator queue close failed",
+      );
+    }
+    await bullmqRedis.quit().catch((err: Error) => {
+      app.log.debug(
+        { err: err.message },
+        "evaluator bullmq redis quit failed (likely already closed)",
       );
     });
   });
