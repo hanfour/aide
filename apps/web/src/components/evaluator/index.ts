@@ -1,2 +1,7 @@
 export { SettingsForm } from "./SettingsForm";
 export { StatusCard } from "./StatusCard";
+export { TrendChart } from "./TrendChart";
+export type { ScorePoint } from "./TrendChart";
+export { EvidenceRow } from "./EvidenceRow";
+export type { EvidenceItem, SignalHitDisplay } from "./EvidenceRow";
+export { ReportDetail } from "./ReportDetail";
