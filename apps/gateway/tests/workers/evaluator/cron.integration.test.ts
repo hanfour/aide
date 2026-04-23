@@ -26,13 +26,15 @@ import {
   organizationMembers,
   users,
   type Database,
-  type EvaluatorJobPayload,
 } from "@aide/db";
 import {
   enqueueDailyEvaluatorJobs,
   type EnqueueDailyResult,
 } from "../../../src/workers/evaluator/cron.js";
-import type { QueueLike } from "../../../src/workers/evaluator/queue.js";
+import type {
+  EvaluatorJobPayload,
+  QueueLike,
+} from "../../../src/workers/evaluator/queue.js";
 
 const require = createRequire(import.meta.url);
 const migrationsFolder = path.resolve(
@@ -224,8 +226,10 @@ describe("enqueueDailyEvaluatorJobs", () => {
     expect(queue.jobs).toHaveLength(1);
 
     // Verify the job is for the enabled org + user1
-    expect(queue.jobs[0].payload.orgId).toBe(enabledOrgId);
-    expect(queue.jobs[0].payload.userId).toBe(user1Id);
+    const job0 = queue.jobs[0];
+    expect(job0).toBeDefined();
+    expect(job0!.payload.orgId).toBe(enabledOrgId);
+    expect(job0!.payload.userId).toBe(user1Id);
   });
 
   it("4. job dedup: running cron twice same day doesn't double-enqueue", async () => {
