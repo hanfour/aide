@@ -18,6 +18,7 @@
     "@aide/auth": "workspace:*",
     "@aide/config": "workspace:*",
     "@aide/db": "workspace:*",
+    "@aide/evaluator": "workspace:*",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-avatar": "^1.1.11",
     "@radix-ui/react-dialog": "^1.1.15",
