@@ -31,6 +31,7 @@ type FormValues = z.infer<typeof schema>;
 
 export default function ProfilePage() {
   const { data: session, refetch } = trpc.me.session.useQuery();
+  const { data: latest } = trpc.reports.getOwnLatest.useQuery();
   const update = trpc.me.updateProfile.useMutation({
     onSuccess: () => {
       toast.success("Profile updated");
@@ -63,6 +64,8 @@ export default function ProfilePage() {
     );
   }
 
+  const hasEvaluationEnabled = !!latest;
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
@@ -71,6 +74,29 @@ export default function ProfilePage() {
           Manage how you appear across the workspace.
         </p>
       </div>
+
+      {/* Evaluation banner — only shown when contentCapture is on for at least one of the user's orgs */}
+      {hasEvaluationEnabled && (
+        <div className="rounded-lg border bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-900 p-4 mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-medium text-sky-900 dark:text-sky-100">
+                Evaluation is enabled
+              </h3>
+              <p className="text-sm text-sky-800 dark:text-sky-200 mt-1">
+                Your AI-assisted development activity is being evaluated. View
+                your transparency report below.
+              </p>
+            </div>
+            <Link
+              href="/dashboard/profile/evaluation"
+              className="shrink-0 text-sm font-medium text-sky-700 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-100 underline"
+            >
+              View my reports →
+            </Link>
+          </div>
+        </div>
+      )}
 
       <Card className="shadow-card">
         <CardHeader className="flex flex-row items-center gap-4">
