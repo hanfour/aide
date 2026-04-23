@@ -44,8 +44,7 @@ class MetricsSpy {
   assertEmitted(method: string, reason?: string) {
     const found = this.calls.find(
       (c) =>
-        c.method === method &&
-        (reason === undefined || c.reason === reason),
+        c.method === method && (reason === undefined || c.reason === reason),
     );
     expect(found).toBeDefined();
   }
@@ -70,8 +69,32 @@ describe("runLlmDeepAnalysis metric emission", () => {
     const fakeDb = {} as unknown as Database;
     const report: Report = {
       totalScore: 80,
-      sections: [],
-      dataQuality: { coverageRatio: 0.9 },
+      sectionScores: [],
+      signalsSummary: {
+        requests: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_cost: 0,
+        cache_read_ratio: 0,
+        refusal_rate: 0,
+        model_mix: {},
+        client_mix: {},
+        model_diversity: 0,
+        tool_diversity: 0,
+        iteration_count: 0,
+        client_mix_ratio: 0,
+        body_capture_coverage: 0.9,
+        period: { requestCount: 0, bodyCount: 0 },
+      },
+      dataQuality: {
+        capturedRequests: 9,
+        missingBodies: 1,
+        truncatedBodies: 0,
+        totalRequests: 10,
+        coverageRatio: 0.9,
+      },
     };
 
     const result = await RealRunLlm.runLlmDeepAnalysis({
@@ -103,7 +126,9 @@ describe("runLlmDeepAnalysis metric emission", () => {
           where: () => ({
             limit: () => ({
               then: async (cb: (v: unknown[]) => unknown) => {
-                return cb([{ llmEvalEnabled: false, llmEvalModel: "claude-haiku-4-5" }]);
+                return cb([
+                  { llmEvalEnabled: false, llmEvalModel: "claude-haiku-4-5" },
+                ]);
               },
             }),
           }),
@@ -113,8 +138,32 @@ describe("runLlmDeepAnalysis metric emission", () => {
 
     const report: Report = {
       totalScore: 80,
-      sections: [],
-      dataQuality: { coverageRatio: 0.9 },
+      sectionScores: [],
+      signalsSummary: {
+        requests: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_cost: 0,
+        cache_read_ratio: 0,
+        refusal_rate: 0,
+        model_mix: {},
+        client_mix: {},
+        model_diversity: 0,
+        tool_diversity: 0,
+        iteration_count: 0,
+        client_mix_ratio: 0,
+        body_capture_coverage: 0.9,
+        period: { requestCount: 0, bodyCount: 0 },
+      },
+      dataQuality: {
+        capturedRequests: 9,
+        missingBodies: 1,
+        truncatedBodies: 0,
+        totalRequests: 10,
+        coverageRatio: 0.9,
+      },
     };
 
     const result = await RealRunLlm.runLlmDeepAnalysis({

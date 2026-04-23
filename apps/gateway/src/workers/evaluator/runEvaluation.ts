@@ -36,6 +36,7 @@ export const LLM_MIN_COVERAGE_RATIO = 0.5;
 export interface EvaluationMetrics extends LlmMetrics {
   gwEvalLlmCalledTotal?: { inc: (labels: { result: string }) => void };
   gwEvalLlmCostUsd?: { inc: (value: number) => void };
+  gwEvalDlqCount?: { inc: () => void };
 }
 
 export interface RunEvaluationInput {
