@@ -5,3 +5,4 @@ export type { ScorePoint } from "./TrendChart";
 export { EvidenceRow } from "./EvidenceRow";
 export type { EvidenceItem, SignalHitDisplay } from "./EvidenceRow";
 export { ReportDetail } from "./ReportDetail";
+export { MemberScoreCell } from "./MemberScoreCell";
