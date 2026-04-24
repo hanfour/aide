@@ -612,7 +612,38 @@ picks up historical data and existing credentials.
 
 ---
 
-## 11. Further reading
+## 11. Body Capture (Plan 4B)
+
+The gateway supports opt-in **body capture** — encryption and storage of request
+and response bodies for audit, analytics, and evaluation purposes. All capture
+is controlled at the organization level via a settings page toggle.
+
+**Encryption.** Captured bodies are encrypted with AES-256-GCM using a
+sub-key derived via HKDF-SHA256 from `CREDENTIAL_ENCRYPTION_KEY` with
+`salt=capture_id` and `info="aide-gateway-body-v1"`. This provides domain
+separation from account credentials and allows rotation at the org level
+without breaking decryption of older captures.
+
+**Retention.** By default, captured bodies are stored for 90 days. Orgs may
+customize the retention window (7–365 days) via `/dashboard/organizations/[id]/settings`.
+After the retention period, bodies are automatically purged via a nightly
+background job. Members may request early deletion via GDPR flows.
+
+**Evaluation.** Captured bodies feed the optional **evaluator subsystem** (Plan
+4B), which scores interactions against org-custom rubrics and provides member
+feedback + team analytics. See [`EVALUATOR.md`](./EVALUATOR.md) for full
+details on the evaluator that consumes captured bodies.
+
+**Configuration.**
+
+| Env | Purpose |
+|---|---|
+| `CREDENTIAL_ENCRYPTION_KEY` | Master key for body encryption. Also used by gateway account credentials. **Inject via secret mount, never commit.** |
+| `ENABLE_EVALUATOR` | Feature flag. When `true`, evaluator scoring jobs are enabled. Requires `ENABLE_GATEWAY=true` + captured bodies. |
+
+---
+
+## 12. Further reading
 
 - Design doc: [`.claude/plans/2026-04-20-plan4a-gateway-design.md`](../.claude/plans/2026-04-20-plan4a-gateway-design.md)
   — 1146 lines, 27-item decision log, full architecture rationale.
