@@ -21,6 +21,20 @@ export interface GatewayMetrics {
   usagePersistLostTotal: Counter<string>;
   billingDriftTotal: Counter<string>;
   billingMonotonicityViolationTotal: Counter<string>;
+  bodyCaptureEnqueuedTotal: Counter<"result">;
+  bodyPurgeDeletedTotal: Counter<string>;
+  bodyPurgeDurationSeconds: Histogram<string>;
+  bodyPurgeLagHours: Gauge<string>;
+  gwEvalLlmCalledTotal: Counter<"result">;
+  gwEvalLlmCostUsd: Counter<string>;
+  gwEvalLlmFailedTotal: Counter<"reason">;
+  gwEvalLlmParseFailedTotal: Counter<string>;
+  gwEvalDlqCount: Gauge<string>;
+  gwGdprDeleteExecutedTotal: Counter<string>;
+  gwGdprBodiesDeletedTotal: Counter<string>;
+  gwGdprReportsDeletedTotal: Counter<string>;
+  gwGdprFailuresTotal: Counter<string>;
+  gwGdprAutoRejectedTotal: Counter<string>;
 }
 
 declare module "fastify" {
@@ -142,6 +156,94 @@ export const metricsPlugin = fp(async (fastify) => {
     registers: [register],
   });
 
+  const bodyCaptureEnqueuedTotal = new Counter({
+    name: "gw_body_capture_enqueued_total",
+    help: "Body capture job enqueue attempts",
+    labelNames: ["result"] as const,
+    registers: [register],
+  });
+
+  const bodyPurgeDeletedTotal = new Counter({
+    name: "gw_body_purge_deleted_total",
+    help: "Total request_bodies rows purged by retention cron",
+    registers: [register],
+  });
+
+  const bodyPurgeDurationSeconds = new Histogram({
+    name: "gw_body_purge_duration_seconds",
+    help: "Duration of body purge cron tick in seconds",
+    buckets: [0.1, 0.5, 1, 5, 10, 30, 60, 300],
+    registers: [register],
+  });
+
+  const bodyPurgeLagHours = new Gauge({
+    name: "gw_body_purge_lag_hours",
+    help: "Hours between oldest-overdue retention_until and now (0 when queue clean)",
+    registers: [register],
+  });
+
+  const gwEvalLlmCalledTotal = new Counter({
+    name: "gw_eval_llm_called_total",
+    help: "LLM deep analysis calls attempted (before knowing success/fail)",
+    labelNames: ["result"] as const,
+    registers: [register],
+  });
+
+  const gwEvalLlmCostUsd = new Counter({
+    name: "gw_eval_llm_cost_usd",
+    help: "Cumulative cost of LLM deep analysis calls in USD",
+    registers: [register],
+  });
+
+  const gwEvalLlmFailedTotal = new Counter({
+    name: "gw_eval_llm_failed_total",
+    help: "LLM deep analysis failures by reason",
+    labelNames: ["reason"] as const,
+    registers: [register],
+  });
+
+  const gwEvalLlmParseFailedTotal = new Counter({
+    name: "gw_eval_llm_parse_failed_total",
+    help: "LLM deep analysis responses that failed JSON/schema validation",
+    registers: [register],
+  });
+
+  const gwEvalDlqCount = new Gauge({
+    name: "gw_eval_dlq_count",
+    help: "Evaluator jobs in BullMQ DLQ (failed after all retry attempts)",
+    registers: [register],
+  });
+
+  const gwGdprDeleteExecutedTotal = new Counter({
+    name: "gw_gdpr_delete_executed_total",
+    help: "Total GDPR delete requests executed by the 5-min cron",
+    registers: [register],
+  });
+
+  const gwGdprBodiesDeletedTotal = new Counter({
+    name: "gw_gdpr_bodies_deleted_total",
+    help: "Total request_bodies rows deleted by GDPR delete cron",
+    registers: [register],
+  });
+
+  const gwGdprReportsDeletedTotal = new Counter({
+    name: "gw_gdpr_reports_deleted_total",
+    help: "Total evaluation_reports rows deleted by GDPR delete cron",
+    registers: [register],
+  });
+
+  const gwGdprFailuresTotal = new Counter({
+    name: "gw_gdpr_failures_total",
+    help: "GDPR delete requests that failed during execution",
+    registers: [register],
+  });
+
+  const gwGdprAutoRejectedTotal = new Counter({
+    name: "gw_gdpr_auto_rejected_total",
+    help: "GDPR delete requests auto-rejected after SLA expiry",
+    registers: [register],
+  });
+
   // Materialize zero values so unlabeled metrics appear in scrape output
   waitQueueDepth.set(0);
   idempotencyHitTotal.inc(0);
@@ -151,6 +253,16 @@ export const metricsPlugin = fp(async (fastify) => {
   usagePersistLostTotal.inc(0);
   billingDriftTotal.inc(0);
   billingMonotonicityViolationTotal.inc(0);
+  gwEvalLlmCalledTotal.inc(0);
+  gwEvalLlmCostUsd.inc(0);
+  gwEvalLlmFailedTotal.inc(0);
+  gwEvalLlmParseFailedTotal.inc(0);
+  gwEvalDlqCount.set(0);
+  gwGdprDeleteExecutedTotal.inc(0);
+  gwGdprBodiesDeletedTotal.inc(0);
+  gwGdprReportsDeletedTotal.inc(0);
+  gwGdprFailuresTotal.inc(0);
+  gwGdprAutoRejectedTotal.inc(0);
   // Histograms appear as _count/_sum=0 without an explicit observation
 
   fastify.decorate("gwMetrics", {
@@ -168,5 +280,19 @@ export const metricsPlugin = fp(async (fastify) => {
     usagePersistLostTotal,
     billingDriftTotal,
     billingMonotonicityViolationTotal,
+    bodyCaptureEnqueuedTotal,
+    bodyPurgeDeletedTotal,
+    bodyPurgeDurationSeconds,
+    bodyPurgeLagHours,
+    gwEvalLlmCalledTotal,
+    gwEvalLlmCostUsd,
+    gwEvalLlmFailedTotal,
+    gwEvalLlmParseFailedTotal,
+    gwEvalDlqCount,
+    gwGdprDeleteExecutedTotal,
+    gwGdprBodiesDeletedTotal,
+    gwGdprReportsDeletedTotal,
+    gwGdprFailuresTotal,
+    gwGdprAutoRejectedTotal,
   });
 });

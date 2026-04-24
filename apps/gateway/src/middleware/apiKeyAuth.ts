@@ -17,7 +17,12 @@ declare module "fastify" {
       quotaUsedUsd: string;
     } | null;
     gwUser: { id: string; email: string } | null;
-    gwOrg: { id: string; slug: string } | null;
+    gwOrg: {
+      id: string;
+      slug: string;
+      contentCaptureEnabled: boolean;
+      retentionDaysOverride: number | null;
+    } | null;
   }
   interface FastifyInstance {
     db: Database;
@@ -56,7 +61,12 @@ export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(async (fastify, opts) => {
       .select({
         apiKey: apiKeys,
         user: { id: users.id, email: users.email },
-        org: { id: organizations.id, slug: organizations.slug },
+        org: {
+          id: organizations.id,
+          slug: organizations.slug,
+          contentCaptureEnabled: organizations.contentCaptureEnabled,
+          retentionDaysOverride: organizations.retentionDaysOverride,
+        },
       })
       .from(apiKeys)
       .innerJoin(users, eq(users.id, apiKeys.userId))
@@ -111,7 +121,12 @@ export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(async (fastify, opts) => {
       quotaUsedUsd: row.apiKey.quotaUsedUsd,
     };
     req.gwUser = row.user;
-    req.gwOrg = row.org;
+    req.gwOrg = {
+      id: row.org.id,
+      slug: row.org.slug,
+      contentCaptureEnabled: row.org.contentCaptureEnabled,
+      retentionDaysOverride: row.org.retentionDaysOverride ?? null,
+    };
   });
 });
 

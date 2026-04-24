@@ -13,8 +13,33 @@ import {
   createUsageLogQueue,
   type UsageLogJobPayload,
 } from "./workers/usageLogQueue.js";
+import {
+  createBodyCaptureQueue,
+  type BodyCaptureJobPayload,
+} from "./workers/bodyCaptureQueue.js";
+import {
+  createEvaluatorQueue,
+  type EvaluatorJobPayload,
+} from "./workers/evaluator/queue.js";
+import { createEvaluatorWorker } from "./workers/evaluator/worker.js";
 import { UsageLogWorker } from "./workers/usageLogWorker.js";
 import { BillingAudit } from "./workers/billingAudit.js";
+import {
+  startBodyPurgeCron,
+  type BodyPurgeCronHandle,
+} from "./workers/bodyPurge.js";
+import {
+  startEvaluatorCron,
+  type EvaluatorCronHandle,
+} from "./workers/evaluator/cron.js";
+import {
+  startGdprDeleteCron,
+  type GdprDeleteCronHandle,
+} from "./workers/gdprDelete.js";
+import {
+  startGdprExpireCron,
+  type GdprExpireCronHandle,
+} from "./workers/gdprExpire.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -28,6 +53,19 @@ declare module "fastify" {
      * call `enqueueUsageLog(fastify.usageLogQueue, payload, { fallback: ... })`.
      */
     usageLogQueue?: Queue<UsageLogJobPayload>;
+    /**
+     * BullMQ body-capture queue. Decorated only when ENABLE_GATEWAY=true AND no
+     * test-injected Redis was provided (same test-mode escape hatch as
+     * `usageLogQueue`). Route handlers check for presence before enqueueing;
+     * undefined means test mode — silently skip.
+     */
+    bodyCaptureQueue?: Queue<BodyCaptureJobPayload>;
+    /**
+     * BullMQ evaluator queue. Decorated only when ENABLE_GATEWAY=true AND no
+     * test-injected Redis was provided (same test-mode escape hatch as other
+     * queues). Cron handler subscribes to this queue to enqueue daily jobs.
+     */
+    evaluatorQueue?: Queue<EvaluatorJobPayload>;
   }
 }
 
@@ -73,10 +111,100 @@ export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
   // BullMQ wiring: skip when a test injected its own Redis (see BuildOpts docs).
   if (opts.redis === undefined) {
     await wireUsageLogPipeline(app, opts.env);
+
+    // Evaluator subsystem (body capture, evaluator queue/worker, crons) is
+    // gated on ENABLE_EVALUATOR — defense-in-depth (design §8.1).
+    // API side gates via evaluatorProcedure; this is the server-startup gate.
+    if (opts.env.ENABLE_EVALUATOR) {
+      await wireBodyCapturePipeline(app, opts.env);
+      await wireEvaluatorPipeline(app, opts.env);
+    } else {
+      app.log.info(
+        "ENABLE_EVALUATOR=false — body capture, evaluator pipeline, and evaluator crons are disabled",
+      );
+    }
   } else {
     app.log.debug(
       "buildServer: opts.redis injected — skipping BullMQ queue/worker/audit (test mode)",
     );
+  }
+
+  // Crons: skip when a test injected its own Redis (same gate as BullMQ wiring
+  // above — tests that need cron coverage call cron functions directly).
+  if (opts.redis === undefined) {
+    // Body retention purge cron — Plan 4B Task 3.6.
+    // Runs every 4h, purges request_bodies where retention_until <= now().
+    // Gated on ENABLE_EVALUATOR: no captured bodies exist when evaluator is off,
+    // so gating simplifies reasoning and avoids a no-op cron running in production.
+    if (opts.env.ENABLE_EVALUATOR) {
+      let purgeCronHandle: BodyPurgeCronHandle | undefined;
+      if (app.db) {
+        purgeCronHandle = startBodyPurgeCron({
+          db: app.db,
+          metrics: {
+            deletedTotal: app.gwMetrics.bodyPurgeDeletedTotal,
+            durationSeconds: app.gwMetrics.bodyPurgeDurationSeconds,
+            lagHours: app.gwMetrics.bodyPurgeLagHours,
+          },
+          logger: app.log,
+        });
+        app.addHook("onClose", async () => {
+          purgeCronHandle?.stop();
+        });
+      }
+
+      // Daily evaluator cron — Plan 4B Part 4, Task 4.3.
+      // Runs every 24h at 00:05 UTC, enqueues daily evaluator jobs for all users
+      // in orgs with contentCaptureEnabled=true.
+      let evaluatorCronHandle: EvaluatorCronHandle | undefined;
+      if (app.db && app.evaluatorQueue) {
+        evaluatorCronHandle = startEvaluatorCron({
+          db: app.db,
+          queue: app.evaluatorQueue,
+          logger: app.log,
+        });
+        app.addHook("onClose", async () => {
+          evaluatorCronHandle?.stop();
+        });
+      }
+
+      // GDPR delete cron — Plan 4B Part 10, Task 10.1.
+      // Runs every 5 min, executes approved GDPR delete requests and writes audit logs.
+      // Gated on ENABLE_EVALUATOR: no GDPR requests arrive when evaluator is off.
+      let gdprDeleteCronHandle: GdprDeleteCronHandle | undefined;
+      if (app.db) {
+        gdprDeleteCronHandle = startGdprDeleteCron({
+          db: app.db,
+          metrics: {
+            executedTotal: app.gwMetrics.gwGdprDeleteExecutedTotal,
+            bodiesDeletedTotal: app.gwMetrics.gwGdprBodiesDeletedTotal,
+            reportsDeletedTotal: app.gwMetrics.gwGdprReportsDeletedTotal,
+            failuresTotal: app.gwMetrics.gwGdprFailuresTotal,
+          },
+          logger: app.log,
+        });
+        app.addHook("onClose", async () => {
+          gdprDeleteCronHandle?.stop();
+        });
+      }
+
+      // GDPR expire cron — Plan 4B Part 10, Task 10.3.
+      // Runs every 24h, auto-rejects pending GDPR requests older than 30 days.
+      // Gated on ENABLE_EVALUATOR: no pending requests exist when evaluator is off.
+      let gdprExpireCronHandle: GdprExpireCronHandle | undefined;
+      if (app.db) {
+        gdprExpireCronHandle = startGdprExpireCron({
+          db: app.db,
+          metrics: {
+            autoRejectedTotal: app.gwMetrics.gwGdprAutoRejectedTotal,
+          },
+          logger: app.log,
+        });
+        app.addHook("onClose", async () => {
+          gdprExpireCronHandle?.stop();
+        });
+      }
+    }
   }
 
   return app;
@@ -183,6 +311,147 @@ async function wireUsageLogPipeline(
       app.log.debug(
         { err: err.message },
         "bullmq redis quit failed (likely already closed)",
+      );
+    });
+  });
+}
+
+/**
+ * Build the dedicated BullMQ Redis connection + Queue for body capture and
+ * wire onClose teardown. The worker is managed externally (bodyCaptureWorker.ts)
+ * and not started here — only the queue is decorated so route handlers can enqueue.
+ *
+ * Uses a separate Redis connection from usageLogPipeline (same rationale: BullMQ
+ * Lua scripts cannot share the prefixed `fastify.redis` client).
+ */
+async function wireBodyCapturePipeline(
+  app: FastifyInstance,
+  env: ServerEnv,
+): Promise<void> {
+  const redisUrl = env.REDIS_URL;
+  if (!redisUrl) {
+    throw new Error(
+      "REDIS_URL required to wire BullMQ body-capture pipeline (ENABLE_GATEWAY=true)",
+    );
+  }
+
+  const bullmqRedis = new Redis(redisUrl, {
+    enableAutoPipelining: true,
+    maxRetriesPerRequest: null,
+  });
+
+  bullmqRedis.on("error", (err: Error) => {
+    app.log.warn({ err: err.message }, "body capture bullmq redis error");
+  });
+
+  const queue = createBodyCaptureQueue({ connection: bullmqRedis });
+
+  app.decorate("bodyCaptureQueue", queue);
+
+  app.addHook("onClose", async () => {
+    try {
+      await queue.close();
+    } catch (err) {
+      app.log.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "body capture queue close failed",
+      );
+    }
+    await bullmqRedis.quit().catch((err: Error) => {
+      app.log.debug(
+        { err: err.message },
+        "body capture bullmq redis quit failed (likely already closed)",
+      );
+    });
+  });
+}
+
+/**
+ * Build the dedicated BullMQ Redis connection + Queue for evaluator cron
+ * and wire onClose teardown. The cron is started in buildServer and manages
+ * itself via the EvaluatorCronHandle; only the queue is decorated here so the
+ * cron can enqueue jobs.
+ *
+ * Uses a separate Redis connection from other pipelines (same rationale: BullMQ
+ * Lua scripts cannot share the prefixed `fastify.redis` client).
+ */
+async function wireEvaluatorPipeline(
+  app: FastifyInstance,
+  env: ServerEnv,
+): Promise<void> {
+  const redisUrl = env.REDIS_URL;
+  if (!redisUrl) {
+    throw new Error(
+      "REDIS_URL required to wire BullMQ evaluator pipeline (ENABLE_GATEWAY=true)",
+    );
+  }
+
+  const credentialEncryptionKey = env.CREDENTIAL_ENCRYPTION_KEY;
+  if (!credentialEncryptionKey) {
+    throw new Error(
+      "CREDENTIAL_ENCRYPTION_KEY required to wire evaluator pipeline (ENABLE_GATEWAY=true)",
+    );
+  }
+
+  const bullmqRedis = new Redis(redisUrl, {
+    enableAutoPipelining: true,
+    maxRetriesPerRequest: null,
+  });
+
+  bullmqRedis.on("error", (err: Error) => {
+    app.log.warn({ err: err.message }, "evaluator bullmq redis error");
+  });
+
+  // A separate un-prefixed Redis connection for the worker's LLM eval calls
+  // (same rationale as bullmqRedis — must not share the prefixed fastify.redis).
+  const workerRedis = new Redis(redisUrl, {
+    enableAutoPipelining: true,
+    maxRetriesPerRequest: null,
+  });
+
+  workerRedis.on("error", (err: Error) => {
+    app.log.warn({ err: err.message }, "evaluator worker redis error");
+  });
+
+  const queue = createEvaluatorQueue({ connection: bullmqRedis });
+
+  const worker = createEvaluatorWorker({
+    connection: bullmqRedis,
+    db: app.db,
+    redis: workerRedis,
+    masterKeyHex: credentialEncryptionKey,
+    gatewayBaseUrl: env.GATEWAY_LOCAL_BASE_URL,
+  });
+
+  app.decorate("evaluatorQueue", queue);
+
+  app.addHook("onClose", async () => {
+    try {
+      await worker.close();
+    } catch (err) {
+      app.log.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "evaluator worker close failed",
+      );
+    }
+    try {
+      await queue.close();
+    } catch (err) {
+      app.log.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "evaluator queue close failed",
+      );
+    }
+    await workerRedis.quit().catch((err: Error) => {
+      app.log.debug(
+        { err: err.message },
+        "evaluator worker redis quit failed (likely already closed)",
+      );
+    });
+    await bullmqRedis.quit().catch((err: Error) => {
+      app.log.debug(
+        { err: err.message },
+        "evaluator bullmq redis quit failed (likely already closed)",
       );
     });
   });

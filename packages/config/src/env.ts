@@ -24,6 +24,7 @@ export const serverEnvSchema = z
       .regex(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/),
     BOOTSTRAP_DEFAULT_ORG_NAME: z.string().min(1),
     ENABLE_SWAGGER: booleanUnion.default(false),
+    ENABLE_EVALUATOR: booleanUnion.default(false),
     LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
     API_INTERNAL_URL: z.string().url().optional(),
     ENABLE_TEST_SEED: booleanUnion.default(false),
@@ -33,6 +34,7 @@ export const serverEnvSchema = z
     ENABLE_GATEWAY: booleanUnion.default(false),
     GATEWAY_PORT: z.coerce.number().int().min(1).max(65535).default(3002),
     GATEWAY_BASE_URL: z.string().url().optional(),
+    GATEWAY_LOCAL_BASE_URL: z.string().url().default("http://localhost:3002"),
     REDIS_URL: z.string().url().optional(),
     CREDENTIAL_ENCRYPTION_KEY: z
       .string()

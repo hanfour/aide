@@ -7,6 +7,7 @@ import { trpc } from "@/lib/trpc/client";
 import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { RequirePerm } from "@/components/RequirePerm";
+import { MemberScoreCell } from "@/components/evaluator";
 
 export default function MembersTab() {
   const params = useParams();
@@ -60,6 +61,9 @@ export default function MembersTab() {
             <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground">
               <th className="px-4 py-2 text-left font-medium">Member</th>
               <th className="px-4 py-2 text-left font-medium">Joined</th>
+              <th className="px-4 py-2 text-center font-medium">
+                Latest score
+              </th>
               <th className="px-4 py-2 text-right font-medium"></th>
             </tr>
           </thead>
@@ -86,6 +90,9 @@ export default function MembersTab() {
                 </td>
                 <td className="px-4 py-2.5 text-xs text-muted-foreground">
                   {new Date(m.createdAt).toLocaleDateString()}
+                </td>
+                <td className="px-4 py-2.5 text-center">
+                  <MemberScoreCell orgId={orgId} userId={m.id} />
                 </td>
                 <td className="px-4 py-2.5 text-right">
                   <RequirePerm

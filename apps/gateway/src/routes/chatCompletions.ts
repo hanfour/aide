@@ -14,6 +14,7 @@ import { maybeRefreshOAuth } from "../runtime/oauthRefresh.js";
 import { callUpstreamMessages } from "../runtime/upstreamCall.js";
 import { acquireSlot, releaseSlot } from "../redis/slots.js";
 import { emitUsageLog } from "../runtime/usageLogging.js";
+import { emitBodyCapture } from "../runtime/bodyCapture.js";
 
 export interface ChatCompletionsRouteOptions {
   env: ServerEnv;
@@ -189,6 +190,14 @@ export async function chatCompletionsRoutes(
                 surface: "chat-completions",
                 statusCode: 200,
                 durationMs: Date.now() - startedAtMs,
+              });
+              await emitBodyCapture({
+                app,
+                req,
+                requestId,
+                requestBodyJson: upstreamBodyBuf.toString("utf8"),
+                responseBody: parsed,
+                stream: false,
               });
 
               if (parseErr !== null) {

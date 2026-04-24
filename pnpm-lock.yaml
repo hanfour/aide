@@ -54,6 +54,9 @@ importers:
       '@aide/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@aide/evaluator':
+        specifier: workspace:*
+        version: link:../../packages/evaluator
       '@aide/gateway-core':
         specifier: workspace:*
         version: link:../../packages/gateway-core
@@ -66,6 +69,9 @@ importers:
       '@trpc/server':
         specifier: ^11.0.0
         version: 11.16.0(typescript@5.9.3)
+      bullmq:
+        specifier: ^5.34.0
+        version: 5.75.2
       drizzle-orm:
         specifier: ^0.36.0
         version: 0.36.4(@opentelemetry/api@1.9.1)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(@types/react@19.2.14)(better-sqlite3@11.10.0)(pg@8.20.0)(react@19.2.5)
@@ -127,6 +133,9 @@ importers:
       '@aide/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@aide/evaluator':
+        specifier: workspace:*
+        version: link:../../packages/evaluator
       '@aide/gateway-core':
         specifier: workspace:*
         version: link:../../packages/gateway-core
@@ -212,6 +221,9 @@ importers:
       '@aide/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@aide/evaluator':
+        specifier: workspace:*
+        version: link:../../packages/evaluator
       '@hookform/resolvers':
         specifier: ^5.2.2
         version: 5.2.2(react-hook-form@7.72.1(react@19.2.5))
@@ -427,6 +439,22 @@ importers:
       vitest:
         specifier: ^4.1.4
         version: 4.1.4(@opentelemetry/api@1.9.1)(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(vite@8.0.8(@types/node@22.19.17)(esbuild@0.19.12)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3))
+
+  packages/evaluator:
+    dependencies:
+      zod:
+        specifier: ^3.23.0
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.4
+        version: 4.1.4(@opentelemetry/api@1.9.1)(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3))
 
   packages/gateway-core:
     devDependencies:

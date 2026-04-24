@@ -1,0 +1,182 @@
+{
+  "name": "平台預設 — OneAD 研發評核標準",
+  "description": "研發團隊 AI 應用評核標準定義（gateway 適配版；規則評分 + LLM 調整）",
+  "version": "1.0.0",
+  "locale": "zh-Hant",
+  "sections": [
+    {
+      "id": "interaction",
+      "name": "AI 交互與決策",
+      "weight": "40%",
+      "standard": {
+        "score": 100,
+        "label": "標準",
+        "criteria": [
+          "主動使用 AI 進行開發",
+          "決策筆記能清晰描述選擇特定 AI 建議的邏輯"
+        ]
+      },
+      "superior": {
+        "score": 120,
+        "label": "卓越",
+        "criteria": [
+          "引導 AI 多次迭代（方案 A → B → C）",
+          "基於系統限制與未來擴充性識別最優解"
+        ]
+      },
+      "signals": [
+        {
+          "type": "keyword",
+          "id": "interaction_keywords",
+          "in": "request_body",
+          "terms": [
+            "option",
+            "alternative",
+            "instead",
+            "compare",
+            "approach",
+            "let's try",
+            "try another",
+            "switch to",
+            "prefer",
+            "trade-off",
+            "pros and cons",
+            "better approach",
+            "refactor",
+            "iterate",
+            "方案",
+            "替代",
+            "改用",
+            "換一種",
+            "比較",
+            "取捨",
+            "迭代",
+            "重構",
+            "試試",
+            "另一個",
+            "優化"
+          ],
+          "caseSensitive": false
+        },
+        {
+          "type": "iteration_count",
+          "id": "iterative_exploration",
+          "gte": 3
+        },
+        {
+          "type": "tool_diversity",
+          "id": "multi_tool_usage",
+          "gte": 3
+        }
+      ],
+      "superiorRules": {
+        "strongThresholds": ["interaction_keywords"],
+        "supportThresholds": ["iterative_exploration", "multi_tool_usage"],
+        "minStrongHits": 1,
+        "minSupportHits": 1
+      }
+    },
+    {
+      "id": "riskControl",
+      "name": "AI 識別與風險控管",
+      "weight": "60%",
+      "standard": {
+        "score": 100,
+        "label": "標準",
+        "criteria": [
+          "抓出常見 AI 錯誤與幻覺",
+          "產出代碼穩定且符合基本品質要求"
+        ]
+      },
+      "superior": {
+        "score": 120,
+        "label": "卓越",
+        "criteria": [
+          "識別關鍵風險（資安、效能、記憶體溢位）",
+          "將修正轉化為團隊技術 SOP 或 Wiki 進行知識共享"
+        ]
+      },
+      "signals": [
+        {
+          "type": "keyword",
+          "id": "security_keywords",
+          "in": "both",
+          "terms": [
+            "security",
+            "vulnerability",
+            "injection",
+            "xss",
+            "csrf",
+            "authentication",
+            "authorization",
+            "secret",
+            "credential",
+            "permission",
+            "sanitize",
+            "security review",
+            "security audit",
+            "risk assessment",
+            "threat model",
+            "CVE",
+            "OWASP",
+            "penetration test",
+            "安全",
+            "漏洞",
+            "注入",
+            "風險評估",
+            "安全審查"
+          ],
+          "caseSensitive": false
+        },
+        {
+          "type": "keyword",
+          "id": "performance_keywords",
+          "in": "both",
+          "terms": [
+            "performance",
+            "bottleneck",
+            "memory leak",
+            "optimize",
+            "latency",
+            "cache invalidat",
+            "slow query",
+            "timeout",
+            "n+1",
+            "regression",
+            "race condition",
+            "deadlock",
+            "overflow",
+            "null pointer",
+            "production incident",
+            "postmortem",
+            "效能",
+            "瓶頸",
+            "記憶體洩漏"
+          ],
+          "caseSensitive": false
+        },
+        {
+          "type": "refusal_rate",
+          "id": "low_refusal_rate",
+          "lte": 0.2
+        }
+      ],
+      "superiorRules": {
+        "strongThresholds": ["security_keywords", "performance_keywords"],
+        "supportThresholds": ["low_refusal_rate"],
+        "minStrongHits": 1,
+        "minSupportHits": 0
+      }
+    }
+  ],
+  "noiseFilters": [
+    "<task-notification>",
+    "<command-name>",
+    "<local-command-caveat>",
+    "<system-reminder>",
+    "you are a senior code reviewer",
+    "you are a code reviewer",
+    "perform a deep, multi-dimensional analysis",
+    "review the provided pull request"
+  ]
+}

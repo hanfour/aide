@@ -5,6 +5,85 @@ All notable changes to aide are documented here. Format loosely follows
 releases are tagged `vX.Y.Z`; each tag publishes multi-arch images to
 `ghcr.io/hanfour/aide-{api,web,gateway}`.
 
+## v0.4.0 — 2026-04-22 — Plan 4B evaluator shipped
+
+Evaluation subsystem: opt-in content capture, rule-based + LLM scoring, 
+admin-customizable rubrics, GDPR workflow, labor-law-friendly transparency.
+
+**14 design decisions** (from `.claude/plans/2026-04-22-plan-4b-evaluator-design.md`):
+
+1. Opt-in per-org content capture (`organizations.content_capture_enabled`); 
+   members transparent via `/dashboard/profile/evaluation`.
+2. AES-256-GCM body encryption using `CREDENTIAL_ENCRYPTION_KEY` with 
+   domain-separated HKDF info (`aide-gateway-body-v1`); 90-day default 
+   retention with per-org override (30/60/90).
+3. Dual-layer evaluation: rule-based scoring always-on, LLM Deep Analysis 
+   opt-in per org.
+4. LLM calls dogfooded via self-gateway loopback; cost attribution lands in 
+   `usage_logs` under a dedicated system-user `api_key`.
+5. Rubric-driven scoring engine with Zod-validated 9-type signal discriminated 
+   union (keyword, threshold, refusal_rate, client_mix, model_diversity, 
+   cache_read_ratio, extended_thinking_used, tool_diversity, iteration_count).
+6. Platform-default rubrics seeded for en/zh-Hant/ja; org-custom rubrics 
+   validated client-side + server-side.
+7. Upsert-on-rerun semantics for `evaluation_reports` (unique on 
+   user+period+type).
+8. Four-layer `ENABLE_EVALUATOR` feature gate: env → router procedure → UI 
+   route → orchestration cron.
+9. LLM Deep Analysis gated on `data_quality.coverageRatio ≥ 0.5` to avoid 
+   wasted cost on low-signal windows.
+10. GDPR delete as a request/approval workflow (not auto-execute); 30-day SLA 
+    triggers auto-reject.
+11. Retention purge cron (4h cadence) + GDPR execution cron (5min cadence) 
+    separate from main request path.
+12. LLM narrative redaction: members always see own full report; team_managers 
+    see team reports with LLM fields nulled unless they are also org_admin.
+13. Leaderboard visibility is opt-in per org (`leaderboardEnabled`) — privacy 
+    default.
+14. Body truncation with flipped priority (preserve `attempt_errors` — dropped 
+    last) to retain failover debugging context.
+
+### Added
+
+- `@aide/evaluator` workspace package (pure-logic scoring engine + LLM prompt 
+  builder)
+- Org settings: `/dashboard/organizations/[id]/evaluator/settings`
+- Rubric management: `/dashboard/organizations/[id]/evaluator/rubrics` (with 
+  dry-run preview)
+- Evaluator status: `/dashboard/organizations/[id]/evaluator/status`
+- Member detail with 30-day trend + evidence drill-down: 
+  `/dashboard/organizations/[id]/members/[uid]`
+- Team evaluator aggregate + optional leaderboard: 
+  `/dashboard/organizations/[id]/teams/[tid]`
+- Org members table latest-score column
+- Member self-view: `/dashboard/profile/evaluation`
+- GDPR export + deletion request dialogs
+- Migration 0002 (4 new tables + 10 `organizations` columns) + 0003 (seed 3 
+  platform rubrics)
+- BullMQ workers: body capture, evaluator, retention purge, GDPR delete, GDPR 
+  auto-reject
+- tRPC routers: `contentCapture`, `rubrics`, `reports`, `evaluator` — all 
+  gated by `ENABLE_EVALUATOR`
+- CI job `evaluator-integration` + Playwright E2E spec + smoke script
+
+### Changed
+
+- `gateway-core` exposes `encryptBody`/`decryptBody` alongside existing 
+  `encryptCredential`/`decryptCredential` (refactored to share AES-GCM+HKDF 
+  primitive).
+- `apiKeyAuth` middleware populates `req.gwOrg.contentCaptureEnabled` + 
+  `retentionDaysOverride`.
+- Fastify decorators add `bodyCaptureQueue` + `evaluatorQueue` alongside 
+  existing `usageLogQueue`.
+- RBAC `Action` union extended with 14 new evaluator-scoped actions.
+
+### Docs
+
+- `docs/EVALUATOR.md` — subsystem overview, runbook, env vars, metrics
+- `docs/runbooks/evaluator-rollout.md` — 5-step live-deployment playbook
+- `docs/GATEWAY.md` — new "Body Capture" section
+- `docs/SELF_HOSTING.md` — "Enable the evaluator" section
+
 ## v0.3.0 — 2026-04-22 — Plan 4A gateway shipped
 
 ### Added

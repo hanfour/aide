@@ -52,6 +52,29 @@ through a shared pool of upstream accounts:
 - Usage + cost (per Anthropic/OpenAI token pricing) lands in a `usage_logs`
   table, surfaced via per-user and per-org dashboards.
 
+**v0.4.0** adds an opt-in **evaluator** subsystem for performance evaluation
+(gated behind `ENABLE_EVALUATOR` feature flag):
+
+- **Content capture opt-in** — organization-level toggle; members see their
+  captured usage on `/dashboard/profile/evaluation`. 90-day default retention
+  (per-org override: 30/60/90). AES-256-GCM encryption with domain-separated
+  HKDF keys.
+- **Dual-layer evaluation** — rule-based scoring (always-on) + optional LLM
+  Deep Analysis (per-org opt-in). Costs dogfooded via self-gateway loopback
+  and tracked in `usage_logs`.
+- **Admin-customizable scoring rubrics** — platform defaults seeded for
+  English, Traditional Chinese, and Japanese; organizations can define custom
+  rubrics with dry-run preview. Zod-validated 9-type signal discriminated
+  union (keywords, thresholds, refusal rates, client mix, model diversity,
+  cache patterns, extended thinking, tool variety, iteration counts).
+- **GDPR member-initiated delete request workflow** — members request deletion,
+  org admins approve (or auto-reject after 30 days). Retention purge and GDPR
+  execution run on separate cron workers.
+- **Labor-law-friendly transparency** — members always see their own full
+  evaluation report; team managers see redacted team views (LLM analysis
+  fields nulled unless they are also org admins). Leaderboard visibility is
+  opt-in per organization (privacy default).
+
 Quick start:
 ```sh
 cd docker
