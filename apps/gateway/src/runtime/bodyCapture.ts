@@ -9,9 +9,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import {
-  enqueueBodyCapture,
-} from "../workers/bodyCaptureQueue.js";
+import { enqueueBodyCapture } from "../workers/bodyCaptureQueue.js";
 
 /** Default retention period when no org-level override is configured. */
 const DEFAULT_RETENTION_DAYS = 90;
@@ -25,7 +23,9 @@ export interface EmitBodyCaptureInput {
   requestBodyJson: string;
   /**
    * For non-streaming paths: the parsed Anthropic response object.
-   * For streaming paths: a placeholder (see STREAMING DEFERRAL note below).
+   * For streaming paths: the assembled StreamTranscript from StreamUsageExtractor
+   * (same Anthropic message shape — id, type, role, model, content, stop_reason, usage).
+   * Partial transcripts are valid when the stream was cut mid-message.
    */
   responseBody: unknown;
   /** True if the request was a streaming request. */
@@ -43,12 +43,11 @@ export interface EmitBodyCaptureInput {
  * `req.gwOrg.contentCaptureEnabled`. Never throws — all errors are caught,
  * logged at warn, and metered via `gw_body_capture_enqueued_total`.
  *
- * STREAMING DEFERRAL (Plan 4B Task 3.5b):
- *   For streaming responses the full transcript-reconstruction buffer is
- *   complex (requires deeper integration with streamUsageExtractor). This task
- *   captures the request body + a minimal placeholder response body for stream
- *   paths. Real stream transcript assembly is tracked as Task 3.5b and will
- *   replace the placeholder in a follow-up.
+ * Streaming transcript (Plan 4B Task 3.5b — resolved):
+ *   For streaming responses, `responseBody` is the assembled StreamTranscript
+ *   produced by `StreamUsageExtractor.getAssembledTranscript()`. Partial
+ *   transcripts (stream cut mid-message) are captured as-is — null fields
+ *   indicate events that never arrived.
  */
 export async function emitBodyCapture(
   input: EmitBodyCaptureInput,

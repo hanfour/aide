@@ -456,19 +456,12 @@ async function runStreamingFailover(
                   ? bufferReleasedAtMs - startedAtMs
                   : null,
             });
-            // STREAMING DEFERRAL (Plan 4B Task 3.5b): stream transcript
-            // assembly requires buffer reconstruction work in
-            // streamUsageExtractor. Capturing request body + placeholder
-            // here; real transcript wired in Task 3.5b.
             await emitBodyCapture({
               app,
               req,
               requestId,
               requestBodyJson: upstreamBodyBuf.toString("utf8"),
-              responseBody: {
-                stream: true,
-                note: "transcript_reconstruction_deferred",
-              },
+              responseBody: extractor.getAssembledTranscript(),
               stream: true,
             });
             return;
@@ -521,19 +514,12 @@ async function runStreamingFailover(
               ? bufferReleasedAtMs - startedAtMs
               : null,
         });
-        // STREAMING DEFERRAL (Plan 4B Task 3.5b): stream transcript
-        // assembly requires buffer reconstruction work in
-        // streamUsageExtractor. Capturing request body + placeholder
-        // here; real transcript wired in Task 3.5b.
         await emitBodyCapture({
           app,
           req,
           requestId,
           requestBodyJson: upstreamBodyBuf.toString("utf8"),
-          responseBody: {
-            stream: true,
-            note: "transcript_reconstruction_deferred",
-          },
+          responseBody: extractor.getAssembledTranscript(),
           stream: true,
         });
       } catch (err) {
@@ -591,19 +577,12 @@ async function runStreamingFailover(
               ? bufferReleasedAtMs - startedAtMs
               : null,
         });
-        // STREAMING DEFERRAL (Plan 4B Task 3.5b): stream transcript
-        // assembly requires buffer reconstruction work in
-        // streamUsageExtractor. Capturing request body + placeholder
-        // here; real transcript wired in Task 3.5b.
         await emitBodyCapture({
           app,
           req,
           requestId,
           requestBodyJson: upstreamBodyBuf.toString("utf8"),
-          responseBody: {
-            stream: true,
-            note: "transcript_reconstruction_deferred",
-          },
+          responseBody: extractor.getAssembledTranscript(),
           stream: true,
           attemptErrors: errMsg,
         });

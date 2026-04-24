@@ -31,7 +31,7 @@ type FormValues = z.infer<typeof schema>;
 
 export default function ProfilePage() {
   const { data: session, refetch } = trpc.me.session.useQuery();
-  const { data: latest } = trpc.reports.getOwnLatest.useQuery();
+  const { data: disclosure } = trpc.me.captureDisclosure.useQuery();
   const update = trpc.me.updateProfile.useMutation({
     onSuccess: () => {
       toast.success("Profile updated");
@@ -64,7 +64,7 @@ export default function ProfilePage() {
     );
   }
 
-  const hasEvaluationEnabled = !!latest;
+  const hasEvaluationEnabled = (disclosure ?? []).length > 0;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
