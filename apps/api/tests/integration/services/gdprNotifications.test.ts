@@ -101,7 +101,9 @@ describe("gdprNotifications", () => {
     });
 
     expect(mockLogger.info).toHaveBeenCalledOnce();
-    const [logObject, logMessage] = mockLogger.info.mock.calls[0];
+    const call = mockLogger.info.mock.calls[0];
+    expect(call).toBeDefined();
+    const [logObject, logMessage] = call!;
 
     expect(logMessage).toBe("gdpr delete request submitted");
     expect(logObject).toEqual(
@@ -152,7 +154,9 @@ describe("gdprNotifications", () => {
     });
 
     // Verify hasReason is false when reason is null
-    const [logObject] = mockLogger.info.mock.calls[0];
+    const nullReasonCall = mockLogger.info.mock.calls[0];
+    expect(nullReasonCall).toBeDefined();
+    const [logObject] = nullReasonCall!;
     expect((logObject as Record<string, unknown>).hasReason).toBe(false);
 
     // Verify audit log metadata contains null reason
