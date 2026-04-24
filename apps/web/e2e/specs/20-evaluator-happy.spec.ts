@@ -203,5 +203,9 @@ test("evaluator happy path: admin → content capture → account → api_key �
   // the evaluatorProcedure gate (feature flag check) passes for super_admin.
   await page.goto(`/dashboard/organizations/${orgId}/evaluator/status`);
   // "Cron Health" is the card title rendered by StatusCard
-  await expect(page.getByText(/cron health/i)).toBeVisible({ timeout: 10_000 });
+  // Use exact match to disambiguate from the page subtitle
+  // ("Current cron health and coverage.") which also includes the phrase.
+  await expect(page.getByText("Cron Health", { exact: true })).toBeVisible({
+    timeout: 10_000,
+  });
 });
