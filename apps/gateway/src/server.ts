@@ -111,83 +111,99 @@ export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
   // BullMQ wiring: skip when a test injected its own Redis (see BuildOpts docs).
   if (opts.redis === undefined) {
     await wireUsageLogPipeline(app, opts.env);
-    await wireBodyCapturePipeline(app, opts.env);
-    await wireEvaluatorPipeline(app, opts.env);
+
+    // Evaluator subsystem (body capture, evaluator queue/worker, crons) is
+    // gated on ENABLE_EVALUATOR — defense-in-depth (design §8.1).
+    // API side gates via evaluatorProcedure; this is the server-startup gate.
+    if (opts.env.ENABLE_EVALUATOR) {
+      await wireBodyCapturePipeline(app, opts.env);
+      await wireEvaluatorPipeline(app, opts.env);
+    } else {
+      app.log.info(
+        "ENABLE_EVALUATOR=false — body capture, evaluator pipeline, and evaluator crons are disabled",
+      );
+    }
   } else {
     app.log.debug(
       "buildServer: opts.redis injected — skipping BullMQ queue/worker/audit (test mode)",
     );
   }
 
-  // Body retention purge cron — Plan 4B Task 3.6.
-  // Runs every 4h, purges request_bodies where retention_until <= now().
-  // Skip when a test injected its own Redis (same gate as BullMQ wiring above —
-  // tests that need cron coverage call purgeExpiredBodies() directly).
+  // Crons: skip when a test injected its own Redis (same gate as BullMQ wiring
+  // above — tests that need cron coverage call cron functions directly).
   if (opts.redis === undefined) {
-    let purgeCronHandle: BodyPurgeCronHandle | undefined;
-    if (app.db) {
-      purgeCronHandle = startBodyPurgeCron({
-        db: app.db,
-        metrics: {
-          deletedTotal: app.gwMetrics.bodyPurgeDeletedTotal,
-          durationSeconds: app.gwMetrics.bodyPurgeDurationSeconds,
-          lagHours: app.gwMetrics.bodyPurgeLagHours,
-        },
-        logger: app.log,
-      });
-      app.addHook("onClose", async () => {
-        purgeCronHandle?.stop();
-      });
-    }
+    // Body retention purge cron — Plan 4B Task 3.6.
+    // Runs every 4h, purges request_bodies where retention_until <= now().
+    // Gated on ENABLE_EVALUATOR: no captured bodies exist when evaluator is off,
+    // so gating simplifies reasoning and avoids a no-op cron running in production.
+    if (opts.env.ENABLE_EVALUATOR) {
+      let purgeCronHandle: BodyPurgeCronHandle | undefined;
+      if (app.db) {
+        purgeCronHandle = startBodyPurgeCron({
+          db: app.db,
+          metrics: {
+            deletedTotal: app.gwMetrics.bodyPurgeDeletedTotal,
+            durationSeconds: app.gwMetrics.bodyPurgeDurationSeconds,
+            lagHours: app.gwMetrics.bodyPurgeLagHours,
+          },
+          logger: app.log,
+        });
+        app.addHook("onClose", async () => {
+          purgeCronHandle?.stop();
+        });
+      }
 
-    // Daily evaluator cron — Plan 4B Part 4, Task 4.3.
-    // Runs every 24h at 00:05 UTC, enqueues daily evaluator jobs for all users
-    // in orgs with contentCaptureEnabled=true.
-    let evaluatorCronHandle: EvaluatorCronHandle | undefined;
-    if (app.db && app.evaluatorQueue) {
-      evaluatorCronHandle = startEvaluatorCron({
-        db: app.db,
-        queue: app.evaluatorQueue,
-        logger: app.log,
-      });
-      app.addHook("onClose", async () => {
-        evaluatorCronHandle?.stop();
-      });
-    }
+      // Daily evaluator cron — Plan 4B Part 4, Task 4.3.
+      // Runs every 24h at 00:05 UTC, enqueues daily evaluator jobs for all users
+      // in orgs with contentCaptureEnabled=true.
+      let evaluatorCronHandle: EvaluatorCronHandle | undefined;
+      if (app.db && app.evaluatorQueue) {
+        evaluatorCronHandle = startEvaluatorCron({
+          db: app.db,
+          queue: app.evaluatorQueue,
+          logger: app.log,
+        });
+        app.addHook("onClose", async () => {
+          evaluatorCronHandle?.stop();
+        });
+      }
 
-    // GDPR delete cron — Plan 4B Part 10, Task 10.1.
-    // Runs every 5 min, executes approved GDPR delete requests and writes audit logs.
-    let gdprDeleteCronHandle: GdprDeleteCronHandle | undefined;
-    if (app.db) {
-      gdprDeleteCronHandle = startGdprDeleteCron({
-        db: app.db,
-        metrics: {
-          executedTotal: app.gwMetrics.gwGdprDeleteExecutedTotal,
-          bodiesDeletedTotal: app.gwMetrics.gwGdprBodiesDeletedTotal,
-          reportsDeletedTotal: app.gwMetrics.gwGdprReportsDeletedTotal,
-          failuresTotal: app.gwMetrics.gwGdprFailuresTotal,
-        },
-        logger: app.log,
-      });
-      app.addHook("onClose", async () => {
-        gdprDeleteCronHandle?.stop();
-      });
-    }
+      // GDPR delete cron — Plan 4B Part 10, Task 10.1.
+      // Runs every 5 min, executes approved GDPR delete requests and writes audit logs.
+      // Gated on ENABLE_EVALUATOR: no GDPR requests arrive when evaluator is off.
+      let gdprDeleteCronHandle: GdprDeleteCronHandle | undefined;
+      if (app.db) {
+        gdprDeleteCronHandle = startGdprDeleteCron({
+          db: app.db,
+          metrics: {
+            executedTotal: app.gwMetrics.gwGdprDeleteExecutedTotal,
+            bodiesDeletedTotal: app.gwMetrics.gwGdprBodiesDeletedTotal,
+            reportsDeletedTotal: app.gwMetrics.gwGdprReportsDeletedTotal,
+            failuresTotal: app.gwMetrics.gwGdprFailuresTotal,
+          },
+          logger: app.log,
+        });
+        app.addHook("onClose", async () => {
+          gdprDeleteCronHandle?.stop();
+        });
+      }
 
-    // GDPR expire cron — Plan 4B Part 10, Task 10.3.
-    // Runs every 24h, auto-rejects pending GDPR requests older than 30 days.
-    let gdprExpireCronHandle: GdprExpireCronHandle | undefined;
-    if (app.db) {
-      gdprExpireCronHandle = startGdprExpireCron({
-        db: app.db,
-        metrics: {
-          autoRejectedTotal: app.gwMetrics.gwGdprAutoRejectedTotal,
-        },
-        logger: app.log,
-      });
-      app.addHook("onClose", async () => {
-        gdprExpireCronHandle?.stop();
-      });
+      // GDPR expire cron — Plan 4B Part 10, Task 10.3.
+      // Runs every 24h, auto-rejects pending GDPR requests older than 30 days.
+      // Gated on ENABLE_EVALUATOR: no pending requests exist when evaluator is off.
+      let gdprExpireCronHandle: GdprExpireCronHandle | undefined;
+      if (app.db) {
+        gdprExpireCronHandle = startGdprExpireCron({
+          db: app.db,
+          metrics: {
+            autoRejectedTotal: app.gwMetrics.gwGdprAutoRejectedTotal,
+          },
+          logger: app.log,
+        });
+        app.addHook("onClose", async () => {
+          gdprExpireCronHandle?.stop();
+        });
+      }
     }
   }
 
