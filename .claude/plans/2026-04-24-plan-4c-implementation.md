@@ -13,6 +13,60 @@
 
 ---
 
+## Codebase conventions (MUST read before implementing any task)
+
+This plan was initially drafted against generic Node.js assumptions; the codebase actually follows these conventions. **When a task body's code samples conflict with these conventions, follow the conventions.**
+
+### Database (Drizzle ORM)
+
+- **Schema source:** `packages/db/src/schema/*.ts` (TypeScript). Export barrel: `packages/db/src/schema/index.ts`.
+- **Migrations:** auto-generated via `pnpm --filter @aide/db db:generate` → files land in `packages/db/drizzle/NNNN_*.sql` (never hand-written up migrations).
+- **Applying migrations:** `pnpm --filter @aide/db db:migrate` (requires `DATABASE_URL`).
+- **Down migrations:** not native. Hand-write `packages/db/drizzle/NNNN_down.sql` (with `_down` suffix so drizzle runner ignores it); apply manually with `psql -f`. Also requires editing `packages/db/drizzle/meta/_journal.json` to drop the entry.
+- **Enum-like columns:** prefer `text` + Zod runtime validation over `pgEnum` (see `evaluationReports.triggeredBy`, `evaluationReports.periodType`).
+
+### RBAC (code-based, not DB-backed)
+
+- **No `rbac_actions` table.** Permissions are a TypeScript discriminated union in `packages/auth/src/rbac/actions.ts`.
+- Add a new action by extending the `Action` union and mapping it to roles in `packages/auth/src/rbac/check.ts`.
+- Call via `can(ctx.perm, { type: "…", orgId })` in tRPC procedures.
+
+### Existing tRPC structure
+
+- App router at `apps/api/src/trpc/router.ts` already registers `evaluator: evaluatorRouter`.
+- Evaluator router at `apps/api/src/trpc/routers/evaluator.ts` — **extend this file** with new procedures (e.g. `costSummary`). Do NOT create a new `evaluatorCost.ts` sibling.
+- Procedure builder: `evaluatorProcedure` from `./_evaluatorGate.js` (wraps org-level feature-flag gating).
+
+### Test helpers (existing)
+
+- **DB:** `setupTestDb()` from `apps/api/tests/factories/db.ts` — returns `{ db, pool, container, url, stop() }`. `db` is a Drizzle instance; `pool` is the raw pg Pool. Applies all migrations up to HEAD. Start via Testcontainers, so slow (~5-10s) — use `beforeAll`/`afterAll`, not per-test.
+- **Org/Dept/Team:** `makeOrg(db, overrides)`, `makeDept(db, orgId, overrides)`, `makeTeam(db, orgId, overrides)` in `apps/api/tests/factories/org.ts`. Overrides use **camelCase field names** (`llmEvalEnabled`, `llmMonthlyBudgetUsd`), not snake_case.
+- **User:** `makeUser(db, opts)` in `apps/api/tests/factories/user.ts`.
+- **tRPC caller:** `callerFor(...)` and `anonCaller(...)` in `apps/api/tests/factories/caller.ts`.
+- **Raw SQL in tests:** use `testDb.db.execute(sql\`…\`)` (Drizzle) or `testDb.pool.query('…')` (pg Pool). Parameterize via Drizzle's `${value}` template interpolation.
+- `makeMember`, `seedMember`, `seedRequestBody` **do not exist** — add them in a factory file or inline SQL via `testDb.db.execute`.
+
+### Migration commands (reference)
+
+Wherever this plan says `pnpm --filter @aide/api migrate:up` or `migrate:down`, replace with:
+- **Up:** `pnpm --filter @aide/db db:migrate`
+- **Down:** `psql $DATABASE_URL -f packages/db/drizzle/NNNN_down.sql` (emergency only)
+- **Generate:** `pnpm --filter @aide/db db:generate`
+- **Integration test running:** `pnpm --filter @aide/api test:integration` (Testcontainer-backed), **not** `test`.
+
+### Column naming (Drizzle → SQL)
+
+- Drizzle column names use camelCase in TypeScript, snake_case in SQL (e.g. `llmFacetEnabled` field → `llm_facet_enabled` column).
+- Raw SQL in tests must use snake_case. TypeScript imports / Drizzle queries use camelCase.
+
+### Worktree
+
+- Worktree: `/Users/hanfourhuang/ai-dev-eval/.worktrees/plan-4c-phase-1`
+- Branch: `feat/plan-4c-phase-1`
+- Baseline: 639 tests passing.
+
+---
+
 ## Plan structure
 
 **Phase 1 (Theme A — Operations Hardening):** Parts 1-12
@@ -24,112 +78,237 @@ Commits use conventional format: `feat:` / `fix:` / `docs:` / `test:` / `chore:`
 
 ## Part 1 — Schema migration 0004 (cost budget infrastructure)
 
-### Task 1.1: Migration 0004 up
+> **Codebase conventions (applies to all migration parts):** this project uses Drizzle ORM. Schema lives at `packages/db/src/schema/*.ts`. SQL migrations are **generated** via `pnpm --filter @aide/db db:generate`, producing numbered files in `packages/db/drizzle/NNNN_*.sql`. Apply with `pnpm --filter @aide/db db:migrate`. Drizzle has no built-in down migrations; we hand-write `*.down.sql` files alongside the generated up migrations for emergency rollback (not auto-applied by tooling). Test DB via `setupTestDb()` from `apps/api/tests/factories/db.ts` (Testcontainers).
+
+### Task 1.1: Add schema columns + new llmUsageEvents table (generate migration 0004)
 
 **Files:**
-- Create: `db/migrations/0004_cost_infra.sql`
+- Modify: `packages/db/src/schema/org.ts`
+- Create: `packages/db/src/schema/llmUsageEvents.ts`
+- Modify: `packages/db/src/schema/index.ts`
+- Generated: `packages/db/drizzle/0004_<auto>.sql`
 
-- [ ] **Step 1: Write the migration SQL**
+- [ ] **Step 1: Modify `packages/db/src/schema/org.ts`**
 
-```sql
--- db/migrations/0004_cost_infra.sql
-BEGIN;
+Append to the `organizations` pgTable definition (inside the column object, before the closing brace):
 
-ALTER TABLE organizations
-  ADD COLUMN llm_facet_enabled           BOOLEAN       NOT NULL DEFAULT false,
-  ADD COLUMN llm_facet_model             VARCHAR(64)   NULL,
-  ADD COLUMN llm_monthly_budget_usd      NUMERIC(10,2) NULL,
-  ADD COLUMN llm_budget_overage_behavior VARCHAR(16)   NOT NULL DEFAULT 'degrade'
-    CHECK (llm_budget_overage_behavior IN ('degrade','halt')),
-  ADD COLUMN llm_halted_until_month_end  BOOLEAN       NOT NULL DEFAULT false;
-
-CREATE TABLE llm_usage_events (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  org_id        UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  event_type    VARCHAR(32) NOT NULL
-    CHECK (event_type IN ('facet_extraction','deep_analysis')),
-  model         VARCHAR(64) NOT NULL,
-  tokens_input  INTEGER NOT NULL,
-  tokens_output INTEGER NOT NULL,
-  cost_usd      NUMERIC(10,6) NOT NULL,
-  ref_type      VARCHAR(32) NULL
-    CHECK (ref_type IS NULL OR ref_type IN ('request_body_facet','evaluation_report')),
-  ref_id        UUID NULL,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX idx_llm_usage_org_month ON llm_usage_events (org_id, created_at);
-
-INSERT INTO rbac_actions (action, description) VALUES
-  ('evaluator:cost:view', 'View evaluator LLM cost dashboard');
-
-INSERT INTO rbac_role_actions (role, action)
-  SELECT r.role, 'evaluator:cost:view'
-  FROM (VALUES ('super_admin'), ('org_admin')) AS r(role);
-
-COMMIT;
+```typescript
+  // Plan 4C — cost budget + facet
+  llmFacetEnabled: boolean("llm_facet_enabled").notNull().default(false),
+  llmFacetModel: text("llm_facet_model"),
+  llmMonthlyBudgetUsd: decimal("llm_monthly_budget_usd", { precision: 10, scale: 2 }),
+  llmBudgetOverageBehavior: text("llm_budget_overage_behavior").notNull().default("degrade"),
+  llmHaltedUntilMonthEnd: boolean("llm_halted_until_month_end").notNull().default(false),
 ```
 
-- [ ] **Step 2: Apply migration locally**
+Add `decimal` to the imports at the top of the file:
+```typescript
+import { pgTable, text, timestamp, uuid, unique, boolean, integer, decimal, type AnyPgColumn } from "drizzle-orm/pg-core";
+```
 
-Run: `pnpm --filter @aide/api migrate:up`
-Expected: `Applied 0004_cost_infra.sql`
+Note: `llm_budget_overage_behavior` uses `text` + runtime Zod validation (degrade/halt) instead of `pgEnum` to avoid a migration when future values are added.
 
-- [ ] **Step 3: Verify schema**
+- [ ] **Step 2: Create `packages/db/src/schema/llmUsageEvents.ts`**
 
-Run: `psql $DATABASE_URL -c "\d organizations" | grep llm_facet_enabled`
-Expected: `llm_facet_enabled | boolean | not null default false`
+```typescript
+// packages/db/src/schema/llmUsageEvents.ts
+import { pgTable, uuid, text, integer, decimal, timestamp, index } from "drizzle-orm/pg-core";
+import { organizations } from "./org.js";
 
-Run: `psql $DATABASE_URL -c "\d llm_usage_events"`
-Expected: 9 columns listed, PK on id, index on (org_id, created_at)
+export const llmUsageEvents = pgTable("llm_usage_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  eventType: text("event_type").notNull(),   // 'facet_extraction' | 'deep_analysis'
+  model: text("model").notNull(),
+  tokensInput: integer("tokens_input").notNull(),
+  tokensOutput: integer("tokens_output").notNull(),
+  costUsd: decimal("cost_usd", { precision: 10, scale: 6 }).notNull(),
+  refType: text("ref_type"),                  // 'request_body_facet' | 'evaluation_report' | null
+  refId: uuid("ref_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgMonthIdx: index("llm_usage_org_month_idx").on(t.orgId, t.createdAt),
+}));
+```
 
-- [ ] **Step 4: Commit**
+Note: enum-like columns (`eventType`, `refType`, `llmBudgetOverageBehavior`) use plain `text` with Zod runtime validation at the application layer. Matches project convention (see `evaluationReports.triggeredBy`, `evaluationReports.periodType`).
+
+- [ ] **Step 3: Export from `packages/db/src/schema/index.ts`**
+
+Append:
+
+```typescript
+export * from "./llmUsageEvents.js";
+```
+
+- [ ] **Step 4: Generate migration**
+
+Run from repo root:
 
 ```bash
-git add db/migrations/0004_cost_infra.sql
+pnpm --filter @aide/db db:generate
+```
+
+Expected: a new file `packages/db/drizzle/0004_<random_name>.sql` is created. Inspect it:
+
+```bash
+cat packages/db/drizzle/0004_*.sql
+```
+
+Expected contents should include:
+- `ALTER TABLE "organizations" ADD COLUMN "llm_facet_enabled" …` (× 5 new columns)
+- `CREATE TABLE "llm_usage_events" ( … )` with all columns
+- `CREATE INDEX "llm_usage_org_month_idx" ON …`
+
+If the generated SQL looks wrong, edit the schema files and re-generate (delete the generated 0004 file first).
+
+- [ ] **Step 5: Apply migration to a throw-away local DB**
+
+Start a local Postgres (e.g. `docker run --rm -d -p 5432:5432 -e POSTGRES_PASSWORD=aide_dev -e POSTGRES_USER=aide -e POSTGRES_DB=aide_test postgres:16-alpine`).
+
+```bash
+DATABASE_URL=postgresql://aide:aide_dev@localhost:5432/aide_test pnpm --filter @aide/db db:migrate
+```
+
+Expected: `Migrations complete.`
+
+- [ ] **Step 6: Verify schema via psql**
+
+```bash
+psql $DATABASE_URL -c "\d organizations" | grep llm_facet_enabled
+```
+Expected: `llm_facet_enabled | boolean | not null default false`
+
+```bash
+psql $DATABASE_URL -c "\d llm_usage_events"
+```
+Expected: 10 columns, PK on `id`, index `llm_usage_org_month_idx`.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add packages/db/src/schema/org.ts packages/db/src/schema/llmUsageEvents.ts packages/db/src/schema/index.ts packages/db/drizzle/0004_*.sql packages/db/drizzle/meta/
 git commit -m "feat(db): migration 0004 cost budget infra (organizations cols + llm_usage_events)"
 ```
 
-### Task 1.2: Migration 0004 down
+### Task 1.2: Add RBAC action type `evaluator.view_cost`
 
 **Files:**
-- Create: `db/migrations/0004_cost_infra.down.sql`
+- Modify: `packages/auth/src/rbac/actions.ts`
+- Modify: `packages/auth/src/rbac/check.ts` (or wherever role-to-action mapping lives)
 
-- [ ] **Step 1: Write the down migration**
+- [ ] **Step 1: Inspect existing pattern**
+
+Run:
+
+```bash
+grep -n "evaluator.read_status" packages/auth/src/rbac/*.ts
+```
+
+This shows how `evaluator.read_status` is defined and mapped to roles. Follow the same pattern.
+
+- [ ] **Step 2: Add new action type to `actions.ts`**
+
+In the `Action` union type, add (alongside `evaluator.read_status`):
+
+```typescript
+  | { type: "evaluator.view_cost"; orgId: string }
+```
+
+- [ ] **Step 3: Map to super_admin + org_admin in `check.ts`**
+
+Locate where `evaluator.read_status` is granted. Add `evaluator.view_cost` with the same role mapping (super_admin and org_admin can view cost for any org in their scope; org_admin limited to their own org).
+
+- [ ] **Step 4: Write unit test**
+
+Create or append to `packages/auth/tests/unit/rbac/evaluator-actions.test.ts`:
+
+```typescript
+import { describe, it, expect } from "vitest";
+import { can } from "../../../src/rbac/check";
+
+describe("RBAC: evaluator.view_cost", () => {
+  const orgId = "00000000-0000-0000-0000-000000000001";
+
+  it("org_admin of the same org can view cost", () => {
+    const perm = { roles: [{ role: "org_admin", scopeType: "organization", scopeId: orgId }] };
+    expect(can(perm as any, { type: "evaluator.view_cost", orgId })).toBe(true);
+  });
+
+  it("org_admin of a different org cannot view cost", () => {
+    const perm = { roles: [{ role: "org_admin", scopeType: "organization", scopeId: "other-org" }] };
+    expect(can(perm as any, { type: "evaluator.view_cost", orgId })).toBe(false);
+  });
+
+  it("super_admin can view any org's cost", () => {
+    const perm = { roles: [{ role: "super_admin", scopeType: "global", scopeId: null }] };
+    expect(can(perm as any, { type: "evaluator.view_cost", orgId })).toBe(true);
+  });
+
+  it("member cannot view cost", () => {
+    const perm = { roles: [{ role: "member", scopeType: "organization", scopeId: orgId }] };
+    expect(can(perm as any, { type: "evaluator.view_cost", orgId })).toBe(false);
+  });
+});
+```
+
+- [ ] **Step 5: Run tests**
+
+Run: `pnpm --filter @aide/auth test rbac/evaluator-actions`
+Expected: 4 tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add packages/auth/src/rbac/actions.ts packages/auth/src/rbac/check.ts packages/auth/tests/unit/rbac/evaluator-actions.test.ts
+git commit -m "feat(auth): add evaluator.view_cost RBAC action"
+```
+
+### Task 1.3: Hand-write down migration for emergency rollback
+
+**Files:**
+- Create: `packages/db/drizzle/0004_down.sql` (naming suffix: `_down.sql` to avoid drizzle auto-picking it up)
+
+- [ ] **Step 1: Write down SQL**
 
 ```sql
--- db/migrations/0004_cost_infra.down.sql
+-- packages/db/drizzle/0004_down.sql
+-- EMERGENCY ROLLBACK ONLY. Not auto-applied by drizzle migrator.
+-- Run manually with: psql $DATABASE_URL -f packages/db/drizzle/0004_down.sql
+
 BEGIN;
 
-DELETE FROM rbac_role_actions WHERE action = 'evaluator:cost:view';
-DELETE FROM rbac_actions WHERE action = 'evaluator:cost:view';
+DROP INDEX IF EXISTS "llm_usage_org_month_idx";
+DROP TABLE IF EXISTS "llm_usage_events";
 
-DROP INDEX IF EXISTS idx_llm_usage_org_month;
-DROP TABLE IF EXISTS llm_usage_events;
+ALTER TABLE "organizations"
+  DROP COLUMN IF EXISTS "llm_halted_until_month_end",
+  DROP COLUMN IF EXISTS "llm_budget_overage_behavior",
+  DROP COLUMN IF EXISTS "llm_monthly_budget_usd",
+  DROP COLUMN IF EXISTS "llm_facet_model",
+  DROP COLUMN IF EXISTS "llm_facet_enabled";
 
-ALTER TABLE organizations
-  DROP COLUMN IF EXISTS llm_halted_until_month_end,
-  DROP COLUMN IF EXISTS llm_budget_overage_behavior,
-  DROP COLUMN IF EXISTS llm_monthly_budget_usd,
-  DROP COLUMN IF EXISTS llm_facet_model,
-  DROP COLUMN IF EXISTS llm_facet_enabled;
+-- NOTE: drizzle's migration journal in drizzle/meta/ must be manually edited
+-- to remove the 0004 entry after running this. See packages/db/drizzle/meta/_journal.json.
 
 COMMIT;
 ```
 
-- [ ] **Step 2: Verify up-down-up cycle**
+- [ ] **Step 2: Verify file is ignored by drizzle runner**
 
-Run: `pnpm --filter @aide/api migrate:up && pnpm --filter @aide/api migrate:down && pnpm --filter @aide/api migrate:up`
-Expected: no errors; final `\d organizations` shows new columns
+Run: `pnpm --filter @aide/db db:migrate` (on a DB that's already at 0004)
+Expected: `No migrations to apply` (drizzle only picks up files matching `NNNN_*.sql`, not `NNNN_down.sql`).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add db/migrations/0004_cost_infra.down.sql
-git commit -m "feat(db): migration 0004 down (reverses cost infra)"
+git add packages/db/drizzle/0004_down.sql
+git commit -m "chore(db): hand-written down SQL for migration 0004 (emergency only)"
 ```
 
-### Task 1.3: Migration integration test
+### Task 1.4: Migration 0004 integration test
 
 **Files:**
 - Create: `apps/api/tests/integration/migrations/0004.test.ts`
@@ -138,66 +317,96 @@ git commit -m "feat(db): migration 0004 down (reverses cost infra)"
 
 ```typescript
 // apps/api/tests/integration/migrations/0004.test.ts
-import { describe, it, expect, beforeAll } from 'vitest';
-import { createTestDb, applyMigrationsUpTo } from '../../helpers/db';
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { setupTestDb, type TestDb } from "../../factories/db";
+import { sql } from "drizzle-orm";
+import { makeOrg } from "../../factories/org";
 
-describe('migration 0004 cost infra', () => {
-  let db: Awaited<ReturnType<typeof createTestDb>>;
+describe("migration 0004 cost infra", () => {
+  let testDb: TestDb;
 
   beforeAll(async () => {
-    db = await createTestDb();
-    await applyMigrationsUpTo(db, '0004');
+    testDb = await setupTestDb();  // applies all migrations up to HEAD, including 0004
   });
 
-  it('adds cost columns to organizations', async () => {
-    const row = await db.one(`
-      SELECT column_name, is_nullable, column_default
-      FROM information_schema.columns
-      WHERE table_name='organizations' AND column_name='llm_facet_enabled'
-    `);
-    expect(row.is_nullable).toBe('NO');
-    expect(row.column_default).toBe('false');
+  afterAll(async () => {
+    await testDb.stop();
   });
 
-  it('creates llm_usage_events table', async () => {
-    const cols = await db.many(`
-      SELECT column_name FROM information_schema.columns
-      WHERE table_name='llm_usage_events'
-      ORDER BY ordinal_position
-    `);
-    expect(cols.map(c => c.column_name)).toEqual([
-      'id','org_id','event_type','model','tokens_input','tokens_output',
-      'cost_usd','ref_type','ref_id','created_at',
+  it("adds cost columns to organizations", async () => {
+    const rows = await testDb.db.execute<{ column_name: string; is_nullable: string; column_default: string | null }>(
+      sql`
+        SELECT column_name, is_nullable, column_default
+        FROM information_schema.columns
+        WHERE table_name='organizations'
+          AND column_name IN (
+            'llm_facet_enabled', 'llm_facet_model', 'llm_monthly_budget_usd',
+            'llm_budget_overage_behavior', 'llm_halted_until_month_end'
+          )
+        ORDER BY column_name
+      `
+    );
+    expect(rows.rows.length).toBe(5);
+    const byName = Object.fromEntries(rows.rows.map(r => [r.column_name, r]));
+    expect(byName.llm_facet_enabled.is_nullable).toBe("NO");
+    expect(byName.llm_facet_enabled.column_default).toBe("false");
+    expect(byName.llm_monthly_budget_usd.is_nullable).toBe("YES");
+    expect(byName.llm_budget_overage_behavior.column_default).toContain("degrade");
+  });
+
+  it("creates llm_usage_events table with expected columns", async () => {
+    const rows = await testDb.db.execute<{ column_name: string }>(
+      sql`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name='llm_usage_events'
+        ORDER BY ordinal_position
+      `
+    );
+    expect(rows.rows.map(r => r.column_name)).toEqual([
+      "id","org_id","event_type","model","tokens_input","tokens_output",
+      "cost_usd","ref_type","ref_id","created_at",
     ]);
   });
 
-  it('enforces event_type CHECK', async () => {
-    const orgId = await db.one(`INSERT INTO organizations (name) VALUES ('t') RETURNING id`);
-    await expect(db.none(`
+  it("can insert and query llm_usage_events rows", async () => {
+    const org = await makeOrg(testDb.db);
+    await testDb.db.execute(sql`
       INSERT INTO llm_usage_events (org_id, event_type, model, tokens_input, tokens_output, cost_usd)
-      VALUES ($1, 'invalid', 'm', 1, 1, 0.01)
-    `, [orgId.id])).rejects.toThrow(/check constraint/i);
+      VALUES (${org.id}, 'facet_extraction', 'claude-haiku-4-5', 100, 50, 0.0002)
+    `);
+    const rows = await testDb.db.execute<{ count: string }>(
+      sql`SELECT COUNT(*) as count FROM llm_usage_events WHERE org_id = ${org.id}`
+    );
+    expect(rows.rows[0].count).toBe("1");
   });
 
-  it('seeds evaluator:cost:view action for admin roles', async () => {
-    const rows = await db.many(`
-      SELECT role FROM rbac_role_actions WHERE action='evaluator:cost:view' ORDER BY role
+  it("cascades delete from organizations to llm_usage_events", async () => {
+    const org = await makeOrg(testDb.db);
+    await testDb.db.execute(sql`
+      INSERT INTO llm_usage_events (org_id, event_type, model, tokens_input, tokens_output, cost_usd)
+      VALUES (${org.id}, 'deep_analysis', 'claude-haiku-4-5', 1, 1, 0.001)
     `);
-    expect(rows.map(r => r.role)).toEqual(['org_admin','super_admin']);
+    await testDb.db.execute(sql`DELETE FROM organizations WHERE id = ${org.id}`);
+    const rows = await testDb.db.execute<{ count: string }>(
+      sql`SELECT COUNT(*) as count FROM llm_usage_events WHERE org_id = ${org.id}`
+    );
+    expect(rows.rows[0].count).toBe("0");
   });
 });
 ```
 
-- [ ] **Step 2: Run test to verify it passes**
+- [ ] **Step 2: Run test**
 
-Run: `pnpm --filter @aide/api test integration/migrations/0004`
-Expected: 4 tests pass
+Run: `pnpm --filter @aide/api test:integration integration/migrations/0004`
+Expected: 4 tests pass.
+
+Note: this project uses `test:integration` script (not `test`) to run Testcontainer-backed integration tests — see `apps/api/package.json`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add apps/api/tests/integration/migrations/0004.test.ts
-git commit -m "test(db): migration 0004 integration test"
+git commit -m "test(db): migration 0004 integration test (columns, table, cascade)"
 ```
 
 ---
@@ -1295,89 +1504,132 @@ git add apps/api/src/services/evaluatorCost.ts apps/api/tests/integration/servic
 git commit -m "feat(api): getCostSummary service (monthly aggregation + projection)"
 ```
 
-### Task 4.2: tRPC router evaluatorCost
+### Task 4.2: Extend evaluatorRouter with costSummary procedure
+
+**DO NOT create `evaluatorCost.ts`.** Extend the existing `evaluatorRouter` at `apps/api/src/trpc/routers/evaluator.ts` with a new `costSummary` procedure, following the pattern of the existing `status` procedure.
 
 **Files:**
-- Create: `apps/api/src/trpc/routers/evaluatorCost.ts`
-- Modify: `apps/api/src/trpc/router.ts` (register new router)
-- Test: `apps/api/tests/integration/trpc/evaluatorCost.test.ts`
+- Modify: `apps/api/src/trpc/routers/evaluator.ts`
+- Test: `apps/api/tests/integration/trpc/evaluatorCostSummary.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Inspect existing `status` procedure in evaluator.ts for pattern**
+
+Run:
+```bash
+cat apps/api/src/trpc/routers/evaluator.ts | head -80
+```
+
+Note the patterns:
+- Uses `evaluatorProcedure` from `./_evaluatorGate.js` (applies org-level feature-flag gating)
+- Checks permissions via `can(ctx.perm, { type: "evaluator.read_status", orgId })`
+- Throws `TRPCError({ code: "FORBIDDEN" })` when permission denied
+- Takes input via Zod `.input(z.object({ orgId: z.string().uuid() }))`
+
+- [ ] **Step 2: Write the failing integration test**
 
 ```typescript
-// apps/api/tests/integration/trpc/evaluatorCost.test.ts
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createAdminCaller, createMemberCaller } from '../../factories/caller';
-import { getTestDb, seedOrg } from '../../helpers/db';
+// apps/api/tests/integration/trpc/evaluatorCostSummary.test.ts
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { setupTestDb, type TestDb } from "../../factories/db";
+import { makeOrg } from "../../factories/org";
+import { makeUser } from "../../factories/user";
+import { callerFor } from "../../factories/caller";
+import { sql } from "drizzle-orm";
 
-describe('admin.evaluator.cost.getSummary', () => {
-  const db = getTestDb();
-  let orgId: string;
+describe("admin.evaluator.costSummary (integration)", () => {
+  let testDb: TestDb;
+
+  beforeAll(async () => { testDb = await setupTestDb(); });
+  afterAll(async () => { await testDb.stop(); });
 
   beforeEach(async () => {
-    await db.query('TRUNCATE organizations, llm_usage_events CASCADE');
-    orgId = await seedOrg(db, { llm_monthly_budget_usd: 50 });
+    await testDb.db.execute(sql`TRUNCATE organizations, llm_usage_events, role_assignments, users CASCADE`);
   });
 
-  it('returns summary for admin with evaluator:cost:view', async () => {
-    const caller = await createAdminCaller({ orgId });
-    const summary = await caller.admin.evaluator.cost.getSummary();
+  it("returns summary for org_admin", async () => {
+    const org = await makeOrg(testDb.db, { llmMonthlyBudgetUsd: "50.00" } as any);
+    const user = await makeUser(testDb.db);
+    await testDb.db.execute(sql`
+      INSERT INTO role_assignments (user_id, role, scope_type, scope_id)
+      VALUES (${user.id}, 'org_admin', 'organization', ${org.id})
+    `);
+
+    const caller = await callerFor({ testDb, userId: user.id });
+    const summary = await caller.evaluator.costSummary({ orgId: org.id });
     expect(summary.budgetUsd).toBe(50);
     expect(summary.currentMonthSpendUsd).toBe(0);
   });
 
-  it('rejects non-admin callers', async () => {
-    const caller = await createMemberCaller({ orgId });
-    await expect(caller.admin.evaluator.cost.getSummary()).rejects.toThrow(/FORBIDDEN|UNAUTHORIZED/);
+  it("rejects a plain member", async () => {
+    const org = await makeOrg(testDb.db);
+    const user = await makeUser(testDb.db);
+    await testDb.db.execute(sql`
+      INSERT INTO role_assignments (user_id, role, scope_type, scope_id)
+      VALUES (${user.id}, 'member', 'organization', ${org.id})
+    `);
+
+    const caller = await callerFor({ testDb, userId: user.id });
+    await expect(caller.evaluator.costSummary({ orgId: org.id })).rejects.toThrow(/FORBIDDEN/i);
+  });
+
+  it("rejects org_admin of a different org", async () => {
+    const orgA = await makeOrg(testDb.db);
+    const orgB = await makeOrg(testDb.db);
+    const user = await makeUser(testDb.db);
+    await testDb.db.execute(sql`
+      INSERT INTO role_assignments (user_id, role, scope_type, scope_id)
+      VALUES (${user.id}, 'org_admin', 'organization', ${orgA.id})
+    `);
+    const caller = await callerFor({ testDb, userId: user.id });
+    await expect(caller.evaluator.costSummary({ orgId: orgB.id })).rejects.toThrow(/FORBIDDEN/i);
   });
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+Note: `callerFor(...)` signature may differ from what's shown — check `apps/api/tests/factories/caller.ts` for the actual API. Adapt the test to the real shape (likely passes `{ db, userId }` or similar).
 
-Run: `pnpm --filter @aide/api test integration/trpc/evaluatorCost`
-Expected: FAIL (router not registered)
+- [ ] **Step 3: Run test to verify it fails**
 
-- [ ] **Step 3: Write router implementation**
+Run: `pnpm --filter @aide/api test:integration evaluatorCostSummary`
+Expected: FAIL (procedure not defined)
+
+- [ ] **Step 4: Add `costSummary` procedure to evaluatorRouter**
+
+Modify `apps/api/src/trpc/routers/evaluator.ts`. Add the new procedure alongside `status`:
 
 ```typescript
-// apps/api/src/trpc/routers/evaluatorCost.ts
-import { router, requireAction } from '../trpc';
-import { getCostSummary } from '../../services/evaluatorCost';
+import { getCostSummary } from "../../services/evaluatorCost";
 
-export const evaluatorCostRouter = router({
-  getSummary: requireAction('evaluator:cost:view')
-    .query(async ({ ctx }) => {
-      return getCostSummary(ctx.db, ctx.orgId);
+export const evaluatorRouter = router({
+  status: evaluatorProcedure
+    /* …existing implementation… */,
+
+  costSummary: evaluatorProcedure
+    .input(z.object({ orgId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      if (!can(ctx.perm, { type: "evaluator.view_cost", orgId: input.orgId })) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+      return getCostSummary(ctx.db, input.orgId);
     }),
 });
 ```
 
-- [ ] **Step 4: Register router**
-
-Modify `apps/api/src/trpc/router.ts`:
-
-```typescript
-// Add to imports
-import { evaluatorCostRouter } from './routers/evaluatorCost';
-
-// Inside appRouter.admin.evaluator object, add:
-//   cost: evaluatorCostRouter,
-```
-
-Edit the `admin.evaluator` sub-router definition to include `cost: evaluatorCostRouter`.
+The new Action type `evaluator.view_cost` was added in Task 1.2. No router-registration change needed (evaluatorRouter is already registered in `router.ts`).
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `pnpm --filter @aide/api test integration/trpc/evaluatorCost`
-Expected: 2 tests pass
+Run: `pnpm --filter @aide/api test:integration evaluatorCostSummary`
+Expected: 3 tests pass.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add apps/api/src/trpc/routers/evaluatorCost.ts apps/api/src/trpc/router.ts apps/api/tests/integration/trpc/evaluatorCost.test.ts
-git commit -m "feat(api): admin.evaluator.cost.getSummary tRPC endpoint"
+git add apps/api/src/trpc/routers/evaluator.ts apps/api/tests/integration/trpc/evaluatorCostSummary.test.ts
+git commit -m "feat(api): evaluator.costSummary tRPC procedure (extends existing router)"
 ```
+
+Note: the `getCostSummary` service from Task 4.1 currently expects a raw pg Pool. If `ctx.db` is a Drizzle instance, adapt the service to accept Drizzle instead (or expose the Pool on ctx). The simplest adjustment is to rewrite the service queries using Drizzle's `db.execute(sql\`...\`)` — see the conventions preamble.
 
 ---
 
