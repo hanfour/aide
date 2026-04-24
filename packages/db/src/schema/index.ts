@@ -12,3 +12,4 @@ export * from "./rubrics.js";
 export * from "./requestBodies.js";
 export * from "./evaluationReports.js";
 export * from "./gdprDeleteRequests.js";
+export * from "./llmUsageEvents.js";

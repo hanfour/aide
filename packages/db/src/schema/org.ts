@@ -6,6 +6,7 @@ import {
   unique,
   boolean,
   integer,
+  decimal,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
@@ -32,6 +33,19 @@ export const organizations = pgTable("organizations", {
   captureThinking: boolean("capture_thinking").notNull().default(false),
   rubricId: uuid("rubric_id"),
   leaderboardEnabled: boolean("leaderboard_enabled").notNull().default(false),
+  // Plan 4C — cost budget + facet
+  llmFacetEnabled: boolean("llm_facet_enabled").notNull().default(false),
+  llmFacetModel: text("llm_facet_model"),
+  llmMonthlyBudgetUsd: decimal("llm_monthly_budget_usd", {
+    precision: 10,
+    scale: 2,
+  }),
+  llmBudgetOverageBehavior: text("llm_budget_overage_behavior")
+    .notNull()
+    .default("degrade"),
+  llmHaltedUntilMonthEnd: boolean("llm_halted_until_month_end")
+    .notNull()
+    .default(false),
 });
 
 export const departments = pgTable(
