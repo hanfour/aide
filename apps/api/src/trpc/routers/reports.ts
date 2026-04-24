@@ -15,8 +15,7 @@ import { evaluatorProcedure } from "./_evaluatorGate.js";
 import { notifyGdprRequested } from "../../services/gdprNotifications.js";
 
 // ─── Evaluator queue constants (duplicated from apps/gateway to avoid cross-package import) ──
-// TODO Task 6.4b: extract these to a shared @aide/queue package and wire ctx.evaluatorQueue
-// in apps/api/src/server.ts so production rerun actually enqueues jobs.
+// TODO: extract to a shared @aide/queue package to eliminate this duplication.
 const EVALUATOR_QUEUE_NAME = "evaluator";
 const EVALUATOR_QUEUE_PREFIX = "aide:gw";
 
@@ -329,10 +328,9 @@ export const reportsRouter = router({
         userIds.push(...members.map((m) => m.userId));
       }
 
-      // ctx.evaluatorQueue is undefined until Task 6.4b wires the BullMQ Queue
-      // in apps/api/src/server.ts. In test mode this no-ops gracefully.
-      const queue = (ctx as unknown as { evaluatorQueue?: EvaluatorQueue })
-        .evaluatorQueue;
+      // ctx.evaluatorQueue is undefined when ENABLE_EVALUATOR=false or no
+      // REDIS_URL is configured (e.g. test mode). Falls back gracefully.
+      const queue = ctx.evaluatorQueue;
 
       if (!queue) {
         return {
