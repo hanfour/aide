@@ -77,4 +77,5 @@ export type Action =
   | { type: "rubric.create"; orgId: string }
   | { type: "rubric.update"; orgId: string; rubricId: string }
   | { type: "rubric.delete"; orgId: string; rubricId: string }
-  | { type: "evaluator.read_status"; orgId: string };
+  | { type: "evaluator.read_status"; orgId: string }
+  | { type: "evaluator.view_cost"; orgId: string };
