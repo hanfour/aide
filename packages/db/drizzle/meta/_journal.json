@@ -22,6 +22,13 @@
       "when": 1776849226101,
       "tag": "0002_cynical_omega_red",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1745280000000,
+      "tag": "0003_seed_platform_rubrics",
+      "breakpoints": true
     }
   ]
 }
