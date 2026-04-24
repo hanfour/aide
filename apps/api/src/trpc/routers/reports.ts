@@ -12,6 +12,7 @@ import {
 import { can } from "@aide/auth";
 import { router } from "../procedures.js";
 import { evaluatorProcedure } from "./_evaluatorGate.js";
+import { notifyGdprRequested } from "../../services/gdprNotifications.js";
 
 // ─── Evaluator queue constants (duplicated from apps/gateway to avoid cross-package import) ──
 // TODO Task 6.4b: extract these to a shared @aide/queue package and wire ctx.evaluatorQueue
@@ -410,6 +411,7 @@ export const reportsRouter = router({
    * Insert a pending GDPR delete request (requires admin approval to execute).
    * scope: "bodies" deletes request bodies only; "bodies_and_reports" also
    * removes evaluation reports. Requires `report.delete_own` (always-true).
+   * Emits a structured log + audit log for observability and compliance.
    */
   deleteOwn: evaluatorProcedure
     .input(
@@ -434,6 +436,18 @@ export const reportsRouter = router({
           scope: input.scope,
         })
         .returning({ id: gdprDeleteRequests.id });
+
+      // Emit structured log + audit log for observability and compliance
+      await notifyGdprRequested({
+        db: ctx.db,
+        orgId: input.orgId,
+        userId: ctx.user.id,
+        requestedByUserId: ctx.user.id,
+        requestId: created!.id,
+        scope: input.scope,
+        reason: input.reason ?? null,
+        logger: ctx.logger,
+      });
 
       return { id: created!.id };
     }),
