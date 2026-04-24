@@ -34,6 +34,7 @@ export interface GatewayMetrics {
   gwGdprBodiesDeletedTotal: Counter<string>;
   gwGdprReportsDeletedTotal: Counter<string>;
   gwGdprFailuresTotal: Counter<string>;
+  gwGdprAutoRejectedTotal: Counter<string>;
 }
 
 declare module "fastify" {
@@ -237,6 +238,12 @@ export const metricsPlugin = fp(async (fastify) => {
     registers: [register],
   });
 
+  const gwGdprAutoRejectedTotal = new Counter({
+    name: "gw_gdpr_auto_rejected_total",
+    help: "GDPR delete requests auto-rejected after SLA expiry",
+    registers: [register],
+  });
+
   // Materialize zero values so unlabeled metrics appear in scrape output
   waitQueueDepth.set(0);
   idempotencyHitTotal.inc(0);
@@ -255,6 +262,7 @@ export const metricsPlugin = fp(async (fastify) => {
   gwGdprBodiesDeletedTotal.inc(0);
   gwGdprReportsDeletedTotal.inc(0);
   gwGdprFailuresTotal.inc(0);
+  gwGdprAutoRejectedTotal.inc(0);
   // Histograms appear as _count/_sum=0 without an explicit observation
 
   fastify.decorate("gwMetrics", {
@@ -285,5 +293,6 @@ export const metricsPlugin = fp(async (fastify) => {
     gwGdprBodiesDeletedTotal,
     gwGdprReportsDeletedTotal,
     gwGdprFailuresTotal,
+    gwGdprAutoRejectedTotal,
   });
 });

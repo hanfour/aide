@@ -36,6 +36,10 @@ import {
   startGdprDeleteCron,
   type GdprDeleteCronHandle,
 } from "./workers/gdprDelete.js";
+import {
+  startGdprExpireCron,
+  type GdprExpireCronHandle,
+} from "./workers/gdprExpire.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -167,6 +171,22 @@ export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
       });
       app.addHook("onClose", async () => {
         gdprDeleteCronHandle?.stop();
+      });
+    }
+
+    // GDPR expire cron — Plan 4B Part 10, Task 10.3.
+    // Runs every 24h, auto-rejects pending GDPR requests older than 30 days.
+    let gdprExpireCronHandle: GdprExpireCronHandle | undefined;
+    if (app.db) {
+      gdprExpireCronHandle = startGdprExpireCron({
+        db: app.db,
+        metrics: {
+          autoRejectedTotal: app.gwMetrics.gwGdprAutoRejectedTotal,
+        },
+        logger: app.log,
+      });
+      app.addHook("onClose", async () => {
+        gdprExpireCronHandle?.stop();
       });
     }
   }
