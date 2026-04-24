@@ -65,6 +65,30 @@ jobs:
       - name: Run gateway-core tests
         run: pnpm --filter @aide/gateway-core test
 
+  evaluator-integration:
+    # Evaluator tests span multiple packages (@aide/evaluator, @aide/api, @aide/gateway).
+    # Separate job provides clean failure signals in GitHub PR checks. Uses same
+    # testcontainers (postgres + redis) as gateway-integration; parallelising keeps
+    # the PR feedback loop short.
+    runs-on: ubuntu-latest
+    needs: lint-type-test
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build workspace packages (needed by tests that import @aide/db, @aide/gateway-core)
+        run: pnpm turbo run build --filter=@aide/db --filter=@aide/config --filter=@aide/gateway-core
+      - name: Run evaluator unit tests
+        run: pnpm --filter @aide/evaluator test
+      - name: Run API integration tests (evaluator-related, testcontainers)
+        run: pnpm --filter @aide/api test:integration --testPathPattern='(contentCapture|rubrics|reports|evaluator|gdprNotifications)'
+      - name: Run Gateway integration tests (evaluator-related, testcontainers)
+        run: pnpm --filter @aide/gateway test:integration --testPathPattern='(bodyCapture|evaluator|gdpr|bodyPurge)'
+
   coverage:
     runs-on: ubuntu-latest
     needs: lint-type-test
