@@ -1,0 +1,213 @@
+{
+  "name": "プラットフォームデフォルト — OneAD R&D 評価基準",
+  "description": "R&Dチーム AI活用評価基準定義（gateway対応版；ルールベーススコアリング + LLM調整）",
+  "version": "1.0.0",
+  "locale": "ja",
+  "sections": [
+    {
+      "id": "interaction",
+      "name": "AI対話と意思決定",
+      "weight": "40%",
+      "standard": {
+        "score": 100,
+        "label": "標準",
+        "criteria": [
+          "AIを積極的にコーディングに活用する",
+          "意思決定メモに特定のAI提案を選択したロジックが明確に記述されている"
+        ]
+      },
+      "superior": {
+        "score": 120,
+        "label": "優秀",
+        "criteria": [
+          "AIを複数回イテレーション（案A → B → C）で導く",
+          "システム制約と将来の拡張性に基づいて最適解を特定する"
+        ]
+      },
+      "signals": [
+        {
+          "type": "keyword",
+          "id": "interaction_keywords",
+          "in": "request_body",
+          "terms": [
+            "option",
+            "alternative",
+            "instead",
+            "compare",
+            "approach",
+            "let's try",
+            "try another",
+            "switch to",
+            "prefer",
+            "trade-off",
+            "pros and cons",
+            "better approach",
+            "refactor",
+            "iterate",
+            "方案",
+            "替代",
+            "改用",
+            "換一種",
+            "比較",
+            "取捨",
+            "迭代",
+            "重構",
+            "試試",
+            "另一個",
+            "優化",
+            "オプション",
+            "代替案",
+            "リファクタリング",
+            "イテレーション",
+            "比較する",
+            "切り替える",
+            "最適化",
+            "アプローチ",
+            "試してみる",
+            "別の方法"
+          ],
+          "caseSensitive": false
+        },
+        {
+          "type": "iteration_count",
+          "id": "iterative_exploration",
+          "gte": 3
+        },
+        {
+          "type": "tool_diversity",
+          "id": "multi_tool_usage",
+          "gte": 3
+        }
+      ],
+      "superiorRules": {
+        "strongThresholds": ["interaction_keywords"],
+        "supportThresholds": ["iterative_exploration", "multi_tool_usage"],
+        "minStrongHits": 1,
+        "minSupportHits": 1
+      }
+    },
+    {
+      "id": "riskControl",
+      "name": "AI識別とリスク管理",
+      "weight": "60%",
+      "standard": {
+        "score": 100,
+        "label": "標準",
+        "criteria": [
+          "一般的なAIエラーやハルシネーションを発見する",
+          "生成されたコードが安定しており基本的な品質要件を満たしている"
+        ]
+      },
+      "superior": {
+        "score": 120,
+        "label": "優秀",
+        "criteria": [
+          "重大なリスク（セキュリティ、パフォーマンス、メモリリーク）を特定する",
+          "修正内容をチームのTechnical SOPまたはWikiとして知識共有する"
+        ]
+      },
+      "signals": [
+        {
+          "type": "keyword",
+          "id": "security_keywords",
+          "in": "both",
+          "terms": [
+            "security",
+            "vulnerability",
+            "injection",
+            "xss",
+            "csrf",
+            "authentication",
+            "authorization",
+            "secret",
+            "credential",
+            "permission",
+            "sanitize",
+            "security review",
+            "security audit",
+            "risk assessment",
+            "threat model",
+            "CVE",
+            "OWASP",
+            "penetration test",
+            "安全",
+            "漏洞",
+            "注入",
+            "風險評估",
+            "安全審查",
+            "セキュリティ",
+            "脆弱性",
+            "インジェクション",
+            "認証",
+            "認可",
+            "権限",
+            "セキュリティレビュー",
+            "リスク評価",
+            "脅威モデル",
+            "ペネトレーションテスト"
+          ],
+          "caseSensitive": false
+        },
+        {
+          "type": "keyword",
+          "id": "performance_keywords",
+          "in": "both",
+          "terms": [
+            "performance",
+            "bottleneck",
+            "memory leak",
+            "optimize",
+            "latency",
+            "cache invalidat",
+            "slow query",
+            "timeout",
+            "n+1",
+            "regression",
+            "race condition",
+            "deadlock",
+            "overflow",
+            "null pointer",
+            "production incident",
+            "postmortem",
+            "効能",
+            "瓶頸",
+            "記憶體洩漏",
+            "パフォーマンス",
+            "ボトルネック",
+            "メモリリーク",
+            "最適化",
+            "レイテンシ",
+            "タイムアウト",
+            "レースコンディション",
+            "デッドロック",
+            "オーバーフロー",
+            "本番障害",
+            "ポストモーテム"
+          ],
+          "caseSensitive": false
+        },
+        {
+          "type": "refusal_rate",
+          "id": "low_refusal_rate",
+          "lte": 0.2
+        }
+      ],
+      "superiorRules": {
+        "strongThresholds": ["security_keywords", "performance_keywords"],
+        "supportThresholds": ["low_refusal_rate"],
+        "minStrongHits": 1,
+        "minSupportHits": 0
+      }
+    }
+  ],
+  "noiseFilters": [
+    "<task-notification>",
+    "<command-name>",
+    "<local-command-caveat>",
+    "<system-reminder>",
+    "you are a senior code reviewer",
+    "you are a code reviewer",
+    "perform a deep, multi-dimensional analysis",
+    "review the provided pull request"
+  ]
+}
