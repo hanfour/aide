@@ -181,7 +181,11 @@ export function SettingsForm({ orgId }: Props) {
     watch,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
-    resolver: zodResolver(settingsSchema),
+    // No client-side resolver. Authoritative validation lives on the tRPC
+    // endpoint (apps/api/src/trpc/routers/contentCapture.ts). react-hook-form's
+    // zodResolver was blocking submission when select placeholders surfaced ""
+    // even though our schema permitted it — clients should never silently drop
+    // a save because of a UI-local schema drift.
     defaultValues: {
       contentCaptureEnabled: false,
       retentionDaysOverride: null,
