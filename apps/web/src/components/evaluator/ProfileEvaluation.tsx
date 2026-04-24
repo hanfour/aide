@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Download, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
 import { Button } from "@/components/ui/button";
@@ -139,11 +139,17 @@ export function ProfileEvaluation() {
   const [exportOpen, setExportOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  const now = new Date();
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-
-  const rangeFrom = thirtyDaysAgo.toISOString();
-  const rangeTo = now.toISOString();
+  // Memoize so the query key is stable across renders. Without this,
+  // `new Date()` runs every render and tRPC keeps refetching, which keeps
+  // `isLoading` pinned to true and never reveals the empty / loaded state.
+  const { rangeFrom, rangeTo } = useMemo(() => {
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    return {
+      rangeFrom: thirtyDaysAgo.toISOString(),
+      rangeTo: now.toISOString(),
+    };
+  }, []);
 
   const {
     data: latestReport,
@@ -207,12 +213,10 @@ export function ProfileEvaluation() {
   const latestScore = parseFloat(latestReport.totalScore);
 
   // Build 30-day trend series: oldest → newest
-  const trendSeries: ScorePoint[] = [...rangeReports]
-    .reverse()
-    .map((r) => ({
-      date: new Date(r.periodStart).toISOString().slice(0, 10),
-      score: parseFloat(r.totalScore),
-    }));
+  const trendSeries: ScorePoint[] = [...rangeReports].reverse().map((r) => ({
+    date: new Date(r.periodStart).toISOString().slice(0, 10),
+    score: parseFloat(r.totalScore),
+  }));
 
   // Parse section scores from jsonb (SectionResult[])
   const sectionScores: SectionResult[] = Array.isArray(
