@@ -32,6 +32,10 @@ import {
   startEvaluatorCron,
   type EvaluatorCronHandle,
 } from "./workers/evaluator/cron.js";
+import {
+  startGdprDeleteCron,
+  type GdprDeleteCronHandle,
+} from "./workers/gdprDelete.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -144,6 +148,25 @@ export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
       });
       app.addHook("onClose", async () => {
         evaluatorCronHandle?.stop();
+      });
+    }
+
+    // GDPR delete cron — Plan 4B Part 10, Task 10.1.
+    // Runs every 5 min, executes approved GDPR delete requests and writes audit logs.
+    let gdprDeleteCronHandle: GdprDeleteCronHandle | undefined;
+    if (app.db) {
+      gdprDeleteCronHandle = startGdprDeleteCron({
+        db: app.db,
+        metrics: {
+          executedTotal: app.gwMetrics.gwGdprDeleteExecutedTotal,
+          bodiesDeletedTotal: app.gwMetrics.gwGdprBodiesDeletedTotal,
+          reportsDeletedTotal: app.gwMetrics.gwGdprReportsDeletedTotal,
+          failuresTotal: app.gwMetrics.gwGdprFailuresTotal,
+        },
+        logger: app.log,
+      });
+      app.addHook("onClose", async () => {
+        gdprDeleteCronHandle?.stop();
       });
     }
   }

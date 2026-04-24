@@ -30,6 +30,10 @@ export interface GatewayMetrics {
   gwEvalLlmFailedTotal: Counter<"reason">;
   gwEvalLlmParseFailedTotal: Counter<string>;
   gwEvalDlqCount: Gauge<string>;
+  gwGdprDeleteExecutedTotal: Counter<string>;
+  gwGdprBodiesDeletedTotal: Counter<string>;
+  gwGdprReportsDeletedTotal: Counter<string>;
+  gwGdprFailuresTotal: Counter<string>;
 }
 
 declare module "fastify" {
@@ -209,6 +213,30 @@ export const metricsPlugin = fp(async (fastify) => {
     registers: [register],
   });
 
+  const gwGdprDeleteExecutedTotal = new Counter({
+    name: "gw_gdpr_delete_executed_total",
+    help: "Total GDPR delete requests executed by the 5-min cron",
+    registers: [register],
+  });
+
+  const gwGdprBodiesDeletedTotal = new Counter({
+    name: "gw_gdpr_bodies_deleted_total",
+    help: "Total request_bodies rows deleted by GDPR delete cron",
+    registers: [register],
+  });
+
+  const gwGdprReportsDeletedTotal = new Counter({
+    name: "gw_gdpr_reports_deleted_total",
+    help: "Total evaluation_reports rows deleted by GDPR delete cron",
+    registers: [register],
+  });
+
+  const gwGdprFailuresTotal = new Counter({
+    name: "gw_gdpr_failures_total",
+    help: "GDPR delete requests that failed during execution",
+    registers: [register],
+  });
+
   // Materialize zero values so unlabeled metrics appear in scrape output
   waitQueueDepth.set(0);
   idempotencyHitTotal.inc(0);
@@ -223,6 +251,10 @@ export const metricsPlugin = fp(async (fastify) => {
   gwEvalLlmFailedTotal.inc(0);
   gwEvalLlmParseFailedTotal.inc(0);
   gwEvalDlqCount.set(0);
+  gwGdprDeleteExecutedTotal.inc(0);
+  gwGdprBodiesDeletedTotal.inc(0);
+  gwGdprReportsDeletedTotal.inc(0);
+  gwGdprFailuresTotal.inc(0);
   // Histograms appear as _count/_sum=0 without an explicit observation
 
   fastify.decorate("gwMetrics", {
@@ -249,5 +281,9 @@ export const metricsPlugin = fp(async (fastify) => {
     gwEvalLlmFailedTotal,
     gwEvalLlmParseFailedTotal,
     gwEvalDlqCount,
+    gwGdprDeleteExecutedTotal,
+    gwGdprBodiesDeletedTotal,
+    gwGdprReportsDeletedTotal,
+    gwGdprFailuresTotal,
   });
 });
