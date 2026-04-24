@@ -197,25 +197,27 @@ export function SettingsForm({ orgId }: Props) {
   const llmEvalEnabled = watch("llmEvalEnabled");
 
   const onSubmit = handleSubmit((values) => {
+    // Empty-string from native <select> placeholders must round-trip to null so
+    // the tRPC Zod schema (`z.string().uuid().nullable()`) accepts them.
+    const emptyToNull = <T,>(v: T | "" | null | undefined): T | null =>
+      v === "" || v === undefined ? null : (v as T);
     return save.mutateAsync({
       orgId,
       patch: {
         contentCaptureEnabled: values.contentCaptureEnabled,
         retentionDaysOverride: values.retentionDaysOverride,
         llmEvalEnabled: values.llmEvalEnabled,
-        llmEvalAccountId: values.llmEvalAccountId,
-        llmEvalModel: values.llmEvalModel ?? null,
+        llmEvalAccountId: emptyToNull(values.llmEvalAccountId),
+        llmEvalModel: emptyToNull(values.llmEvalModel),
         captureThinking: values.captureThinking,
-        rubricId: values.rubricId,
+        rubricId: emptyToNull(values.rubricId),
         leaderboardEnabled: values.leaderboardEnabled,
       },
     });
   });
 
   if (settingsLoading) {
-    return (
-      <p className="text-sm text-muted-foreground">Loading settings…</p>
-    );
+    return <p className="text-sm text-muted-foreground">Loading settings…</p>;
   }
 
   return (

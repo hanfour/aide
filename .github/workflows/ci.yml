@@ -85,9 +85,9 @@ jobs:
       - name: Run evaluator unit tests
         run: pnpm --filter @aide/evaluator test
       - name: Run API integration tests (evaluator-related, testcontainers)
-        run: pnpm --filter @aide/api test:integration '(contentCapture|rubrics|reports|evaluator|gdprNotifications)'
+        run: pnpm --filter @aide/api test:integration contentCapture rubrics reports evaluator gdprNotifications
       - name: Run Gateway integration tests (evaluator-related, testcontainers)
-        run: pnpm --filter @aide/gateway test:integration '(bodyCapture|evaluator|gdpr|bodyPurge)'
+        run: pnpm --filter @aide/gateway test:integration bodyCapture evaluator gdpr bodyPurge
 
   coverage:
     runs-on: ubuntu-latest
