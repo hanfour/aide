@@ -20,6 +20,7 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json tsconfig.base.js
 COPY apps/gateway/package.json apps/gateway/package.json
 COPY packages/config/package.json packages/config/package.json
 COPY packages/db/package.json packages/db/package.json
+COPY packages/evaluator/package.json packages/evaluator/package.json
 COPY packages/gateway-core/package.json packages/gateway-core/package.json
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
   pnpm install --frozen-lockfile
@@ -32,6 +33,7 @@ FROM deps AS build
 COPY apps/gateway apps/gateway
 COPY packages/config packages/config
 COPY packages/db packages/db
+COPY packages/evaluator packages/evaluator
 COPY packages/gateway-core packages/gateway-core
 RUN pnpm turbo run build --filter=@aide/gateway...
 RUN pnpm --filter=@aide/gateway deploy --prod /out
@@ -47,7 +49,7 @@ RUN pnpm --filter=@aide/gateway deploy --prod /out
 # level would fail because pnpm-deploy hoists a direct-dep-only subset
 # and leaves transitive deps in the nested .pnpm store.
 RUN cd /out \
-  && node -e "['fastify','ioredis','bullmq','undici','@aide/gateway-core','@aide/config','@aide/db'].forEach(m => { try { require(m); } catch (e) { console.error('sanity-require failed for', m, '-', e.code || e.message); process.exit(1); } })"
+  && node -e "['fastify','ioredis','bullmq','undici','@aide/gateway-core','@aide/config','@aide/db','@aide/evaluator'].forEach(m => { try { require(m); } catch (e) { console.error('sanity-require failed for', m, '-', e.code || e.message); process.exit(1); } })"
 
 ###############################################################################
 # Stage 3 — runtime: minimal image, non-root user, healthcheck
