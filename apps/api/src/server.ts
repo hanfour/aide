@@ -121,6 +121,32 @@ export async function buildServer() {
         trpcOptions: {
           router: appRouter,
           createContext: createContextFactory({ env, redis, evaluatorQueue }),
+          onError: ({
+            error,
+            path,
+            input,
+          }: {
+            error: { code: string; message: string; cause?: unknown };
+            path?: string;
+            input?: unknown;
+          }) => {
+            // Surface tRPC errors (esp. Zod input validation) at WARN in api.log
+            // so CI failures have diagnosable context. Safe to keep: does not
+            // expose anything a caller couldn't already infer from the 4xx.
+            app.log.warn(
+              {
+                path,
+                code: error.code,
+                message: error.message,
+                cause:
+                  error.cause instanceof Error
+                    ? error.cause.message
+                    : undefined,
+                input,
+              },
+              "trpc error",
+            );
+          },
         },
       });
     },
