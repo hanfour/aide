@@ -34,7 +34,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build workspace packages (needed by tests that import @aide/db, @aide/gateway-core)
-        run: pnpm turbo run build --filter=@aide/db --filter=@aide/auth --filter=@aide/config --filter=@aide/gateway-core
+        run: pnpm turbo run build --filter=@aide/db --filter=@aide/auth --filter=@aide/config --filter=@aide/gateway-core --filter=@aide/evaluator
       - name: Run API integration tests (testcontainers)
         run: pnpm --filter @aide/api test:integration
 
@@ -55,7 +55,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build workspace packages (needed by tests that import @aide/db, @aide/gateway-core)
-        run: pnpm turbo run build --filter=@aide/db --filter=@aide/config --filter=@aide/gateway-core
+        run: pnpm turbo run build --filter=@aide/db --filter=@aide/config --filter=@aide/gateway-core --filter=@aide/evaluator
       - name: Run Gateway integration tests (testcontainers postgres + redis)
         run: pnpm --filter @aide/gateway test:integration
       # gateway-core unit tests also run in lint-type-test via `turbo run test`,
@@ -81,13 +81,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build workspace packages (needed by tests that import @aide/db, @aide/gateway-core)
-        run: pnpm turbo run build --filter=@aide/db --filter=@aide/config --filter=@aide/gateway-core
+        run: pnpm turbo run build --filter=@aide/db --filter=@aide/config --filter=@aide/gateway-core --filter=@aide/evaluator
       - name: Run evaluator unit tests
         run: pnpm --filter @aide/evaluator test
       - name: Run API integration tests (evaluator-related, testcontainers)
-        run: pnpm --filter @aide/api test:integration --testPathPattern='(contentCapture|rubrics|reports|evaluator|gdprNotifications)'
+        run: pnpm --filter @aide/api test:integration -- '(contentCapture|rubrics|reports|evaluator|gdprNotifications)'
       - name: Run Gateway integration tests (evaluator-related, testcontainers)
-        run: pnpm --filter @aide/gateway test:integration --testPathPattern='(bodyCapture|evaluator|gdpr|bodyPurge)'
+        run: pnpm --filter @aide/gateway test:integration -- '(bodyCapture|evaluator|gdpr|bodyPurge)'
 
   coverage:
     runs-on: ubuntu-latest
@@ -101,7 +101,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build workspace packages (needed by tests that import @aide/db, @aide/gateway-core)
-        run: pnpm turbo run build --filter=@aide/db --filter=@aide/auth --filter=@aide/config --filter=@aide/gateway-core
+        run: pnpm turbo run build --filter=@aide/db --filter=@aide/auth --filter=@aide/config --filter=@aide/gateway-core --filter=@aide/evaluator
       - name: Coverage gate (packages/{auth,config} ≥ 80%)
         run: pnpm test:coverage
       - name: Upload coverage HTML report on failure
@@ -157,6 +157,7 @@ jobs:
       # apps/web/e2e/fixtures/gateway-env.ts. The 64-hex keys are E2E-only
       # padding to satisfy parseServerEnv's HEX_64_REGEX — never reuse.
       ENABLE_GATEWAY: "true"
+      ENABLE_EVALUATOR: "true"
       GATEWAY_PORT: "3002"
       GATEWAY_BASE_URL: http://localhost:3002
       REDIS_URL: redis://localhost:6379
