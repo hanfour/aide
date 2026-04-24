@@ -80,14 +80,14 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Build workspace packages (needed by tests that import @aide/db, @aide/gateway-core)
-        run: pnpm turbo run build --filter=@aide/db --filter=@aide/config --filter=@aide/gateway-core --filter=@aide/evaluator
+      - name: Build workspace packages (needed by tests that import @aide/db, @aide/auth, @aide/gateway-core, @aide/evaluator)
+        run: pnpm turbo run build --filter=@aide/db --filter=@aide/auth --filter=@aide/config --filter=@aide/gateway-core --filter=@aide/evaluator
       - name: Run evaluator unit tests
         run: pnpm --filter @aide/evaluator test
       - name: Run API integration tests (evaluator-related, testcontainers)
-        run: pnpm --filter @aide/api test:integration -- '(contentCapture|rubrics|reports|evaluator|gdprNotifications)'
+        run: pnpm --filter @aide/api test:integration '(contentCapture|rubrics|reports|evaluator|gdprNotifications)'
       - name: Run Gateway integration tests (evaluator-related, testcontainers)
-        run: pnpm --filter @aide/gateway test:integration -- '(bodyCapture|evaluator|gdpr|bodyPurge)'
+        run: pnpm --filter @aide/gateway test:integration '(bodyCapture|evaluator|gdpr|bodyPurge)'
 
   coverage:
     runs-on: ubuntu-latest

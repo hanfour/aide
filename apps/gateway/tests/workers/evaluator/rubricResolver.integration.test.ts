@@ -159,6 +159,10 @@ beforeAll(async () => {
   db = drizzle(pool) as unknown as Database;
   await migrate(db, { migrationsFolder });
 
+  // Migration 0003 seeds 3 real platform rubrics; remove them so this test
+  // owns the fixture set it asserts against.
+  await db.delete(rubrics);
+
   // Seed 3 platform-default rubrics (en, zh-Hant, ja)
   const [enDefault] = await db
     .insert(rubrics)
@@ -486,9 +490,7 @@ describe("rubricResolver", () => {
     const resolver = createRubricResolver();
 
     // Delete all platform-default rubrics temporarily
-    await db
-      .delete(rubrics)
-      .where(eq(rubrics.isDefault, true));
+    await db.delete(rubrics).where(eq(rubrics.isDefault, true));
 
     try {
       await expect(
