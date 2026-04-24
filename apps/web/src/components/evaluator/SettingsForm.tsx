@@ -25,16 +25,28 @@ const SELECT_CLASS =
 
 // ─── Validation schema ────────────────────────────────────────────────────────
 
+// Native <select> always surfaces an empty string when nothing is chosen.
+// Treat "" as null at the form-schema level so react-hook-form's resolver
+// doesn't reject the form before submit (the API-side zod still enforces
+// uuid/null).
+const uuidOrEmpty = z
+  .string()
+  .nullable()
+  .refine((v) => v === null || v === "" || /^[0-9a-f-]{36}$/i.test(v), {
+    message: "Invalid id",
+  })
+  .transform((v) => (v === "" ? null : v));
+
 const settingsSchema = z.object({
   contentCaptureEnabled: z.boolean(),
   retentionDaysOverride: z
     .union([z.literal(30), z.literal(60), z.literal(90)])
     .nullable(),
   llmEvalEnabled: z.boolean(),
-  llmEvalAccountId: z.string().uuid().nullable(),
+  llmEvalAccountId: uuidOrEmpty,
   llmEvalModel: z.string().nullable(),
   captureThinking: z.boolean(),
-  rubricId: z.string().uuid().nullable(),
+  rubricId: uuidOrEmpty,
   leaderboardEnabled: z.boolean(),
 });
 
