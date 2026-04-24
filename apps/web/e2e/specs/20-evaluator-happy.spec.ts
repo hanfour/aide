@@ -76,9 +76,19 @@ test("evaluator happy path: admin → content capture → account → api_key �
   if (!isChecked) {
     await captureToggle.click();
   }
-  await page.getByRole("button", { name: /save settings/i }).click();
-  // Toast "Settings saved" appears on success
-  await expect(page.getByText(/settings saved/i)).toBeVisible();
+  // Wait for the setSettings mutation to resolve successfully. This is more
+  // reliable than waiting for the sonner toast (which renders via portal with
+  // a 4s default duration — racy against Playwright's 5s expect timeout in CI).
+  const [setSettingsRes] = await Promise.all([
+    page.waitForResponse(
+      (res) =>
+        res.url().includes("/trpc/contentCapture.setSettings") &&
+        res.request().method() === "POST",
+      { timeout: 15000 },
+    ),
+    page.getByRole("button", { name: /save settings/i }).click(),
+  ]);
+  expect(setSettingsRes.status()).toBe(200);
 
   // ── 2. Create an api_key upstream account ────────────────────────────────
   await page.goto(`/dashboard/organizations/${orgId}/accounts/new`);
