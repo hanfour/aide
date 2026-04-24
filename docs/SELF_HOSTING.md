@@ -182,7 +182,61 @@ orchestrator won't restart-loop.
 See [`GATEWAY.md#10-feature-flag`](./GATEWAY.md#10-feature-flag) for the full
 gating layer list.
 
-## 7. Troubleshooting
+## 7. (Optional) Enable the evaluator (Plan 4B+)
+
+The evaluator is an opt-in subsystem that captures AI conversation content and
+scores each member's AI-assisted development quality. It is DISABLED by default.
+
+### 7.1 Prerequisites
+
+- Gateway must be wired (see Section 6 above) — evaluator depends on the
+  body-capture pipeline and LLM loopback.
+- `CREDENTIAL_ENCRYPTION_KEY` is required — the evaluator reuses this master
+  key (with a different HKDF domain string) to encrypt captured request/response
+  bodies.
+
+### 7.2 Environment variables
+
+Add to your `docker/.env`:
+
+| Var | Meaning |
+|---|---|
+| `ENABLE_EVALUATOR` | Master gate (`true` or `false`, default `false`). When `true`, exposes evaluator tRPC endpoints, admin UI pages, and evaluation cron. |
+| `GATEWAY_LOCAL_BASE_URL` | Used by the evaluator worker for loopback LLM calls. Defaults to `http://localhost:3002` if unset. |
+
+### 7.3 Per-org UI settings
+
+Once `ENABLE_EVALUATOR=true`, admins configure per-org via Settings UI (not env):
+
+- **Content capture toggle** — master switch for that org.
+- **Retention override** — 30/60/90 days (default 90).
+- **LLM Deep Analysis** — opt-in toggle + upstream account + model selection.
+- **Thinking capture** — opt-in toggle to also capture extended-thinking
+  content.
+- **Rubric** — select platform-default or create custom.
+- **Leaderboard** — opt-in peer-visible ranking for teams.
+
+### 7.4 First-enable workflow
+
+1. Set `ENABLE_EVALUATOR=true` in `docker/.env` and redeploy.
+2. Run `pnpm -F @aide/db db:migrate` to apply migration 0002.
+3. Navigate to `/dashboard/organizations/[id]/evaluator/settings` and enable
+   content capture.
+4. (Optional) Navigate to `/dashboard/organizations/[id]/evaluator/rubrics` to
+   customize the evaluation rubric.
+5. Verify the daily cron at 00:05 UTC produces reports on
+   `/dashboard/profile/evaluation`.
+
+### 7.5 Operational notes
+
+- **GDPR delete requests** are member-initiated + admin-approved; see
+  `EVALUATOR.md` for the workflow.
+- **Metrics** — look for `gw_body_*` and `gw_eval_*` counters on the `/metrics`
+  endpoint for observability.
+- **Cost** — LLM Deep Analysis calls land in `usage_logs` under the provisioned
+  evaluator api_key; visible via existing Usage reports.
+
+## 8. Troubleshooting
 
 ### OAuth redirect errors
 
@@ -217,7 +271,7 @@ underlying error.
 docker compose down --volumes
 ```
 
-## Reference
+## 9. Reference
 
 - Production compose: [`docker/docker-compose.yml`](../docker/docker-compose.yml)
 - Env schema: [`packages/config/src/env.ts`](../packages/config/src/env.ts)
