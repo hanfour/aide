@@ -9,6 +9,7 @@ import type { Redis } from "ioredis";
 import { can, type Action } from "@aide/auth";
 import type { ServerEnv } from "@aide/config";
 import type { TrpcContext, TrpcLogger } from "./context.js";
+import type { EvaluatorQueue } from "./routers/reports.js";
 
 const t = initTRPC.context<TrpcContext>().create();
 
@@ -26,6 +27,7 @@ interface ProtectedCtx {
   redis: Redis;
   ipAddress: string | null;
   logger: TrpcLogger;
+  evaluatorQueue?: EvaluatorQueue;
 }
 
 // Narrow user/perm to non-null by returning a new ctx object (tRPC v11 uses the
@@ -47,6 +49,7 @@ export const protectedProcedure = publicProcedure.use(async ({ ctx, next }) => {
       redis: ctx.redis,
       ipAddress: ctx.ipAddress,
       logger: ctx.logger,
+      evaluatorQueue: ctx.evaluatorQueue,
     },
   });
 });

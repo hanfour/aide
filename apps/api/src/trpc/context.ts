@@ -3,6 +3,7 @@ import type { Redis } from "ioredis";
 import type { Database } from "@aide/db";
 import type { UserPermissions } from "@aide/auth";
 import type { ServerEnv } from "@aide/config";
+import type { EvaluatorQueue } from "./routers/reports.js";
 
 // Fastify module augmentation for decorators set up by the api plugins.
 // Declared here (in addition to plugins/auth.ts) so that downstream consumers
@@ -46,11 +47,16 @@ export interface TrpcContext {
   // child with the reqId already bound). Tests inject a noop logger so they
   // don't pollute test output with router-internal warnings.
   logger: TrpcLogger;
+  // BullMQ Queue for evaluator jobs. Undefined when ENABLE_EVALUATOR=false or
+  // no REDIS_URL is configured (e.g. test mode without a queue). The
+  // reports.rerun handler falls back to testMode when undefined.
+  evaluatorQueue?: EvaluatorQueue;
 }
 
 export interface CreateContextDeps {
   env: ServerEnv;
   redis: Redis;
+  evaluatorQueue?: EvaluatorQueue;
 }
 
 // Factory: bind the parsed env + shared redis client at server-startup time,
@@ -73,6 +79,7 @@ export function createContextFactory(deps: CreateContextDeps) {
       // req.log is a pino child with the reqId already bound — exactly what
       // we want for per-request structured logging from inside resolvers.
       logger: opts.req.log,
+      evaluatorQueue: deps.evaluatorQueue,
     };
   };
 }

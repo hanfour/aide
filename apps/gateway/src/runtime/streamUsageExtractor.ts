@@ -57,6 +57,61 @@ export interface StreamUsageSnapshot {
   cache_read_tokens: number;
 }
 
+/** A single assembled text block from the stream. */
+export interface StreamTextBlock {
+  type: "text";
+  text: string;
+}
+
+/** A single assembled tool_use block from the stream. */
+export interface StreamToolUseBlock {
+  type: "tool_use";
+  id: string;
+  name: string;
+  input: unknown;
+}
+
+/** Content block types that can appear in an assembled transcript. */
+export type StreamContentBlock = StreamTextBlock | StreamToolUseBlock;
+
+/**
+ * Anthropic-shaped response assembled from SSE events — mirrors the shape of a
+ * non-streaming `/v1/messages` response so body-capture consumers can treat
+ * streaming and non-streaming captures uniformly.
+ *
+ * Fields are `null` if the corresponding SSE event never arrived (e.g. stream
+ * cut before `message_start` → `id` and `model` are `null`).
+ */
+export interface StreamTranscript {
+  id: string | null;
+  type: "message";
+  role: "assistant";
+  model: string | null;
+  content: StreamContentBlock[];
+  stop_reason: string | null;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens: number;
+    cache_read_input_tokens: number;
+  } | null;
+}
+
+/**
+ * Mutable in-progress content block used during transcript accumulation.
+ * Distinct from the exported `StreamContentBlock` type because tool_use input
+ * arrives as partial JSON fragments (buffered as a string until
+ * `content_block_stop` triggers a parse attempt).
+ */
+type InProgressTextBlock = { type: "text"; text: string };
+type InProgressToolUseBlock = {
+  type: "tool_use";
+  id: string;
+  name: string;
+  inputBuf: string; // accumulated raw JSON fragments
+};
+type InProgressBlock = InProgressTextBlock | InProgressToolUseBlock;
+
 export class StreamUsageExtractor {
   /**
    * Rolling string buffer of not-yet-consumed bytes.  SSE is UTF-8 per spec;
@@ -77,12 +132,27 @@ export class StreamUsageExtractor {
    */
   #pendingCR = false;
 
+  // ── Usage extraction state ──────────────────────────────────────────────────
   #model = "";
   #inputTokens = 0;
   #outputTokensFromStart = 0;
   #outputTokensFromDelta: number | null = null;
   #cacheCreationTokens = 0;
   #cacheReadTokens = 0;
+
+  // ── Transcript accumulation state ──────────────────────────────────────────
+  /** From `message_start.message.id`; null until observed. */
+  #transcriptId: string | null = null;
+  /** From `message_start.message.model`; null until observed. */
+  #transcriptModel: string | null = null;
+  /** Final stop_reason from `message_delta.delta.stop_reason`. */
+  #stopReason: string | null = null;
+  /** Whether `message_start` has been observed (guards null usage vs zero). */
+  #hasMessageStart = false;
+  /** Finalised content blocks, in order. */
+  #contentBlocks: StreamContentBlock[] = [];
+  /** The block currently being assembled (between block_start and block_stop). */
+  #currentBlock: InProgressBlock | null = null;
 
   /**
    * Feed a chunk of raw upstream bytes.  Internally scans for completed SSE
@@ -141,6 +211,34 @@ export class StreamUsageExtractor {
     };
   }
 
+  /**
+   * Return the assembled transcript shaped like a non-streaming Anthropic
+   * `/v1/messages` response.  Safe to call at any point — partial streams
+   * (disconnected mid-message, stream cut before `message_start`) produce a
+   * best-effort object with null fields rather than throwing.
+   *
+   * Each call returns a new object — immutable-snapshot contract.
+   */
+  getAssembledTranscript(): StreamTranscript {
+    const usageSnap = this.snapshot();
+    return {
+      id: this.#transcriptId,
+      type: "message",
+      role: "assistant",
+      model: this.#transcriptModel,
+      content: [...this.#contentBlocks],
+      stop_reason: this.#stopReason,
+      usage: this.#hasMessageStart
+        ? {
+            input_tokens: usageSnap.input_tokens,
+            output_tokens: usageSnap.output_tokens,
+            cache_creation_input_tokens: usageSnap.cache_creation_tokens,
+            cache_read_input_tokens: usageSnap.cache_read_tokens,
+          }
+        : null,
+    };
+  }
+
   // ── Internals ──────────────────────────────────────────────────────────────
 
   /**
@@ -195,9 +293,14 @@ export class StreamUsageExtractor {
       this.#handleMessageStart(parsed as Record<string, unknown>);
     } else if (type === "message_delta") {
       this.#handleMessageDelta(parsed as Record<string, unknown>);
+    } else if (type === "content_block_start") {
+      this.#handleContentBlockStart(parsed as Record<string, unknown>);
+    } else if (type === "content_block_delta") {
+      this.#handleContentBlockDelta(parsed as Record<string, unknown>);
+    } else if (type === "content_block_stop") {
+      this.#handleContentBlockStop();
     }
-    // All other types (content_block_*, ping, error, message_stop) are
-    // irrelevant for usage extraction and silently ignored.
+    // ping, error, message_stop — irrelevant for extraction/transcript.
   }
 
   #handleMessageStart(ev: Record<string, unknown>): void {
@@ -207,6 +310,11 @@ export class StreamUsageExtractor {
 
     if (typeof m.model === "string" && m.model.length > 0) {
       this.#model = m.model;
+      this.#transcriptModel = m.model;
+    }
+
+    if (typeof m.id === "string") {
+      this.#transcriptId = m.id;
     }
 
     const usage = m.usage;
@@ -217,18 +325,118 @@ export class StreamUsageExtractor {
       this.#cacheCreationTokens = toNonNegInt(u.cache_creation_input_tokens);
       this.#cacheReadTokens = toNonNegInt(u.cache_read_input_tokens);
     }
+
+    this.#hasMessageStart = true;
   }
 
   #handleMessageDelta(ev: Record<string, unknown>): void {
     const usage = ev.usage;
-    if (!usage || typeof usage !== "object") return;
-    const u = usage as Record<string, unknown>;
-    // `output_tokens` on `message_delta` is the running final count — keep
-    // the latest value so the snapshot reflects the stream's final state
-    // even if more delta events arrive later.
-    if (u.output_tokens !== undefined) {
-      this.#outputTokensFromDelta = toNonNegInt(u.output_tokens);
+    if (usage && typeof usage === "object") {
+      const u = usage as Record<string, unknown>;
+      // `output_tokens` on `message_delta` is the running final count — keep
+      // the latest value so the snapshot reflects the stream's final state
+      // even if more delta events arrive later.
+      if (u.output_tokens !== undefined) {
+        this.#outputTokensFromDelta = toNonNegInt(u.output_tokens);
+      }
     }
+
+    // Capture stop_reason from the delta payload.
+    const delta = ev.delta;
+    if (delta && typeof delta === "object") {
+      const d = delta as Record<string, unknown>;
+      if (typeof d.stop_reason === "string") {
+        this.#stopReason = d.stop_reason;
+      }
+    }
+  }
+
+  #handleContentBlockStart(ev: Record<string, unknown>): void {
+    // Finalise any previously open block that didn't receive a block_stop
+    // (defensive: shouldn't happen in a well-formed stream).
+    this.#finaliseCurrentBlock();
+
+    const cb = ev.content_block;
+    if (!cb || typeof cb !== "object") return;
+    const block = cb as Record<string, unknown>;
+
+    if (block.type === "text") {
+      this.#currentBlock = { type: "text", text: "" };
+    } else if (block.type === "tool_use") {
+      const id = typeof block.id === "string" ? block.id : "";
+      const name = typeof block.name === "string" ? block.name : "";
+      this.#currentBlock = { type: "tool_use", id, name, inputBuf: "" };
+    }
+    // Unknown block types are ignored — #currentBlock stays null.
+  }
+
+  #handleContentBlockDelta(ev: Record<string, unknown>): void {
+    if (!this.#currentBlock) return;
+
+    const delta = ev.delta;
+    if (!delta || typeof delta !== "object") return;
+    const d = delta as Record<string, unknown>;
+
+    if (
+      d.type === "text_delta" &&
+      this.#currentBlock.type === "text" &&
+      typeof d.text === "string"
+    ) {
+      // Append text delta to current text block (mutation is intentional here —
+      // #currentBlock is internal mutable state, not exposed to callers).
+      this.#currentBlock.text += d.text;
+    } else if (
+      d.type === "input_json_delta" &&
+      this.#currentBlock.type === "tool_use" &&
+      typeof d.partial_json === "string"
+    ) {
+      // Buffer partial JSON fragments; parse at content_block_stop.
+      this.#currentBlock.inputBuf += d.partial_json;
+    }
+  }
+
+  #handleContentBlockStop(): void {
+    this.#finaliseCurrentBlock();
+  }
+
+  /**
+   * Finalize the current in-progress block and push it onto #contentBlocks.
+   * For tool_use blocks, attempts to parse the accumulated JSON buffer; on
+   * failure (partial stream / malformed JSON) falls back to the raw string so
+   * the block is still captured.
+   */
+  #finaliseCurrentBlock(): void {
+    if (!this.#currentBlock) return;
+
+    if (this.#currentBlock.type === "text") {
+      this.#contentBlocks = [
+        ...this.#contentBlocks,
+        { type: "text", text: this.#currentBlock.text },
+      ];
+    } else {
+      // tool_use — parse accumulated JSON buffer.
+      let parsedInput: unknown = {};
+      if (this.#currentBlock.inputBuf.length > 0) {
+        try {
+          parsedInput = JSON.parse(this.#currentBlock.inputBuf);
+        } catch {
+          // Partial / malformed JSON (mid-stream disconnect) — store raw
+          // string so the block is still captured for forensic purposes.
+          parsedInput = this.#currentBlock.inputBuf;
+        }
+      }
+      this.#contentBlocks = [
+        ...this.#contentBlocks,
+        {
+          type: "tool_use",
+          id: this.#currentBlock.id,
+          name: this.#currentBlock.name,
+          input: parsedInput,
+        },
+      ];
+    }
+
+    this.#currentBlock = null;
   }
 }
 
