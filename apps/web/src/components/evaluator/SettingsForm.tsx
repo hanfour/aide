@@ -39,8 +39,18 @@ const uuidOrEmpty = z
 
 const settingsSchema = z.object({
   contentCaptureEnabled: z.boolean(),
+  // Native <select> surfaces "" for the placeholder option even when we
+  // register with setValueAs. Accept "" here and let onSubmit coerce it to
+  // null — react-hook-form's resolver runs before the setValueAs-transformed
+  // value reaches the submit handler in some paths.
   retentionDaysOverride: z
-    .union([z.literal(30), z.literal(60), z.literal(90)])
+    .union([
+      z.literal(30),
+      z.literal(60),
+      z.literal(90),
+      z.literal(""),
+      z.null(),
+    ])
     .nullable(),
   llmEvalEnabled: z.boolean(),
   llmEvalAccountId: uuidOrEmpty,
@@ -217,7 +227,11 @@ export function SettingsForm({ orgId }: Props) {
       orgId,
       patch: {
         contentCaptureEnabled: values.contentCaptureEnabled,
-        retentionDaysOverride: values.retentionDaysOverride,
+        retentionDaysOverride:
+          values.retentionDaysOverride === "" ||
+          values.retentionDaysOverride === null
+            ? null
+            : values.retentionDaysOverride,
         llmEvalEnabled: values.llmEvalEnabled,
         llmEvalAccountId: emptyToNull(values.llmEvalAccountId),
         llmEvalModel: emptyToNull(values.llmEvalModel),
