@@ -231,11 +231,15 @@ export function SettingsForm({ orgId }: Props) {
       orgId,
       patch: {
         contentCaptureEnabled: values.contentCaptureEnabled,
+        // `Number("")` is 0 and `Number(undefined)` is NaN — both surface from
+        // the native <select> placeholder even with setValueAs. The server's
+        // Zod accepts only 1..365 or null, so coerce anything non-positive.
         retentionDaysOverride:
-          values.retentionDaysOverride === "" ||
-          values.retentionDaysOverride === null
-            ? null
-            : values.retentionDaysOverride,
+          typeof values.retentionDaysOverride === "number" &&
+          Number.isFinite(values.retentionDaysOverride) &&
+          values.retentionDaysOverride > 0
+            ? values.retentionDaysOverride
+            : null,
         llmEvalEnabled: values.llmEvalEnabled,
         llmEvalAccountId: emptyToNull(values.llmEvalAccountId),
         llmEvalModel: emptyToNull(values.llmEvalModel),
