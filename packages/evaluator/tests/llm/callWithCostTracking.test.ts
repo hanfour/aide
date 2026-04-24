@@ -77,10 +77,7 @@ describe("callWithCostTracking — happy path", () => {
 
   it("passes orgId and estimated cost to enforceBudget", async () => {
     await baseCall();
-    expect(mockEnforceBudget).toHaveBeenCalledWith(
-      "org-1",
-      expect.any(Number),
-    );
+    expect(mockEnforceBudget).toHaveBeenCalledWith("org-1", expect.any(Number));
     const estimate = mockEnforceBudget.mock.calls[0][1];
     // estimated: 500 input + max 256 output on haiku
     // = (500 * 0.80 + 256 * 4) / 1M = (400 + 1024) / 1M = 0.001424
@@ -88,7 +85,10 @@ describe("callWithCostTracking — happy path", () => {
   });
 
   it("passes deep_analysis eventType through", async () => {
-    await baseCall({ eventType: "deep_analysis", refType: "evaluation_report" });
+    await baseCall({
+      eventType: "deep_analysis",
+      refType: "evaluation_report",
+    });
     const row = mockInsertLedger.mock.calls[0][0];
     expect(row.eventType).toBe("deep_analysis");
     expect(row.refType).toBe("evaluation_report");
@@ -112,5 +112,87 @@ describe("callWithCostTracking — happy path", () => {
     const row = mockInsertLedger.mock.calls[0][0];
     expect(row.refType).toBeUndefined();
     expect(row.refId).toBeUndefined();
+  });
+});
+
+describe("callWithCostTracking — error paths (D4: no ledger on api/budget errors)", () => {
+  let mockLlmClient: { call: ReturnType<typeof vi.fn> };
+  let mockEnforceBudget: ReturnType<typeof vi.fn>;
+  let mockInsertLedger: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockLlmClient = { call: vi.fn() };
+    mockEnforceBudget = vi.fn().mockResolvedValue(undefined);
+    mockInsertLedger = vi.fn().mockResolvedValue(undefined);
+  });
+
+  const call = () =>
+    callWithCostTracking(
+      {
+        orgId: "o",
+        eventType: "facet_extraction",
+        model: "claude-haiku-4-5",
+        prompt: { system: "", user: "", maxTokens: 10 },
+        estimatedInputTokens: 100,
+      },
+      {
+        llmClient: mockLlmClient,
+        enforceBudget: mockEnforceBudget,
+        insertLedger: mockInsertLedger,
+      },
+    );
+
+  it("does NOT call LLM or write ledger when budget gate throws", async () => {
+    mockEnforceBudget.mockRejectedValue(new Error("budget exceeded"));
+
+    await expect(call()).rejects.toThrow(/budget exceeded/);
+
+    expect(mockLlmClient.call).not.toHaveBeenCalled();
+    expect(mockInsertLedger).not.toHaveBeenCalled();
+  });
+
+  it("does NOT write ledger when LLM call throws a 5xx", async () => {
+    mockLlmClient.call.mockRejectedValue(
+      new Error("Anthropic 503 Service Unavailable"),
+    );
+
+    await expect(call()).rejects.toThrow(/Anthropic 503/);
+
+    expect(mockInsertLedger).not.toHaveBeenCalled();
+  });
+
+  it("does NOT write ledger when LLM call times out", async () => {
+    mockLlmClient.call.mockRejectedValue(new Error("timeout after 15s"));
+
+    await expect(call()).rejects.toThrow(/timeout/);
+
+    expect(mockInsertLedger).not.toHaveBeenCalled();
+  });
+
+  it("does NOT write ledger when response lacks usage (loud error)", async () => {
+    mockLlmClient.call.mockResolvedValue({
+      text: "some response",
+      usage: undefined as unknown as {
+        input_tokens: number;
+        output_tokens: number;
+      },
+    });
+
+    await expect(call()).rejects.toThrow(/missing usage/);
+
+    expect(mockInsertLedger).not.toHaveBeenCalled();
+  });
+
+  it("budget error is propagated so caller can classify it", async () => {
+    class FakeBudgetError extends Error {
+      constructor() {
+        super("budget hit");
+        this.name = "FakeBudgetError";
+      }
+    }
+    mockEnforceBudget.mockRejectedValue(new FakeBudgetError());
+
+    const p = call();
+    await expect(p).rejects.toBeInstanceOf(FakeBudgetError);
   });
 });
