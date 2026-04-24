@@ -13,3 +13,6 @@ out/
 playwright-report/
 .playwright/
 test-results/
+
+# Git worktrees
+.worktrees/
