@@ -38,6 +38,7 @@ function makeEnv(overrides: Partial<ServerEnv> = {}): ServerEnv {
     GATEWAY_OAUTH_MAX_FAIL: 3,
     GATEWAY_QUEUE_SATURATE_THRESHOLD: 5000,
     GATEWAY_LOCAL_BASE_URL: "http://localhost:3002",
+    ENABLE_EVALUATOR: false,
     ...overrides,
   };
 }
