@@ -209,9 +209,12 @@ describe("contentCapture router", () => {
     });
     const caller = await callerFor({ db: t.db, userId: admin.id });
 
+    // Enable LLM eval first because facet extraction depends on it (Plan 4C
+    // server-side cross-field validation rejects facet-without-eval).
     await caller.contentCapture.setSettings({
       orgId: org.id,
       patch: {
+        llmEvalEnabled: true,
         llmFacetEnabled: true,
         llmFacetModel: "claude-haiku-4-5",
       },
@@ -222,6 +225,50 @@ describe("contentCapture router", () => {
     });
     expect(settings.llmFacetEnabled).toBe(true);
     expect(settings.llmFacetModel).toBe("claude-haiku-4-5");
+  });
+
+  it("setSettings rejects facet without LLM eval (cross-field validation)", async () => {
+    const org = await makeOrg(t.db);
+    const admin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const caller = await callerFor({ db: t.db, userId: admin.id });
+
+    // Org defaults to llmEvalEnabled=false. Enabling facet alone should fail.
+    await expect(
+      caller.contentCapture.setSettings({
+        orgId: org.id,
+        patch: {
+          llmFacetEnabled: true,
+          llmFacetModel: "claude-haiku-4-5",
+        },
+      }),
+    ).rejects.toThrow(/requires LLM evaluation/i);
+  });
+
+  it("setSettings rejects facet enabled without a facet model", async () => {
+    const org = await makeOrg(t.db);
+    const admin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const caller = await callerFor({ db: t.db, userId: admin.id });
+
+    await expect(
+      caller.contentCapture.setSettings({
+        orgId: org.id,
+        patch: {
+          llmEvalEnabled: true,
+          llmFacetEnabled: true,
+          // model intentionally missing
+        },
+      }),
+    ).rejects.toThrow(/facet model/i);
   });
 
   it("setSettings rejects invalid llmBudgetOverageBehavior via Zod", async () => {

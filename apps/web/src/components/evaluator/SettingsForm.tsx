@@ -231,9 +231,21 @@ export function SettingsForm({ orgId }: Props) {
     const emptyToNull = <T,>(v: T | "" | null | undefined): T | null =>
       v === "" || v === undefined ? null : (v as T);
 
-    // Plan 4C cross-field validation lives in `settingsSchema.superRefine` so
-    // errors surface as inline field messages — handleSubmit blocks here when
-    // the schema reports issues, so no manual recheck is needed.
+    // Plan 4C cross-field validation. The Zod schema in `./settingsSchema.ts`
+    // codifies these rules and is covered by unit tests, but this form does
+    // not wire `zodResolver` (see useForm comment) — so we must enforce them
+    // manually here. The server-side mutation also rejects bad combos as a
+    // defence-in-depth backstop.
+    if (values.llmFacetEnabled && !values.llmEvalEnabled) {
+      toast.error(
+        "Facet extraction requires LLM evaluation to be enabled first",
+      );
+      return;
+    }
+    if (values.llmFacetEnabled && !values.llmFacetModel) {
+      toast.error("Choose a facet model");
+      return;
+    }
 
     return save.mutateAsync({
       orgId,
