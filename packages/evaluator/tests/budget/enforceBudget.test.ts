@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { enforceBudget, EnforceBudgetDeps } from "../../src/budget/enforceBudget";
-import { BudgetExceededDegrade, BudgetExceededHalt } from "../../src/budget/errors";
+import { enforceBudget } from "../../src/budget/enforceBudget";
+import type { EnforceBudgetDeps } from "../../src/budget/enforceBudget";
+import {
+  BudgetExceededDegrade,
+  BudgetExceededHalt,
+} from "../../src/budget/errors";
+
+type LoadOrgFn = EnforceBudgetDeps["loadOrg"];
+type GetMonthSpendFn = EnforceBudgetDeps["getMonthSpend"];
+type SetHaltFn = EnforceBudgetDeps["setHalt"];
+type ClearHaltFn = EnforceBudgetDeps["clearHalt"];
 
 interface OrgState {
   id: string;
@@ -11,17 +20,17 @@ interface OrgState {
 }
 
 describe("enforceBudget", () => {
-  let mockLoadOrg: ReturnType<typeof vi.fn>;
-  let mockGetMonthSpend: ReturnType<typeof vi.fn>;
-  let mockSetHalt: ReturnType<typeof vi.fn>;
-  let mockClearHalt: ReturnType<typeof vi.fn>;
+  let mockLoadOrg: ReturnType<typeof vi.fn<LoadOrgFn>>;
+  let mockGetMonthSpend: ReturnType<typeof vi.fn<GetMonthSpendFn>>;
+  let mockSetHalt: ReturnType<typeof vi.fn<SetHaltFn>>;
+  let mockClearHalt: ReturnType<typeof vi.fn<ClearHaltFn>>;
   let now: Date;
 
   beforeEach(() => {
-    mockLoadOrg = vi.fn();
-    mockGetMonthSpend = vi.fn();
-    mockSetHalt = vi.fn().mockResolvedValue(undefined);
-    mockClearHalt = vi.fn().mockResolvedValue(undefined);
+    mockLoadOrg = vi.fn<LoadOrgFn>();
+    mockGetMonthSpend = vi.fn<GetMonthSpendFn>();
+    mockSetHalt = vi.fn<SetHaltFn>().mockResolvedValue(undefined);
+    mockClearHalt = vi.fn<ClearHaltFn>().mockResolvedValue(undefined);
     now = new Date("2026-04-15T12:00:00Z");
   });
 
@@ -46,7 +55,9 @@ describe("enforceBudget", () => {
   };
 
   it("passes when budget is NULL (unlimited) — does not check spend", async () => {
-    await expect(call(10, { llm_monthly_budget_usd: null })).resolves.toBeUndefined();
+    await expect(
+      call(10, { llm_monthly_budget_usd: null }),
+    ).resolves.toBeUndefined();
     expect(mockGetMonthSpend).not.toHaveBeenCalled();
   });
 
@@ -68,8 +79,9 @@ describe("enforceBudget", () => {
 
   it("throws BudgetExceededHalt and sets halt flag when behavior=halt", async () => {
     mockGetMonthSpend.mockResolvedValue(49);
-    await expect(call(5, { llm_budget_overage_behavior: "halt" }))
-      .rejects.toBeInstanceOf(BudgetExceededHalt);
+    await expect(
+      call(5, { llm_budget_overage_behavior: "halt" }),
+    ).rejects.toBeInstanceOf(BudgetExceededHalt);
     expect(mockSetHalt).toHaveBeenCalledWith("org-1");
   });
 
@@ -118,7 +130,7 @@ describe("enforceBudget", () => {
     mockGetMonthSpend.mockResolvedValue(0);
     await call(1);
 
-    const callArgs = mockGetMonthSpend.mock.calls[0];
+    const callArgs = mockGetMonthSpend.mock.calls[0]!;
     expect(callArgs[0]).toBe("org-1");
     const monthStart = callArgs[1] as Date;
     expect(monthStart.toISOString()).toBe("2026-04-01T00:00:00.000Z");
