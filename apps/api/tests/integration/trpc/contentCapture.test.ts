@@ -165,6 +165,101 @@ describe("contentCapture router", () => {
     expect(settings.llmEvalEnabled).toBe(false);
     expect(settings.captureThinking).toBe(false);
     expect(settings.leaderboardEnabled).toBe(false);
+    // Plan 4C defaults
+    expect(settings.llmFacetEnabled).toBe(false);
+    expect(settings.llmFacetModel).toBeNull();
+    expect(settings.llmMonthlyBudgetUsd).toBeNull();
+    expect(settings.llmBudgetOverageBehavior).toBe("degrade");
+    expect(settings.llmHaltedUntilMonthEnd).toBe(false);
+  });
+
+  it("setSettings persists Plan 4C cost-budget fields", async () => {
+    const org = await makeOrg(t.db);
+    const admin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const caller = await callerFor({ db: t.db, userId: admin.id });
+
+    await caller.contentCapture.setSettings({
+      orgId: org.id,
+      patch: {
+        llmMonthlyBudgetUsd: 50,
+        llmBudgetOverageBehavior: "halt",
+      },
+    });
+
+    const settings = await caller.contentCapture.getSettings({
+      orgId: org.id,
+    });
+    // decimal columns return as strings from Drizzle
+    expect(Number(settings.llmMonthlyBudgetUsd)).toBe(50);
+    expect(settings.llmBudgetOverageBehavior).toBe("halt");
+  });
+
+  it("setSettings persists Plan 4C facet fields", async () => {
+    const org = await makeOrg(t.db);
+    const admin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const caller = await callerFor({ db: t.db, userId: admin.id });
+
+    await caller.contentCapture.setSettings({
+      orgId: org.id,
+      patch: {
+        llmFacetEnabled: true,
+        llmFacetModel: "claude-haiku-4-5",
+      },
+    });
+
+    const settings = await caller.contentCapture.getSettings({
+      orgId: org.id,
+    });
+    expect(settings.llmFacetEnabled).toBe(true);
+    expect(settings.llmFacetModel).toBe("claude-haiku-4-5");
+  });
+
+  it("setSettings rejects invalid llmBudgetOverageBehavior via Zod", async () => {
+    const org = await makeOrg(t.db);
+    const admin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const caller = await callerFor({ db: t.db, userId: admin.id });
+
+    await expect(
+      caller.contentCapture.setSettings({
+        orgId: org.id,
+        // @ts-expect-error — testing runtime Zod rejection
+        patch: { llmBudgetOverageBehavior: "invalid" },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("setSettings rejects invalid llmFacetModel via Zod", async () => {
+    const org = await makeOrg(t.db);
+    const admin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const caller = await callerFor({ db: t.db, userId: admin.id });
+
+    await expect(
+      caller.contentCapture.setSettings({
+        orgId: org.id,
+        // @ts-expect-error — testing runtime Zod rejection
+        patch: { llmFacetModel: "gpt-5" },
+      }),
+    ).rejects.toThrow();
   });
 
   it("setSettings with contentCaptureEnabled: true (first-enable) writes enabledAt + enabledBy + audit log", async () => {
@@ -200,9 +295,7 @@ describe("contentCapture router", () => {
       .select()
       .from(auditLogs)
       .where(eq(auditLogs.orgId, org.id));
-    const enableLog = logs.find(
-      (l) => l.action === "content_capture.enabled",
-    );
+    const enableLog = logs.find((l) => l.action === "content_capture.enabled");
     expect(enableLog).toBeDefined();
     expect(enableLog?.actorUserId).toBe(admin.id);
   });

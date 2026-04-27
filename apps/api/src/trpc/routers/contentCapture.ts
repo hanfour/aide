@@ -17,6 +17,15 @@ const settingsPatch = z.object({
   captureThinking: z.boolean().optional(),
   rubricId: z.string().uuid().nullable().optional(),
   leaderboardEnabled: z.boolean().optional(),
+
+  // ── Plan 4C: cost budget + facet ──────────────────────────────────────────
+  llmFacetEnabled: z.boolean().optional(),
+  llmFacetModel: z
+    .enum(["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"])
+    .nullable()
+    .optional(),
+  llmMonthlyBudgetUsd: z.number().min(0).max(100_000).nullable().optional(),
+  llmBudgetOverageBehavior: z.enum(["degrade", "halt"]).optional(),
 });
 
 export const contentCaptureRouter = router({
@@ -41,6 +50,12 @@ export const contentCaptureRouter = router({
           captureThinking: organizations.captureThinking,
           rubricId: organizations.rubricId,
           leaderboardEnabled: organizations.leaderboardEnabled,
+          // Plan 4C — cost budget + facet
+          llmFacetEnabled: organizations.llmFacetEnabled,
+          llmFacetModel: organizations.llmFacetModel,
+          llmMonthlyBudgetUsd: organizations.llmMonthlyBudgetUsd,
+          llmBudgetOverageBehavior: organizations.llmBudgetOverageBehavior,
+          llmHaltedUntilMonthEnd: organizations.llmHaltedUntilMonthEnd,
         })
         .from(organizations)
         .where(eq(organizations.id, input.orgId))
@@ -77,6 +92,11 @@ export const contentCaptureRouter = router({
 
       const now = new Date();
       const updates: Record<string, unknown> = { ...input.patch };
+      // Drizzle's `decimal` column expects a string at the type level. The Zod
+      // schema accepts numbers from the UI, so coerce here.
+      if (typeof input.patch.llmMonthlyBudgetUsd === "number") {
+        updates.llmMonthlyBudgetUsd = String(input.patch.llmMonthlyBudgetUsd);
+      }
       if (turningOn) {
         updates.contentCaptureEnabledAt = now;
         updates.contentCaptureEnabledBy = ctx.user.id;
