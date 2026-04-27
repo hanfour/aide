@@ -17,13 +17,17 @@
  * Notes:
  *   - `halt_set_at` is intentionally returned as `undefined`. The `organizations`
  *     table currently lacks a dedicated `llm_halted_at` column, so we cannot
- *     accurately track when the halt was set. As a result, once the halt flag
- *     flips on, it remains on until manually cleared (it will not auto-clear
- *     when the month rolls over). This is a known v0.5.0 limitation; an admin
- *     can clear the flag via SQL or a future UI button. A follow-up task will
- *     add `llm_halted_at` and remove this caveat.
- *     TODO(plan-4c-followup): add `llm_halted_at timestamptz` column and
- *     populate it in setHalt; surface it here as `halt_set_at`.
+ *     prove which UTC month the halt belongs to. With `halt_set_at` undefined,
+ *     `enforceBudget` falls through its same-month check and calls `clearHalt`
+ *     on every halted call, then re-evaluates spend. Net behaviour stays
+ *     correct because over-budget orgs immediately re-set the halt and throw
+ *     `BudgetExceededHalt` — but the cost is **2 UPDATEs per halted call**
+ *     (clear + set) instead of a cheap flag-read short-circuit. There is also
+ *     a tiny race window where a delayed/rolled-back ledger row could let one
+ *     call slip through if spend dips back under budget mid-cycle.
+ *     TODO(plan-4c-followup): add `llm_halted_at timestamptz` column,
+ *     populate it in setHalt, and surface it here as `halt_set_at`. This will
+ *     restore the cheap short-circuit path and close the race window.
  */
 
 import { and, eq, gte, lt, sum } from "drizzle-orm";

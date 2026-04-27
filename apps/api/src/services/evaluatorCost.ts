@@ -57,70 +57,74 @@ export async function getCostSummary(
 ): Promise<CostSummary> {
   const mStart = monthStartUtc(now);
   const mEnd = monthShift(now, 1);
+  const histStart = monthShift(now, -5);
 
-  // 1. Org settings (budget + halted flag)
-  const orgRows = await db
-    .select({
-      budget: organizations.llmMonthlyBudgetUsd,
-      halted: organizations.llmHaltedUntilMonthEnd,
-    })
-    .from(organizations)
-    .where(eq(organizations.id, orgId))
-    .limit(1);
+  // Run the 4 read queries in parallel — none depend on each other and the
+  // dashboard is the typical caller, so latency matters more than DB-load
+  // smoothing.
+  const [orgRows, byType, byModel, histRows] = await Promise.all([
+    // 1. Org settings (budget + halted flag)
+    db
+      .select({
+        budget: organizations.llmMonthlyBudgetUsd,
+        halted: organizations.llmHaltedUntilMonthEnd,
+      })
+      .from(organizations)
+      .where(eq(organizations.id, orgId))
+      .limit(1),
 
-  const budget =
-    orgRows[0]?.budget == null ? null : Number(orgRows[0].budget);
+    // 2. Breakdown by event_type for current month.
+    db
+      .select({
+        eventType: llmUsageEvents.eventType,
+        calls: count(),
+        total: sum(llmUsageEvents.costUsd),
+      })
+      .from(llmUsageEvents)
+      .where(
+        and(
+          eq(llmUsageEvents.orgId, orgId),
+          gte(llmUsageEvents.createdAt, mStart),
+          lt(llmUsageEvents.createdAt, mEnd),
+        ),
+      )
+      .groupBy(llmUsageEvents.eventType),
+
+    // 3. Breakdown by model for current month, sorted by total desc.
+    db
+      .select({
+        model: llmUsageEvents.model,
+        calls: count(),
+        total: sum(llmUsageEvents.costUsd),
+      })
+      .from(llmUsageEvents)
+      .where(
+        and(
+          eq(llmUsageEvents.orgId, orgId),
+          gte(llmUsageEvents.createdAt, mStart),
+          lt(llmUsageEvents.createdAt, mEnd),
+        ),
+      )
+      .groupBy(llmUsageEvents.model)
+      .orderBy(desc(sum(llmUsageEvents.costUsd))),
+
+    // 4. Historical 6 months (including current).
+    db.execute<{ month: string; total: string }>(sql`
+      SELECT to_char(date_trunc('month', created_at), 'YYYY-MM') AS month,
+             COALESCE(SUM(cost_usd), 0)::text AS total
+      FROM llm_usage_events
+      WHERE org_id = ${orgId}
+        AND created_at >= ${histStart}
+      GROUP BY 1
+      ORDER BY 1
+    `),
+  ]);
+
+  const budget = orgRows[0]?.budget == null ? null : Number(orgRows[0].budget);
   const halted = orgRows[0]?.halted ?? false;
-
-  // 2. Breakdown by event_type for current month.
-  const byType = await db
-    .select({
-      eventType: llmUsageEvents.eventType,
-      calls: count(),
-      total: sum(llmUsageEvents.costUsd),
-    })
-    .from(llmUsageEvents)
-    .where(
-      and(
-        eq(llmUsageEvents.orgId, orgId),
-        gte(llmUsageEvents.createdAt, mStart),
-        lt(llmUsageEvents.createdAt, mEnd),
-      ),
-    )
-    .groupBy(llmUsageEvents.eventType);
 
   const facet = byType.find((r) => r.eventType === "facet_extraction");
   const deep = byType.find((r) => r.eventType === "deep_analysis");
-
-  // 3. Breakdown by model for current month, sorted by total desc.
-  const byModel = await db
-    .select({
-      model: llmUsageEvents.model,
-      calls: count(),
-      total: sum(llmUsageEvents.costUsd),
-    })
-    .from(llmUsageEvents)
-    .where(
-      and(
-        eq(llmUsageEvents.orgId, orgId),
-        gte(llmUsageEvents.createdAt, mStart),
-        lt(llmUsageEvents.createdAt, mEnd),
-      ),
-    )
-    .groupBy(llmUsageEvents.model)
-    .orderBy(desc(sum(llmUsageEvents.costUsd)));
-
-  // 4. Historical 6 months (including current).
-  const histStart = monthShift(now, -5);
-  const histRows = await db.execute<{ month: string; total: string }>(sql`
-    SELECT to_char(date_trunc('month', created_at), 'YYYY-MM') AS month,
-           COALESCE(SUM(cost_usd), 0)::text AS total
-    FROM llm_usage_events
-    WHERE org_id = ${orgId}
-      AND created_at >= ${histStart}
-    GROUP BY 1
-    ORDER BY 1
-  `);
   const histByMonth = new Map<string, number>();
   for (const r of histRows.rows) {
     histByMonth.set(r.month, Number(r.total));

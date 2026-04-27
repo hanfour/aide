@@ -85,16 +85,20 @@ describe("enforceBudget", () => {
     expect(mockSetHalt).toHaveBeenCalledWith("org-1");
   });
 
-  it("throws BudgetExceededHalt immediately when halt flag is set this same month", async () => {
+  it("throws BudgetExceededHalt with actual spend when halt flag is set this same month", async () => {
+    mockGetMonthSpend.mockResolvedValue(42);
     await expect(
       call(5, {
         llm_halted_until_month_end: true,
         halt_set_at: new Date("2026-04-10T00:00:00Z"),
       }),
-    ).rejects.toBeInstanceOf(BudgetExceededHalt);
+    ).rejects.toMatchObject({
+      name: "BudgetExceededHalt",
+      currentSpend: 42, // actual spend, not a placeholder
+    });
 
-    // shouldn't even check spend
-    expect(mockGetMonthSpend).not.toHaveBeenCalled();
+    // queries spend so the error log carries an honest currentSpend value
+    expect(mockGetMonthSpend).toHaveBeenCalledTimes(1);
     // shouldn't call setHalt again (already halted)
     expect(mockSetHalt).not.toHaveBeenCalled();
   });
@@ -115,6 +119,7 @@ describe("enforceBudget", () => {
 
   it("preserves halt flag across days within same month", async () => {
     now = new Date("2026-04-30T23:59:00Z");
+    mockGetMonthSpend.mockResolvedValue(60);
     await expect(
       call(5, {
         llm_halted_until_month_end: true,

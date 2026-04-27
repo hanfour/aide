@@ -38,10 +38,13 @@ export async function enforceBudget(
   // Halt flag: if set this same month, throw immediately. If from a prior month, clear and continue.
   if (org.llm_halted_until_month_end) {
     if (org.halt_set_at && sameMonth(org.halt_set_at, now)) {
+      // We're already halted — query actual spend so error logs are honest
+      // about the current state (rather than passing the budget as spend).
+      const currentSpend = await deps.getMonthSpend(orgId, monthStartUtc(now));
       throw new BudgetExceededHalt({
         orgId,
         estimatedCost,
-        currentSpend: org.llm_monthly_budget_usd ?? 0,
+        currentSpend,
         budget: org.llm_monthly_budget_usd ?? 0,
       });
     }

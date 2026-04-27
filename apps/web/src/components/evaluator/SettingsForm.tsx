@@ -37,36 +37,56 @@ const uuidOrEmpty = z
   })
   .transform((v) => (v === "" ? null : v));
 
-const settingsSchema = z.object({
-  contentCaptureEnabled: z.boolean(),
-  // Native <select> surfaces "" for the placeholder option even when we
-  // register with setValueAs. Accept "" here and let onSubmit coerce it to
-  // null — react-hook-form's resolver runs before the setValueAs-transformed
-  // value reaches the submit handler in some paths.
-  retentionDaysOverride: z
-    .union([
-      z.literal(30),
-      z.literal(60),
-      z.literal(90),
-      z.literal(""),
-      z.null(),
-    ])
-    .nullable(),
-  llmEvalEnabled: z.boolean(),
-  llmEvalAccountId: uuidOrEmpty,
-  llmEvalModel: z.string().nullable(),
-  captureThinking: z.boolean(),
-  rubricId: uuidOrEmpty,
-  leaderboardEnabled: z.boolean(),
-  // ── Plan 4C: cost budget + facet ────────────────────────────────────────
-  llmFacetEnabled: z.boolean(),
-  llmFacetModel: z
-    .enum(["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"])
-    .nullable(),
-  // Native <input type="number"> surfaces "" for empty; coerce to null.
-  llmMonthlyBudgetUsd: z.union([z.number(), z.null()]),
-  llmBudgetOverageBehavior: z.enum(["degrade", "halt"]),
-});
+const settingsSchema = z
+  .object({
+    contentCaptureEnabled: z.boolean(),
+    // Native <select> surfaces "" for the placeholder option even when we
+    // register with setValueAs. Accept "" here and let onSubmit coerce it to
+    // null — react-hook-form's resolver runs before the setValueAs-transformed
+    // value reaches the submit handler in some paths.
+    retentionDaysOverride: z
+      .union([
+        z.literal(30),
+        z.literal(60),
+        z.literal(90),
+        z.literal(""),
+        z.null(),
+      ])
+      .nullable(),
+    llmEvalEnabled: z.boolean(),
+    llmEvalAccountId: uuidOrEmpty,
+    llmEvalModel: z.string().nullable(),
+    captureThinking: z.boolean(),
+    rubricId: uuidOrEmpty,
+    leaderboardEnabled: z.boolean(),
+    // ── Plan 4C: cost budget + facet ────────────────────────────────────────
+    llmFacetEnabled: z.boolean(),
+    llmFacetModel: z
+      .enum(["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"])
+      .nullable(),
+    // Native <input type="number"> surfaces "" for empty; coerce to null.
+    llmMonthlyBudgetUsd: z.union([z.number(), z.null()]),
+    llmBudgetOverageBehavior: z.enum(["degrade", "halt"]),
+  })
+  .superRefine((val, ctx) => {
+    // Plan 4C: facet extraction requires LLM evaluation to be enabled, and a
+    // facet model must be chosen. Surface as inline field errors so the user
+    // sees them next to the relevant control rather than on submit.
+    if (val.llmFacetEnabled && !val.llmEvalEnabled) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Facet extraction requires LLM evaluation to be enabled first",
+        path: ["llmFacetEnabled"],
+      });
+    }
+    if (val.llmFacetEnabled && !val.llmFacetModel) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Choose a facet model",
+        path: ["llmFacetModel"],
+      });
+    }
+  });
 
 type FormValues = z.infer<typeof settingsSchema>;
 
@@ -272,17 +292,9 @@ export function SettingsForm({ orgId }: Props) {
     const emptyToNull = <T,>(v: T | "" | null | undefined): T | null =>
       v === "" || v === undefined ? null : (v as T);
 
-    // Plan 4C cross-field validation: facet extraction requires LLM eval.
-    if (values.llmFacetEnabled && !values.llmEvalEnabled) {
-      toast.error(
-        "Facet extraction requires LLM evaluation to be enabled first",
-      );
-      return;
-    }
-    if (values.llmFacetEnabled && !values.llmFacetModel) {
-      toast.error("Choose a facet model");
-      return;
-    }
+    // Plan 4C cross-field validation lives in `settingsSchema.superRefine` so
+    // errors surface as inline field messages — handleSubmit blocks here when
+    // the schema reports issues, so no manual recheck is needed.
 
     return save.mutateAsync({
       orgId,
@@ -576,21 +588,33 @@ export function SettingsForm({ orgId }: Props) {
               Haiku is recommended: ~10× cheaper than Sonnet and sufficient for
               structured extraction.
             </p>
-            {errors.llmFacetModel && (
-              <p className="text-xs text-destructive">
-                {errors.llmFacetModel.message}
-              </p>
-            )}
           </div>
 
-          {watch("llmFacetEnabled") && !llmEvalEnabled && (
+          {/* Live cross-field hints. Zod's superRefine in `settingsSchema`
+              also blocks submit if these conditions hold; these messages are
+              for immediate (pre-submit) UX feedback. */}
+          {errors.llmFacetEnabled?.message && (
             <p className="text-xs text-destructive">
-              Facet extraction requires LLM evaluation to be enabled first.
+              {errors.llmFacetEnabled.message}
             </p>
           )}
-          {watch("llmFacetEnabled") && !watch("llmFacetModel") && (
-            <p className="text-xs text-destructive">Choose a facet model.</p>
+          {!errors.llmFacetEnabled &&
+            watch("llmFacetEnabled") &&
+            !llmEvalEnabled && (
+              <p className="text-xs text-destructive">
+                Facet extraction requires LLM evaluation to be enabled first.
+              </p>
+            )}
+          {errors.llmFacetModel?.message && (
+            <p className="text-xs text-destructive">
+              {errors.llmFacetModel.message}
+            </p>
           )}
+          {!errors.llmFacetModel &&
+            watch("llmFacetEnabled") &&
+            !watch("llmFacetModel") && (
+              <p className="text-xs text-destructive">Choose a facet model.</p>
+            )}
         </section>
 
         {/* ── Rubric section ──────────────────────────────────────────────── */}
