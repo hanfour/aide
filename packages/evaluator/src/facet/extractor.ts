@@ -14,14 +14,18 @@
  *     they retry on the next ensureFacets pass. Returns null.
  */
 
-import { CURRENT_PROMPT_VERSION, buildFacetPrompt, type Turn } from "./promptBuilder";
+import {
+  CURRENT_PROMPT_VERSION,
+  buildFacetPrompt,
+  type Turn,
+} from "./promptBuilder.js";
 import {
   parseFacet,
   FacetParseError,
   FacetValidationError,
   type FacetFields,
-} from "./parser";
-import { isBudgetError } from "../budget/errors";
+} from "./parser.js";
+import { isBudgetError } from "../budget/errors.js";
 
 export interface FacetSession {
   requestId: string;
@@ -60,7 +64,10 @@ export interface FacetCallDeps {
     prompt: { system: string; user: string; maxTokens: number };
     estimatedInputTokens: number;
   }) => Promise<{
-    response: { text: string; usage: { input_tokens: number; output_tokens: number } };
+    response: {
+      text: string;
+      usage: { input_tokens: number; output_tokens: number };
+    };
     cost: number;
   }>;
 
@@ -71,8 +78,10 @@ export interface FacetCallDeps {
 
 function classifyDeterministicError(e: unknown): string | null {
   if (e instanceof FacetParseError) return `parse_error: ${e.message}`;
-  if (e instanceof FacetValidationError) return `validation_error: ${e.message}`;
-  if (e instanceof Error && /timeout/i.test(e.message)) return `timeout: ${e.message}`;
+  if (e instanceof FacetValidationError)
+    return `validation_error: ${e.message}`;
+  if (e instanceof Error && /timeout/i.test(e.message))
+    return `timeout: ${e.message}`;
   return null;
 }
 
@@ -100,7 +109,10 @@ export async function extractOne(
     (prompt.system.length + prompt.user.length) / 4,
   );
 
-  let response: { text: string; usage: { input_tokens: number; output_tokens: number } };
+  let response: {
+    text: string;
+    usage: { input_tokens: number; output_tokens: number };
+  };
   try {
     const result = await deps.callWithCostTracking({
       orgId: session.orgId,

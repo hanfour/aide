@@ -7,16 +7,14 @@
  * reader and bound `extractOne`.
  */
 
-import { CURRENT_PROMPT_VERSION } from "./promptBuilder";
-import type { FacetSession } from "./extractor";
+import { CURRENT_PROMPT_VERSION } from "./promptBuilder.js";
+import type { FacetSession } from "./extractor.js";
 
 export interface EnsureFacetsDeps {
   /**
    * Resolve the existing facet row's promptVersion (or null if no row).
    */
-  getFacet: (
-    requestId: string,
-  ) => Promise<{ promptVersion: number } | null>;
+  getFacet: (requestId: string) => Promise<{ promptVersion: number } | null>;
 
   /**
    * Run `extractOne` for one session.
