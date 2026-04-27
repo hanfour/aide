@@ -16,6 +16,7 @@ import { TrendChart } from "./TrendChart";
 import { EvidenceRow } from "./EvidenceRow";
 import { ExportDialog } from "./ExportDialog";
 import { DeleteRequestDialog } from "./DeleteRequestDialog";
+import { FacetSummaryCard } from "./FacetSummaryCard";
 import type { ScorePoint } from "./TrendChart";
 import type { SignalHitDisplay } from "./EvidenceRow";
 
@@ -257,6 +258,23 @@ export function ProfileEvaluation() {
           <TrendChart series={trendSeries} />
         </CardContent>
       </Card>
+
+      {/* Facet drill-down (Plan 4C follow-up #3). Hidden silently when
+          there are no facet rows for this period. */}
+      <FacetSummaryCard
+        orgId={latestReport.orgId}
+        userId={latestReport.userId}
+        rangeFrom={
+          typeof latestReport.periodStart === "string"
+            ? latestReport.periodStart
+            : new Date(latestReport.periodStart).toISOString()
+        }
+        rangeTo={
+          typeof latestReport.periodEnd === "string"
+            ? latestReport.periodEnd
+            : new Date(latestReport.periodEnd).toISOString()
+        }
+      />
 
       {/* LLM narrative — owner always has full visibility */}
       {hasLlmNarrative && (

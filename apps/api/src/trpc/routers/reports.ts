@@ -13,6 +13,7 @@ import { can } from "@aide/auth";
 import { router } from "../procedures.js";
 import { evaluatorProcedure } from "./_evaluatorGate.js";
 import { notifyGdprRequested } from "../../services/gdprNotifications.js";
+import { getFacetSummary } from "../../services/facetSummary.js";
 
 // ─── Evaluator queue constants (duplicated from apps/gateway to avoid cross-package import) ──
 // TODO: extract to a shared @aide/queue package to eliminate this duplication.
@@ -166,6 +167,44 @@ export const reportsRouter = router({
         can(ctx.perm, { type: "report.read_org", orgId: input.orgId });
 
       return rows.map((r) => redactLlm(r, canSeeLlm));
+    }),
+
+  /**
+   * Returns the facet-extraction aggregate for one (org, user, period) window.
+   * Surfaces session-type distribution, success rate, and the four
+   * count-style metrics that the rule-engine signals consume. Used by the
+   * report-page drill-down (Plan 4C follow-up #3).
+   *
+   * Same RBAC as `getUser`: `report.read_user`. Returns the empty summary
+   * (zero rows, all null aggregates) when no facet rows exist for the
+   * window — never throws on empty input.
+   */
+  facetSummary: evaluatorProcedure
+    .input(
+      z.object({
+        orgId: z.string().uuid(),
+        userId: z.string().uuid(),
+        range: dateRange,
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      if (
+        !can(ctx.perm, {
+          type: "report.read_user",
+          orgId: input.orgId,
+          targetUserId: input.userId,
+        })
+      ) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      return getFacetSummary(
+        ctx.db,
+        input.orgId,
+        input.userId,
+        new Date(input.range.from),
+        new Date(input.range.to),
+      );
     }),
 
   /**
