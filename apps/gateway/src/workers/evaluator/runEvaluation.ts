@@ -21,6 +21,11 @@ import {
   type UpsertEvaluationReportInput,
 } from "./runRuleBased.js";
 import { runLlmDeepAnalysis, type LlmMetrics } from "./runLlm.js";
+import {
+  runFacetExtraction,
+  type FacetMetrics,
+  type RunFacetExtractionResult,
+} from "./runFacetExtraction.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -33,7 +38,7 @@ export const LLM_MIN_COVERAGE_RATIO = 0.5;
 
 // ── Input / Output types ─────────────────────────────────────────────────────
 
-export interface EvaluationMetrics extends LlmMetrics {
+export interface EvaluationMetrics extends LlmMetrics, Partial<FacetMetrics> {
   gwEvalLlmCalledTotal?: { inc: (labels: { result: string }) => void };
   gwEvalLlmCostUsd?: { inc: (value: number) => void };
   gwEvalDlqCount?: { inc: () => void };
@@ -71,6 +76,8 @@ export interface RunEvaluationResult {
   llmAttempted: boolean;
   llmSucceeded: boolean;
   llmCostUsd: number;
+  /** Outcome of the optional facet-extraction pass (Plan 4C follow-up #1). */
+  facetResult?: RunFacetExtractionResult;
 }
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────
@@ -98,6 +105,33 @@ export async function runEvaluation(
       llmSucceeded: false,
       llmCostUsd: 0,
     };
+  }
+
+  // Phase 1.5: optional facet enrichment (Plan 4C follow-up #1).
+  // Runs after rule-based scoring but before deep analysis. Fail-soft —
+  // never blocks the rest of the pipeline. Gated by ENABLE_FACET_EXTRACTION
+  // (process env) AND per-org `llm_facet_enabled`.
+  let facetResult: RunFacetExtractionResult | undefined;
+  if (process.env.ENABLE_FACET_EXTRACTION === "true") {
+    try {
+      facetResult = await runFacetExtraction({
+        db: input.db,
+        redis: input.redis,
+        gatewayBaseUrl: input.gatewayBaseUrl,
+        orgId: input.orgId,
+        bodies: rb.bodies,
+        fetchImpl: input.fetchImpl,
+        metrics: extractFacetMetrics(input.metrics),
+      });
+    } catch {
+      // runFacetExtraction is itself fail-soft; this is belt-and-suspenders.
+      facetResult = {
+        attempted: 0,
+        extracted: 0,
+        cacheHits: 0,
+        skippedReason: "extraction_error",
+      };
+    }
   }
 
   // Phase 2: optional LLM deep analysis
@@ -169,5 +203,34 @@ export async function runEvaluation(
     llmAttempted: shouldRunLlm,
     llmSucceeded: llmResult !== null,
     llmCostUsd: llmResult?.costUsd ?? 0,
+    facetResult,
+  };
+}
+
+/**
+ * Pull just the metrics that `runFacetExtraction` needs from the broader
+ * `EvaluationMetrics` bag. Returns undefined if none of the facet metrics
+ * are present so the orchestrator can fall back to its no-metrics path.
+ */
+function extractFacetMetrics(
+  m: EvaluationMetrics | undefined,
+): FacetMetrics | undefined {
+  if (
+    !m?.gwLlmCostUsdTotal ||
+    !m.gwLlmBudgetWarnTotal ||
+    !m.gwLlmBudgetExceededTotal ||
+    !m.gwFacetExtractTotal ||
+    !m.gwFacetExtractDurationMs ||
+    !m.gwFacetCacheHitTotal
+  ) {
+    return undefined;
+  }
+  return {
+    gwLlmCostUsdTotal: m.gwLlmCostUsdTotal,
+    gwLlmBudgetWarnTotal: m.gwLlmBudgetWarnTotal,
+    gwLlmBudgetExceededTotal: m.gwLlmBudgetExceededTotal,
+    gwFacetExtractTotal: m.gwFacetExtractTotal,
+    gwFacetExtractDurationMs: m.gwFacetExtractDurationMs,
+    gwFacetCacheHitTotal: m.gwFacetCacheHitTotal,
   };
 }
