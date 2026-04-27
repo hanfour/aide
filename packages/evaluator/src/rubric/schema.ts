@@ -69,6 +69,46 @@ export const signalSchema = z.discriminatedUnion("type", [
     id: z.string(),
     gte: z.number(),
   }),
+  // ── Plan 4C — facet-based signals (require ENABLE_FACET_EXTRACTION + per-org
+  //    `llm_facet_enabled`; emit `hit: false` cleanly when no facet rows are
+  //    present in the window so absence-of-data degrades gracefully).
+  z.object({
+    type: z.literal("facet_claude_helpfulness"),
+    id: z.string(),
+    gte: z.number().min(1).max(5),
+  }),
+  z.object({
+    type: z.literal("facet_friction_per_session"),
+    id: z.string(),
+    lte: z.number().min(0),
+  }),
+  z.object({
+    type: z.literal("facet_bugs_caught"),
+    id: z.string(),
+    gte: z.number().min(0),
+  }),
+  z.object({
+    type: z.literal("facet_codex_errors"),
+    id: z.string(),
+    lte: z.number().min(0),
+  }),
+  z.object({
+    type: z.literal("facet_outcome_success_rate"),
+    id: z.string(),
+    gte: z.number().min(0).max(1),
+  }),
+  z.object({
+    type: z.literal("facet_session_type_ratio"),
+    id: z.string(),
+    targetType: z.enum([
+      "feature_dev",
+      "bug_fix",
+      "refactor",
+      "exploration",
+      "other",
+    ]),
+    gte: z.number().min(0).max(1),
+  }),
 ]);
 
 export const sectionSchema = z.object({

@@ -44,7 +44,10 @@ const formSchema = z.object({
       try {
         parsed = JSON.parse(val);
       } catch {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Must be valid JSON" });
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Must be valid JSON",
+        });
         return;
       }
       const result = rubricSchema.safeParse(parsed);
@@ -80,7 +83,12 @@ function tryFormatJson(raw: string): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function RubricEditor({ orgId, editingRow, onSuccess, onCancel }: RubricEditorProps) {
+export function RubricEditor({
+  orgId,
+  editingRow,
+  onSuccess,
+  onCancel,
+}: RubricEditorProps) {
   const isEditing = editingRow !== null;
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -193,7 +201,12 @@ export function RubricEditor({ orgId, editingRow, onSuccess, onCancel }: RubricE
   const isMutating = create.isPending || update.isPending;
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onCancel();
+      }}
+    >
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEditing ? "Edit rubric" : "New rubric"}</DialogTitle>
@@ -227,7 +240,9 @@ export function RubricEditor({ orgId, editingRow, onSuccess, onCancel }: RubricE
               {...register("description")}
             />
             {errors.description && (
-              <p className="text-xs text-destructive">{errors.description.message}</p>
+              <p className="text-xs text-destructive">
+                {errors.description.message}
+              </p>
             )}
           </div>
 
@@ -240,7 +255,9 @@ export function RubricEditor({ orgId, editingRow, onSuccess, onCancel }: RubricE
               {...register("version")}
             />
             {errors.version && (
-              <p className="text-xs text-destructive">{errors.version.message}</p>
+              <p className="text-xs text-destructive">
+                {errors.version.message}
+              </p>
             )}
           </div>
 
@@ -265,7 +282,9 @@ export function RubricEditor({ orgId, editingRow, onSuccess, onCancel }: RubricE
             <textarea
               id="rubric-definition"
               className={TEXTAREA_CLASS}
-              placeholder={'{\n  "name": "...",\n  "version": "1.0.0",\n  "sections": [...]\n}'}
+              placeholder={
+                '{\n  "name": "...",\n  "version": "1.0.0",\n  "sections": [...]\n}'
+              }
               spellCheck={false}
               {...register("definitionJson")}
             />
@@ -273,18 +292,123 @@ export function RubricEditor({ orgId, editingRow, onSuccess, onCancel }: RubricE
               <p className="text-xs text-destructive">{uploadError}</p>
             )}
             {errors.definitionJson && (
-              <p className="text-xs text-destructive">{errors.definitionJson.message}</p>
+              <p className="text-xs text-destructive">
+                {errors.definitionJson.message}
+              </p>
             )}
+
+            {/* Signal-type reference (Plan 4C follow-up #4) */}
+            <details className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+              <summary className="cursor-pointer font-medium select-none">
+                Signal types reference
+              </summary>
+              <div className="mt-2 space-y-3">
+                <div>
+                  <p className="font-medium uppercase text-muted-foreground tracking-wide">
+                    Built-in (gateway-native)
+                  </p>
+                  <ul className="mt-1 space-y-0.5 font-mono">
+                    <li>
+                      <code>keyword</code> ·{" "}
+                      <span className="text-muted-foreground">
+                        in: request_body | response_body | both, terms[],
+                        caseSensitive?
+                      </span>
+                    </li>
+                    <li>
+                      <code>threshold</code> ·{" "}
+                      <span className="text-muted-foreground">
+                        metric, gte? | lte? | between?
+                      </span>
+                    </li>
+                    <li>
+                      <code>refusal_rate</code> ·{" "}
+                      <span className="text-muted-foreground">lte (0-1)</span>
+                    </li>
+                    <li>
+                      <code>client_mix</code> ·{" "}
+                      <span className="text-muted-foreground">
+                        expect[], minRatio
+                      </span>
+                    </li>
+                    <li>
+                      <code>model_diversity</code>,{" "}
+                      <code>cache_read_ratio</code>, <code>tool_diversity</code>
+                      , <code>iteration_count</code> ·{" "}
+                      <span className="text-muted-foreground">gte</span>
+                    </li>
+                    <li>
+                      <code>extended_thinking_used</code> ·{" "}
+                      <span className="text-muted-foreground">minCount</span>
+                    </li>
+                  </ul>
+                </div>
+                <div>
+                  <p className="font-medium uppercase text-muted-foreground tracking-wide">
+                    Facet (requires facet extraction enabled on the org)
+                  </p>
+                  <ul className="mt-1 space-y-0.5 font-mono">
+                    <li>
+                      <code>facet_claude_helpfulness</code> ·{" "}
+                      <span className="text-muted-foreground">gte (1-5)</span>
+                    </li>
+                    <li>
+                      <code>facet_friction_per_session</code> ·{" "}
+                      <span className="text-muted-foreground">
+                        lte (lower is better)
+                      </span>
+                    </li>
+                    <li>
+                      <code>facet_bugs_caught</code> ·{" "}
+                      <span className="text-muted-foreground">gte (sum)</span>
+                    </li>
+                    <li>
+                      <code>facet_codex_errors</code> ·{" "}
+                      <span className="text-muted-foreground">
+                        lte (lower is better)
+                      </span>
+                    </li>
+                    <li>
+                      <code>facet_outcome_success_rate</code> ·{" "}
+                      <span className="text-muted-foreground">gte (0-1)</span>
+                    </li>
+                    <li>
+                      <code>facet_session_type_ratio</code> ·{" "}
+                      <span className="text-muted-foreground">
+                        targetType (feature_dev | bug_fix | refactor |
+                        exploration | other), gte (0-1)
+                      </span>
+                    </li>
+                  </ul>
+                  <p className="mt-2 text-muted-foreground">
+                    Facet signals return <code>hit: false</code> (or{" "}
+                    <code>true</code> for inverted-threshold variants) when no
+                    facet rows exist in the period — safe to include without
+                    breaking orgs that haven&apos;t opted in to facet
+                    extraction.
+                  </p>
+                </div>
+              </div>
+            </details>
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={onCancel} disabled={isMutating}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onCancel}
+              disabled={isMutating}
+            >
               Cancel
             </Button>
             <Button type="submit" disabled={isSubmitting || isMutating}>
               {isMutating
-                ? isEditing ? "Saving…" : "Creating…"
-                : isEditing ? "Save changes" : "Create rubric"}
+                ? isEditing
+                  ? "Saving…"
+                  : "Creating…"
+                : isEditing
+                  ? "Save changes"
+                  : "Create rubric"}
             </Button>
           </DialogFooter>
         </form>

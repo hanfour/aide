@@ -12,7 +12,12 @@
 
 import { and, eq, gte, inArray, lt } from "drizzle-orm";
 import type { Database } from "@aide/db";
-import { evaluationReports, requestBodies, usageLogs } from "@aide/db";
+import {
+  evaluationReports,
+  requestBodies,
+  requestBodyFacets,
+  usageLogs,
+} from "@aide/db";
 import { decryptBody } from "../../capture/encrypt.js";
 import {
   scoreWithRules,
@@ -181,9 +186,26 @@ export async function runRuleBased(
 
   const truncatedRequestIds =
     input.truncatedRequestIds ??
-    new Set(
-      bodyRowsRaw.filter((b) => b.bodyTruncated).map((b) => b.requestId),
-    );
+    new Set(bodyRowsRaw.filter((b) => b.bodyTruncated).map((b) => b.requestId));
+
+  // 4b. Plan 4C — load facet rows for the same window so any `facet_*`
+  //     signal in the rubric has data to aggregate. Empty when facet
+  //     extraction is disabled / no rows extracted; the rule engine
+  //     handles the empty case (gte aggregators → hit:false; lte → true).
+  const facetRowsRaw =
+    requestIds.length === 0
+      ? []
+      : await db
+          .select({
+            sessionType: requestBodyFacets.sessionType,
+            outcome: requestBodyFacets.outcome,
+            claudeHelpfulness: requestBodyFacets.claudeHelpfulness,
+            frictionCount: requestBodyFacets.frictionCount,
+            bugsCaughtCount: requestBodyFacets.bugsCaughtCount,
+            codexErrorsCount: requestBodyFacets.codexErrorsCount,
+          })
+          .from(requestBodyFacets)
+          .where(inArray(requestBodyFacets.requestId, requestIds));
 
   // 5. Score with rules
   const report = scoreWithRules({
@@ -191,6 +213,7 @@ export async function runRuleBased(
     usageRows,
     bodyRows,
     truncatedRequestIds,
+    facetRows: facetRowsRaw,
   });
 
   return { report, skipped: false, bodies: bodyRows };

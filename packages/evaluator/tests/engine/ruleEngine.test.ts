@@ -84,7 +84,9 @@ describe("scoreWithRules", () => {
         totalCost: 0.01,
       },
     ];
-    expect(scoreWithRules({ rubric, usageRows: oneHit, bodyRows: [] }).totalScore).toBe(100);
+    expect(
+      scoreWithRules({ rubric, usageRows: oneHit, bodyRows: [] }).totalScore,
+    ).toBe(100);
   });
 
   it("applies weights across multiple sections", () => {
@@ -168,7 +170,11 @@ describe("scoreWithRules", () => {
         requestBody: null,
       },
     ];
-    const report = scoreWithRules({ rubric, usageRows: usage, bodyRows: bodies });
+    const report = scoreWithRules({
+      rubric,
+      usageRows: usage,
+      bodyRows: bodies,
+    });
     expect(report.dataQuality.totalRequests).toBe(2);
     expect(report.dataQuality.capturedRequests).toBe(1);
     expect(report.dataQuality.coverageRatio).toBe(0.5);
@@ -207,6 +213,271 @@ describe("scoreWithRules", () => {
     const report = scoreWithRules({ rubric, usageRows: [], bodyRows: bodies });
     expect(report.totalScore).toBe(120);
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    expect(report.sectionScores[0]!.signals[0]!.evidence?.length ?? 0).toBeGreaterThan(0);
+    expect(
+      report.sectionScores[0]!.signals[0]!.evidence?.length ?? 0,
+    ).toBeGreaterThan(0);
+  });
+
+  // ── Plan 4C facet-based signals ────────────────────────────────────────
+  describe("facet signals", () => {
+    function mkFacetSection(
+      signal: Rubric["sections"][number]["signals"][number],
+    ): Rubric["sections"][number] {
+      return {
+        id: "facet-section",
+        name: "Facet",
+        weight: "100%",
+        standard: { score: 100, label: "S", criteria: [] },
+        superior: { score: 120, label: "Sup", criteria: [] },
+        signals: [signal],
+      };
+    }
+
+    it("facet_claude_helpfulness hits when mean >= gte across facet rows", () => {
+      const rubric = mkRubric([
+        mkFacetSection({
+          type: "facet_claude_helpfulness",
+          id: "fch",
+          gte: 4,
+        }),
+      ]);
+      const report = scoreWithRules({
+        rubric,
+        usageRows: [],
+        bodyRows: [],
+        facetRows: [
+          {
+            sessionType: null,
+            outcome: null,
+            claudeHelpfulness: 5,
+            frictionCount: null,
+            bugsCaughtCount: null,
+            codexErrorsCount: null,
+          },
+          {
+            sessionType: null,
+            outcome: null,
+            claudeHelpfulness: 4,
+            frictionCount: null,
+            bugsCaughtCount: null,
+            codexErrorsCount: null,
+          },
+        ],
+      });
+      // mean 4.5 >= 4 → superior
+      expect(report.totalScore).toBe(120);
+    });
+
+    it("facet_friction_per_session is inverted: hit when mean <= lte", () => {
+      const rubric = mkRubric([
+        mkFacetSection({
+          type: "facet_friction_per_session",
+          id: "ffps",
+          lte: 1,
+        }),
+      ]);
+      const report = scoreWithRules({
+        rubric,
+        usageRows: [],
+        bodyRows: [],
+        facetRows: [
+          {
+            sessionType: null,
+            outcome: null,
+            claudeHelpfulness: null,
+            frictionCount: 0,
+            bugsCaughtCount: null,
+            codexErrorsCount: null,
+          },
+          {
+            sessionType: null,
+            outcome: null,
+            claudeHelpfulness: null,
+            frictionCount: 1,
+            bugsCaughtCount: null,
+            codexErrorsCount: null,
+          },
+        ],
+      });
+      // mean 0.5 <= 1 → superior
+      expect(report.totalScore).toBe(120);
+    });
+
+    it("facet_bugs_caught hits when sum >= gte", () => {
+      const rubric = mkRubric([
+        mkFacetSection({ type: "facet_bugs_caught", id: "fbc", gte: 3 }),
+      ]);
+      const report = scoreWithRules({
+        rubric,
+        usageRows: [],
+        bodyRows: [],
+        facetRows: [
+          {
+            sessionType: null,
+            outcome: null,
+            claudeHelpfulness: null,
+            frictionCount: null,
+            bugsCaughtCount: 2,
+            codexErrorsCount: null,
+          },
+          {
+            sessionType: null,
+            outcome: null,
+            claudeHelpfulness: null,
+            frictionCount: null,
+            bugsCaughtCount: 2,
+            codexErrorsCount: null,
+          },
+        ],
+      });
+      // sum 4 >= 3 → superior
+      expect(report.totalScore).toBe(120);
+    });
+
+    it("facet_codex_errors is inverted: hit when sum <= lte", () => {
+      const rubric = mkRubric([
+        mkFacetSection({ type: "facet_codex_errors", id: "fce", lte: 5 }),
+      ]);
+      const report = scoreWithRules({
+        rubric,
+        usageRows: [],
+        bodyRows: [],
+        facetRows: [
+          {
+            sessionType: null,
+            outcome: null,
+            claudeHelpfulness: null,
+            frictionCount: null,
+            bugsCaughtCount: null,
+            codexErrorsCount: 2,
+          },
+          {
+            sessionType: null,
+            outcome: null,
+            claudeHelpfulness: null,
+            frictionCount: null,
+            bugsCaughtCount: null,
+            codexErrorsCount: 1,
+          },
+        ],
+      });
+      // sum 3 <= 5 → superior
+      expect(report.totalScore).toBe(120);
+    });
+
+    it("facet_outcome_success_rate hits when (success+partial)/total >= gte", () => {
+      const rubric = mkRubric([
+        mkFacetSection({
+          type: "facet_outcome_success_rate",
+          id: "fosr",
+          gte: 0.5,
+        }),
+      ]);
+      const report = scoreWithRules({
+        rubric,
+        usageRows: [],
+        bodyRows: [],
+        facetRows: [
+          {
+            sessionType: null,
+            outcome: "success",
+            claudeHelpfulness: null,
+            frictionCount: null,
+            bugsCaughtCount: null,
+            codexErrorsCount: null,
+          },
+          {
+            sessionType: null,
+            outcome: "partial",
+            claudeHelpfulness: null,
+            frictionCount: null,
+            bugsCaughtCount: null,
+            codexErrorsCount: null,
+          },
+          {
+            sessionType: null,
+            outcome: "failure",
+            claudeHelpfulness: null,
+            frictionCount: null,
+            bugsCaughtCount: null,
+            codexErrorsCount: null,
+          },
+        ],
+      });
+      // 2/3 >= 0.5 → superior
+      expect(report.totalScore).toBe(120);
+    });
+
+    it("facet_session_type_ratio counts only the targetType against total", () => {
+      const rubric = mkRubric([
+        mkFacetSection({
+          type: "facet_session_type_ratio",
+          id: "fstr",
+          targetType: "feature_dev",
+          gte: 0.5,
+        }),
+      ]);
+      const report = scoreWithRules({
+        rubric,
+        usageRows: [],
+        bodyRows: [],
+        facetRows: [
+          {
+            sessionType: "feature_dev",
+            outcome: null,
+            claudeHelpfulness: null,
+            frictionCount: null,
+            bugsCaughtCount: null,
+            codexErrorsCount: null,
+          },
+          {
+            sessionType: "feature_dev",
+            outcome: null,
+            claudeHelpfulness: null,
+            frictionCount: null,
+            bugsCaughtCount: null,
+            codexErrorsCount: null,
+          },
+          {
+            sessionType: "bug_fix",
+            outcome: null,
+            claudeHelpfulness: null,
+            frictionCount: null,
+            bugsCaughtCount: null,
+            codexErrorsCount: null,
+          },
+        ],
+      });
+      // 2/3 ≈ 0.67 >= 0.5 → superior
+      expect(report.totalScore).toBe(120);
+    });
+
+    it("facet signals degrade gracefully when no facet rows are present", () => {
+      // gte aggregator → hit:false → standard
+      const rubricGte = mkRubric([
+        mkFacetSection({ type: "facet_bugs_caught", id: "fbc", gte: 1 }),
+      ]);
+      const reportGte = scoreWithRules({
+        rubric: rubricGte,
+        usageRows: [],
+        bodyRows: [],
+      });
+      expect(reportGte.totalScore).toBe(100);
+
+      // lte (inverted) aggregator → hit:true → superior
+      const rubricLte = mkRubric([
+        mkFacetSection({
+          type: "facet_friction_per_session",
+          id: "ffps",
+          lte: 1,
+        }),
+      ]);
+      const reportLte = scoreWithRules({
+        rubric: rubricLte,
+        usageRows: [],
+        bodyRows: [],
+      });
+      expect(reportLte.totalScore).toBe(120);
+    });
   });
 });
