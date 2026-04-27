@@ -12,3 +12,6 @@ export { ProfileBanner } from "./ProfileBanner";
 export { ProfileEvaluation } from "./ProfileEvaluation";
 export { ExportDialog } from "./ExportDialog";
 export { DeleteRequestDialog } from "./DeleteRequestDialog";
+export { CostSummaryCard } from "./CostSummaryCard";
+export { CostBreakdownTable } from "./CostBreakdownTable";
+export { HistoricalSpendChart } from "./HistoricalSpendChart";

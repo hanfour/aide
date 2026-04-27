@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { use } from "react";
 import { RequirePerm } from "@/components/RequirePerm";
 import { StatusCard } from "@/components/evaluator/StatusCard";
+import { CostSummaryCard } from "@/components/evaluator/CostSummaryCard";
 
 export default function EvaluatorStatusPage({
   params,
@@ -19,6 +21,19 @@ export default function EvaluatorStatusPage({
             Current cron health and coverage.
           </p>
         </header>
+        <RequirePerm action={{ type: "evaluator.view_cost", orgId }}>
+          <div className="space-y-2">
+            <CostSummaryCard orgId={orgId} variant="compact" />
+            <div className="text-right">
+              <Link
+                href={`/dashboard/organizations/${orgId}/evaluator/costs`}
+                className="text-sm text-primary hover:underline"
+              >
+                View cost dashboard →
+              </Link>
+            </div>
+          </div>
+        </RequirePerm>
         <StatusCard orgId={orgId} />
       </div>
     </RequirePerm>
