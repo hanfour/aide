@@ -1,5 +1,6 @@
 /**
- * Concrete budget deps for the gateway evaluator worker (Plan 4C, Task 3.2).
+ * Concrete budget deps for the gateway evaluator worker
+ * (Plan 4C, Task 3.2; halt_set_at column added in follow-up #6).
  *
  * Wires the abstract `EnforceBudgetDeps` interface from `@aide/evaluator` to
  * a real Drizzle/Postgres `Database`, so the worker can call `enforceBudget`
@@ -10,24 +11,15 @@
  *   - getMonthSpend → SUM(`cost_usd`) from `llm_usage_events` for the org
  *                     where monthStart <= created_at < nextMonthStart
  *                     (upper bound prevents leaking future-month rows; defensive)
- *   - setHalt       → UPDATE organizations SET llm_halted_until_month_end = true
- *   - clearHalt     → UPDATE organizations SET llm_halted_until_month_end = false
+ *   - setHalt       → UPDATE … SET llm_halted_until_month_end = true,
+ *                                  llm_halted_at = now()
+ *   - clearHalt     → UPDATE … SET llm_halted_until_month_end = false,
+ *                                  llm_halted_at = NULL
  *   - now           → wall clock
  *
- * Notes:
- *   - `halt_set_at` is intentionally returned as `undefined`. The `organizations`
- *     table currently lacks a dedicated `llm_halted_at` column, so we cannot
- *     prove which UTC month the halt belongs to. With `halt_set_at` undefined,
- *     `enforceBudget` falls through its same-month check and calls `clearHalt`
- *     on every halted call, then re-evaluates spend. Net behaviour stays
- *     correct because over-budget orgs immediately re-set the halt and throw
- *     `BudgetExceededHalt` — but the cost is **2 UPDATEs per halted call**
- *     (clear + set) instead of a cheap flag-read short-circuit. There is also
- *     a tiny race window where a delayed/rolled-back ledger row could let one
- *     call slip through if spend dips back under budget mid-cycle.
- *     TODO(plan-4c-followup): add `llm_halted_at timestamptz` column,
- *     populate it in setHalt, and surface it here as `halt_set_at`. This will
- *     restore the cheap short-circuit path and close the race window.
+ * `halt_set_at` is sourced from `organizations.llm_halted_at`. With it
+ * present, `enforceBudget`'s same-month check short-circuits cheaply for
+ * already-halted orgs (1 SELECT) instead of doing 2 UPDATEs per call.
  */
 
 import { and, eq, gte, lt, sum } from "drizzle-orm";
@@ -52,6 +44,7 @@ export function createBudgetDeps(db: Database): EnforceBudgetDeps {
           llmMonthlyBudgetUsd: organizations.llmMonthlyBudgetUsd,
           llmBudgetOverageBehavior: organizations.llmBudgetOverageBehavior,
           llmHaltedUntilMonthEnd: organizations.llmHaltedUntilMonthEnd,
+          llmHaltedAt: organizations.llmHaltedAt,
         })
         .from(organizations)
         .where(eq(organizations.id, orgId))
@@ -75,8 +68,7 @@ export function createBudgetDeps(db: Database): EnforceBudgetDeps {
             : Number(row.llmMonthlyBudgetUsd),
         llm_budget_overage_behavior: behavior,
         llm_halted_until_month_end: row.llmHaltedUntilMonthEnd,
-        // See file header: column does not yet exist.
-        halt_set_at: undefined,
+        halt_set_at: row.llmHaltedAt ?? undefined,
       };
     },
 
@@ -110,14 +102,20 @@ export function createBudgetDeps(db: Database): EnforceBudgetDeps {
     async setHalt(orgId) {
       await db
         .update(organizations)
-        .set({ llmHaltedUntilMonthEnd: true })
+        .set({
+          llmHaltedUntilMonthEnd: true,
+          llmHaltedAt: new Date(),
+        })
         .where(eq(organizations.id, orgId));
     },
 
     async clearHalt(orgId) {
       await db
         .update(organizations)
-        .set({ llmHaltedUntilMonthEnd: false })
+        .set({
+          llmHaltedUntilMonthEnd: false,
+          llmHaltedAt: null,
+        })
         .where(eq(organizations.id, orgId));
     },
 
