@@ -258,11 +258,48 @@ Then trigger the delete worker.
 
 ---
 
-## 9. Further reading
+## 9. LLM cost control (v0.5.0)
+
+Plan 4C adds a per-org monthly USD budget on combined LLM spend (deep
+analysis + facet extraction). Budget is set via
+`organizations.llm_monthly_budget_usd`; overage behaviour
+(`organizations.llm_budget_overage_behavior`) is either `degrade` (skip
+the over-budget call, keep rule-based scoring) or `halt` (set
+`llm_halted_until_month_end` and refuse all LLM calls until the next
+UTC month). Every successful LLM call writes an immutable row to
+`llm_usage_events` (org, event_type, model, tokens, cost, ref_type,
+ref_id), forming an audit trail that the budget enforcer reads back to
+compute month-to-date spend. Admins see live spend on
+`/admin/evaluator/costs`. See the runbook at
+[`runbooks/llm-budget.md`](./runbooks/llm-budget.md) for warn / breach
+response procedures.
+
+## 10. LLM facet extraction (v0.5.0)
+
+Off by default. Two-level opt-in: server-wide
+`ENABLE_FACET_EXTRACTION=true` plus per-org `llm_facet_enabled=true`
+with a configured `llm_facet_model` (Haiku is recommended — facet
+outputs are short JSON). When enabled, the evaluator worker classifies
+each captured session against a fixed schema (session type, outcome,
+helpfulness 1–5, friction / bugs caught / codex errors counts) and
+persists the result in `request_body_facets`. The six facet signal
+aggregators in `@aide/evaluator/signals/facet.ts`
+(`facet_session_type_mix`, `facet_outcome_distribution`,
+`facet_avg_helpfulness`, `facet_friction_rate`,
+`facet_bugs_caught_total`, `facet_codex_error_rate`) are then available
+to rubrics. Cache key is `(request_id, prompt_version)` so re-runs at
+the same prompt version are free. See
+[`runbooks/facet-extraction.md`](./runbooks/facet-extraction.md) and
+[`runbooks/facet-parse-errors.md`](./runbooks/facet-parse-errors.md).
+
+## 11. Further reading
 
 - Design doc: [`.claude/plans/2026-04-20-plan4b-evaluator-design.md`](./.claude/plans/2026-04-20-plan4b-evaluator-design.md)
   — full architecture, score aggregation model, LLM prompt engineering.
 - Implementation plan: [`.claude/plans/2026-04-20-plan-4b-evaluator.md`](./.claude/plans/2026-04-20-plan-4b-evaluator.md)
   — 55 tasks × 14 parts with TDD rhythm.
+- Plan 4C design / impl: [`.claude/plans/2026-04-24-plan-4c-design.md`](./.claude/plans/2026-04-24-plan-4c-design.md),
+  [`.claude/plans/2026-04-24-plan-4c-implementation.md`](./.claude/plans/2026-04-24-plan-4c-implementation.md).
+- v0.5.0 upgrade guide: [`UPGRADE-v0.5.0.md`](./UPGRADE-v0.5.0.md).
 - Gateway + body capture: [`GATEWAY.md`](./GATEWAY.md) § 11 (Body Capture).
 - Local development: [`../apps/gateway/README.md`](../apps/gateway/README.md).
