@@ -11,6 +11,13 @@ import {
   collectExtendedThinking,
   collectToolDiversity,
   collectIterationCount,
+  collectFacetClaudeHelpfulness,
+  collectFacetFrictionPerSession,
+  collectFacetBugsCaught,
+  collectFacetCodexErrors,
+  collectFacetOutcomeSuccessRate,
+  collectFacetSessionTypeRatio,
+  type FacetRowInput,
 } from "../signals/index.js";
 import { scoreSection } from "./sectionScorer.js";
 import type { SignalHit, DataQuality, Report } from "./types.js";
@@ -22,6 +29,13 @@ export interface ScoreWithRulesInput {
   usageRows: UsageRow[];
   bodyRows: BodyRow[];
   truncatedRequestIds?: Set<string>;
+  /**
+   * Plan 4C — facet rows for the report window. Optional; when absent, any
+   * `facet_*` signal in the rubric falls through to the empty-input branch
+   * of its aggregator (gte → hit:false; lte → hit:true). Pass an empty array
+   * (or omit) when facet extraction is disabled for the org.
+   */
+  facetRows?: FacetRowInput[];
 }
 
 function bodyToString(body: unknown): string {
@@ -35,14 +49,21 @@ function dispatchSignal(
   metrics: Metrics,
   usageRows: UsageRow[],
   bodyRows: BodyRow[],
+  facetRows: FacetRowInput[],
 ): SignalHit {
   switch (signal.type) {
     case "keyword": {
       const texts =
         signal.in === "request_body"
-          ? bodyRows.map((b) => ({ text: bodyToString(b.requestBody), id: b.requestId }))
+          ? bodyRows.map((b) => ({
+              text: bodyToString(b.requestBody),
+              id: b.requestId,
+            }))
           : signal.in === "response_body"
-            ? bodyRows.map((b) => ({ text: bodyToString(b.responseBody), id: b.requestId }))
+            ? bodyRows.map((b) => ({
+                text: bodyToString(b.responseBody),
+                id: b.requestId,
+              }))
             : bodyRows.map((b) => ({
                 text: `${bodyToString(b.requestBody)} ${bodyToString(b.responseBody)}`,
                 id: b.requestId,
@@ -115,7 +136,10 @@ function dispatchSignal(
     }
 
     case "model_diversity": {
-      const result = collectModelDiversity({ usage: usageRows, gte: signal.gte });
+      const result = collectModelDiversity({
+        usage: usageRows,
+        gte: signal.gte,
+      });
       return {
         id: signal.id,
         type: signal.type,
@@ -126,7 +150,10 @@ function dispatchSignal(
     }
 
     case "cache_read_ratio": {
-      const result = collectCacheReadRatio({ usage: usageRows, gte: signal.gte });
+      const result = collectCacheReadRatio({
+        usage: usageRows,
+        gte: signal.gte,
+      });
       return {
         id: signal.id,
         type: signal.type,
@@ -137,7 +164,10 @@ function dispatchSignal(
     }
 
     case "extended_thinking_used": {
-      const result = collectExtendedThinking({ bodies: bodyRows, minCount: signal.minCount });
+      const result = collectExtendedThinking({
+        bodies: bodyRows,
+        minCount: signal.minCount,
+      });
       return {
         id: signal.id,
         type: signal.type,
@@ -148,7 +178,10 @@ function dispatchSignal(
     }
 
     case "tool_diversity": {
-      const result = collectToolDiversity({ bodies: bodyRows, gte: signal.gte });
+      const result = collectToolDiversity({
+        bodies: bodyRows,
+        gte: signal.gte,
+      });
       return {
         id: signal.id,
         type: signal.type,
@@ -159,7 +192,96 @@ function dispatchSignal(
     }
 
     case "iteration_count": {
-      const result = collectIterationCount({ bodies: bodyRows, gte: signal.gte });
+      const result = collectIterationCount({
+        bodies: bodyRows,
+        gte: signal.gte,
+      });
+      return {
+        id: signal.id,
+        type: signal.type,
+        hit: result.hit,
+        value: result.value,
+        evidence: result.evidence,
+      };
+    }
+
+    // ── Plan 4C facet-based signals ────────────────────────────────────────
+    case "facet_claude_helpfulness": {
+      const result = collectFacetClaudeHelpfulness({
+        rows: facetRows,
+        gte: signal.gte,
+      });
+      return {
+        id: signal.id,
+        type: signal.type,
+        hit: result.hit,
+        value: result.value,
+        evidence: result.evidence,
+      };
+    }
+
+    case "facet_friction_per_session": {
+      const result = collectFacetFrictionPerSession({
+        rows: facetRows,
+        lte: signal.lte,
+      });
+      return {
+        id: signal.id,
+        type: signal.type,
+        hit: result.hit,
+        value: result.value,
+        evidence: result.evidence,
+      };
+    }
+
+    case "facet_bugs_caught": {
+      const result = collectFacetBugsCaught({
+        rows: facetRows,
+        gte: signal.gte,
+      });
+      return {
+        id: signal.id,
+        type: signal.type,
+        hit: result.hit,
+        value: result.value,
+        evidence: result.evidence,
+      };
+    }
+
+    case "facet_codex_errors": {
+      const result = collectFacetCodexErrors({
+        rows: facetRows,
+        lte: signal.lte,
+      });
+      return {
+        id: signal.id,
+        type: signal.type,
+        hit: result.hit,
+        value: result.value,
+        evidence: result.evidence,
+      };
+    }
+
+    case "facet_outcome_success_rate": {
+      const result = collectFacetOutcomeSuccessRate({
+        rows: facetRows,
+        gte: signal.gte,
+      });
+      return {
+        id: signal.id,
+        type: signal.type,
+        hit: result.hit,
+        value: result.value,
+        evidence: result.evidence,
+      };
+    }
+
+    case "facet_session_type_ratio": {
+      const result = collectFacetSessionTypeRatio({
+        rows: facetRows,
+        targetType: signal.targetType,
+        gte: signal.gte,
+      });
       return {
         id: signal.id,
         type: signal.type,
@@ -194,22 +316,30 @@ function computeDataQuality(
 
 export function scoreWithRules(input: ScoreWithRulesInput): Report {
   const { rubric, usageRows, bodyRows, truncatedRequestIds } = input;
+  const facetRows: FacetRowInput[] = input.facetRows ?? [];
 
   const metrics = aggregate({ usageRows, bodyRows });
 
   const sectionScores = rubric.sections.map((section) => {
     const hits: SignalHit[] = section.signals.map((signal) =>
-      dispatchSignal(signal, metrics, usageRows, bodyRows),
+      dispatchSignal(signal, metrics, usageRows, bodyRows, facetRows),
     );
     return scoreSection(section, hits);
   });
 
   const totalWeight = sectionScores.reduce((sum, s) => sum + s.weight, 0);
-  const weightedSum = sectionScores.reduce((sum, s) => sum + s.score * s.weight, 0);
+  const weightedSum = sectionScores.reduce(
+    (sum, s) => sum + s.score * s.weight,
+    0,
+  );
   const rawTotal = totalWeight === 0 ? 0 : weightedSum / totalWeight;
   const totalScore = Math.min(120, Math.max(0, rawTotal));
 
-  const dataQuality = computeDataQuality(usageRows, bodyRows, truncatedRequestIds);
+  const dataQuality = computeDataQuality(
+    usageRows,
+    bodyRows,
+    truncatedRequestIds,
+  );
 
   return {
     totalScore,
