@@ -74,6 +74,7 @@ export const defaultTestEnv: ServerEnv = {
   GATEWAY_QUEUE_SATURATE_THRESHOLD: 5000,
   GATEWAY_LOCAL_BASE_URL: "http://localhost:3002",
   ENABLE_EVALUATOR: true,
+  ENABLE_FACET_EXTRACTION: false,
 };
 
 // ioredis-mock honors keyPrefix the same way the real client does, so tests
