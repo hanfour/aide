@@ -25,6 +25,15 @@ export const serverEnvSchema = z
     BOOTSTRAP_DEFAULT_ORG_NAME: z.string().min(1),
     ENABLE_SWAGGER: booleanUnion.default(false),
     ENABLE_EVALUATOR: booleanUnion.default(false),
+    /**
+     * Plan 4C Phase 2 (v0.5.0). Server-wide kill switch for facet extraction.
+     * When `false`, facet extraction never runs even for orgs that have
+     * `llm_facet_enabled=true` set on their organizations row. When `true`,
+     * the per-org `llm_facet_enabled` flag (and `llm_facet_model` value) gate
+     * actual extraction. Off by default — requires opt-in at both env and
+     * org levels.
+     */
+    ENABLE_FACET_EXTRACTION: booleanUnion.default(false),
     LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
     API_INTERNAL_URL: z.string().url().optional(),
     ENABLE_TEST_SEED: booleanUnion.default(false),
