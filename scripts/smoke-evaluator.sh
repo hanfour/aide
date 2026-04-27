@@ -105,7 +105,7 @@ require_cmd curl
 
 # ── Step 1: Check evaluator is enabled ───────────────────────────────────────
 
-step "1/6  Check evaluator.status — enabled?"
+step "1/7  Check evaluator.status — enabled?"
 REQ_BODY="$(cat <<'JSON'
 {"0":{"json":{"orgId":"ORG_ID_PLACEHOLDER"}}}
 JSON
@@ -127,7 +127,7 @@ ok "evaluator enabled and responding"
 
 # ── Step 2: POST /v1/messages to trigger body capture ────────────────────────
 
-step "2/6  POST ${GATEWAY_BASE_URL}/v1/messages (test request)"
+step "2/7  POST ${GATEWAY_BASE_URL}/v1/messages (test request)"
 REQ_BODY="$(cat <<'JSON'
 {
   "model": "claude-3-5-sonnet-20241022",
@@ -153,13 +153,13 @@ ok "gateway proxied POST /v1/messages and returned 200"
 
 # ── Step 3: Wait for body capture + evaluator job enqueue ──────────────────
 
-step "3/6  Waiting ~5 seconds for body capture + evaluator job enqueue..."
+step "3/7  Waiting ~5 seconds for body capture + evaluator job enqueue..."
 sleep 5
 ok "wait complete"
 
 # ── Step 4: Trigger rerun for today's period ───────────────────────────────
 
-step "4/6  Trigger reports.rerun for today's period"
+step "4/7  Trigger reports.rerun for today's period"
 
 # Build ISO 8601 datetime strings for today's period
 # today 00:00:00 UTC and tomorrow 00:00:00 UTC
@@ -189,13 +189,13 @@ ok "rerun enqueued"
 
 # ── Step 5: Wait for evaluation job to complete ────────────────────────────
 
-step "5/6  Waiting ~5 seconds for evaluation job to complete..."
+step "5/7  Waiting ~5 seconds for evaluation job to complete..."
 sleep 5
 ok "wait complete"
 
 # ── Step 6: Query reports.getUser and assert report row exists ──────────────
 
-step "6/6  Query reports.getUser for evaluation report"
+step "6/7  Query reports.getUser for evaluation report"
 
 REQ_BODY="$(cat <<JSON
 {"0":{"json":{"orgId":"${ORG_ID}","userId":"${USER_ID}","range":{"from":"${today}","to":"${tomorrow}"}}}}
@@ -231,6 +231,55 @@ else
   # no report exists yet (evaluator may be async). Future runs will find it.
   ok "query completed without error (async job may still be processing)"
 fi
+
+# ── Step 7: Verify evaluator.costSummary returns well-formed payload ────────
+#
+# Plan 4C Part 11: confirm the new Plan 4C cost-summary endpoint serves a
+# response with the required shape. We assert presence of the top-level
+# keys (`currentMonthSpendUsd`, `budgetUsd`, `breakdown`) — this catches
+# regressions where the procedure is missing from the deployed image, the
+# RBAC check rejects a super_admin, or the response shape drifts.
+
+step "7/7  Verify evaluator.costSummary payload shape"
+
+REQ_BODY="$(cat <<JSON
+{"0":{"json":{"orgId":"${ORG_ID}"}}}
+JSON
+)"
+
+http_call POST "${API_BASE_URL}/trpc/evaluator.costSummary?batch=1" \
+  -H "Cookie: $ADMIN_SESSION_COOKIE" \
+  -H "Content-Type: application/json" \
+  --data "${REQ_BODY}" | split_status
+
+if [[ "${SMOKE_STATUS}" != "200" ]]; then
+  fail "evaluator.costSummary returned ${SMOKE_STATUS}; body: ${SMOKE_BODY}"
+fi
+if echo "${SMOKE_BODY}" | grep -q '"error"'; then
+  fail "evaluator.costSummary returned error; body: ${SMOKE_BODY}"
+fi
+
+# Batch tRPC response: [{"result":{"data":{"json":{...}}}}]. Use jq when
+# available for a strict shape check; fall back to grep so the script still
+# functions on hosts without jq installed (warning emitted in that case).
+if command -v jq >/dev/null 2>&1; then
+  if ! echo "${SMOKE_BODY}" \
+    | jq -e '.[0].result.data.json
+      | has("currentMonthSpendUsd")
+        and has("budgetUsd")
+        and has("breakdown")' >/dev/null; then
+    fail "costSummary response missing required fields; body: ${SMOKE_BODY}"
+  fi
+else
+  warn "jq not installed — falling back to substring check"
+  if ! echo "${SMOKE_BODY}" | grep -q '"currentMonthSpendUsd"'; then
+    fail "costSummary response missing currentMonthSpendUsd; body: ${SMOKE_BODY}"
+  fi
+  if ! echo "${SMOKE_BODY}" | grep -q '"breakdown"'; then
+    fail "costSummary response missing breakdown; body: ${SMOKE_BODY}"
+  fi
+fi
+ok "costSummary endpoint responds with required fields"
 
 echo
 echo "✓ Evaluator smoke test passed"

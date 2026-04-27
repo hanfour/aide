@@ -218,5 +218,7 @@ export function can(perm: UserPermissions, action: Action): boolean {
       return rolesAt(perm, "organization", action.orgId).has("org_admin");
     case "evaluator.read_status":
       return rolesAt(perm, "organization", action.orgId).has("org_admin");
+    case "evaluator.view_cost":
+      return rolesAt(perm, "organization", action.orgId).has("org_admin");
   }
 }

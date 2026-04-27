@@ -2,8 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useForm, Controller } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc/client";
 import { Button } from "@/components/ui/button";
@@ -17,6 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { SettingsFormValues } from "./settingsSchema";
 
 // ─── Shared native-element classes (match shadcn Input visually) ──────────────
 
@@ -25,42 +24,10 @@ const SELECT_CLASS =
 
 // ─── Validation schema ────────────────────────────────────────────────────────
 
-// Native <select> always surfaces an empty string when nothing is chosen.
-// Treat "" as null at the form-schema level so react-hook-form's resolver
-// doesn't reject the form before submit (the API-side zod still enforces
-// uuid/null).
-const uuidOrEmpty = z
-  .string()
-  .nullable()
-  .refine((v) => v === null || v === "" || /^[0-9a-f-]{36}$/i.test(v), {
-    message: "Invalid id",
-  })
-  .transform((v) => (v === "" ? null : v));
-
-const settingsSchema = z.object({
-  contentCaptureEnabled: z.boolean(),
-  // Native <select> surfaces "" for the placeholder option even when we
-  // register with setValueAs. Accept "" here and let onSubmit coerce it to
-  // null — react-hook-form's resolver runs before the setValueAs-transformed
-  // value reaches the submit handler in some paths.
-  retentionDaysOverride: z
-    .union([
-      z.literal(30),
-      z.literal(60),
-      z.literal(90),
-      z.literal(""),
-      z.null(),
-    ])
-    .nullable(),
-  llmEvalEnabled: z.boolean(),
-  llmEvalAccountId: uuidOrEmpty,
-  llmEvalModel: z.string().nullable(),
-  captureThinking: z.boolean(),
-  rubricId: uuidOrEmpty,
-  leaderboardEnabled: z.boolean(),
-});
-
-type FormValues = z.infer<typeof settingsSchema>;
+// Schema lives in `./settingsSchema.ts` so the Zod logic (especially the
+// Plan 4C superRefine cross-field rules) is unit-testable in isolation
+// without rendering the form.
+type FormValues = SettingsFormValues;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -195,6 +162,11 @@ export function SettingsForm({ orgId }: Props) {
       captureThinking: false,
       rubricId: null,
       leaderboardEnabled: false,
+      // Plan 4C
+      llmFacetEnabled: false,
+      llmFacetModel: null,
+      llmMonthlyBudgetUsd: null,
+      llmBudgetOverageBehavior: "degrade",
     },
   });
 
@@ -208,6 +180,31 @@ export function SettingsForm({ orgId }: Props) {
         ? retention
         : null;
 
+    // Plan 4C — narrow server values to the form's literal-union types.
+    // The DB column allows any string, but the UI restricts to a known set.
+    const ALLOWED_FACET_MODELS = [
+      "claude-haiku-4-5",
+      "claude-sonnet-4-6",
+      "claude-opus-4-7",
+    ] as const;
+    type AllowedFacetModel = (typeof ALLOWED_FACET_MODELS)[number];
+    const facetModel: AllowedFacetModel | null =
+      settings.llmFacetModel != null &&
+      (ALLOWED_FACET_MODELS as readonly string[]).includes(
+        settings.llmFacetModel,
+      )
+        ? (settings.llmFacetModel as AllowedFacetModel)
+        : null;
+
+    const overage: "degrade" | "halt" =
+      settings.llmBudgetOverageBehavior === "halt" ? "halt" : "degrade";
+
+    // Drizzle returns decimal columns as strings.
+    const budget =
+      settings.llmMonthlyBudgetUsd == null
+        ? null
+        : Number(settings.llmMonthlyBudgetUsd);
+
     reset({
       contentCaptureEnabled: settings.contentCaptureEnabled ?? false,
       retentionDaysOverride: normalizedRetention,
@@ -217,6 +214,12 @@ export function SettingsForm({ orgId }: Props) {
       captureThinking: settings.captureThinking ?? false,
       rubricId: settings.rubricId ?? null,
       leaderboardEnabled: settings.leaderboardEnabled ?? false,
+      // Plan 4C
+      llmFacetEnabled: settings.llmFacetEnabled ?? false,
+      llmFacetModel: facetModel,
+      llmMonthlyBudgetUsd:
+        budget != null && Number.isFinite(budget) ? budget : null,
+      llmBudgetOverageBehavior: overage,
     });
   }, [settings, reset]);
 
@@ -227,6 +230,23 @@ export function SettingsForm({ orgId }: Props) {
     // the tRPC Zod schema (`z.string().uuid().nullable()`) accepts them.
     const emptyToNull = <T,>(v: T | "" | null | undefined): T | null =>
       v === "" || v === undefined ? null : (v as T);
+
+    // Plan 4C cross-field validation. The Zod schema in `./settingsSchema.ts`
+    // codifies these rules and is covered by unit tests, but this form does
+    // not wire `zodResolver` (see useForm comment) — so we must enforce them
+    // manually here. The server-side mutation also rejects bad combos as a
+    // defence-in-depth backstop.
+    if (values.llmFacetEnabled && !values.llmEvalEnabled) {
+      toast.error(
+        "Facet extraction requires LLM evaluation to be enabled first",
+      );
+      return;
+    }
+    if (values.llmFacetEnabled && !values.llmFacetModel) {
+      toast.error("Choose a facet model");
+      return;
+    }
+
     return save.mutateAsync({
       orgId,
       patch: {
@@ -246,6 +266,16 @@ export function SettingsForm({ orgId }: Props) {
         captureThinking: values.captureThinking,
         rubricId: emptyToNull(values.rubricId),
         leaderboardEnabled: values.leaderboardEnabled,
+        // Plan 4C
+        llmFacetEnabled: values.llmFacetEnabled,
+        llmFacetModel: values.llmFacetModel,
+        llmMonthlyBudgetUsd:
+          typeof values.llmMonthlyBudgetUsd === "number" &&
+          Number.isFinite(values.llmMonthlyBudgetUsd) &&
+          values.llmMonthlyBudgetUsd >= 0
+            ? values.llmMonthlyBudgetUsd
+            : null,
+        llmBudgetOverageBehavior: values.llmBudgetOverageBehavior,
       },
     });
   });
@@ -376,6 +406,166 @@ export function SettingsForm({ orgId }: Props) {
               />
             )}
           />
+        </section>
+
+        {/* ── LLM Cost Control section (Plan 4C) ──────────────────────────── */}
+        <section className="space-y-4">
+          <SectionHeading>LLM Cost Control</SectionHeading>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="llmMonthlyBudgetUsd">Monthly budget (USD)</Label>
+            <Input
+              id="llmMonthlyBudgetUsd"
+              type="number"
+              min="0"
+              max="100000"
+              step="0.01"
+              placeholder="Empty = unlimited"
+              {...register("llmMonthlyBudgetUsd", {
+                setValueAs: (v) => {
+                  if (v === "" || v === null || v === undefined) return null;
+                  const n = typeof v === "number" ? v : Number(v);
+                  return Number.isFinite(n) && n >= 0 ? n : null;
+                },
+              })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Leave empty to allow unlimited LLM spend. Recommended for
+              production: set a budget.
+            </p>
+            {errors.llmMonthlyBudgetUsd && (
+              <p className="text-xs text-destructive">
+                {errors.llmMonthlyBudgetUsd.message}
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Overage behavior</Label>
+            <div className="space-y-1">
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  value="degrade"
+                  className="mt-0.5"
+                  {...register("llmBudgetOverageBehavior")}
+                />
+                <span>
+                  <strong>Degrade</strong> — skip over-budget calls, continue
+                  with rule-based scoring
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  value="halt"
+                  className="mt-0.5"
+                  {...register("llmBudgetOverageBehavior")}
+                />
+                <span>
+                  <strong>Halt</strong> — stop all LLM evaluation for the rest
+                  of the month
+                </span>
+              </label>
+            </div>
+          </div>
+
+          {settings?.llmHaltedUntilMonthEnd && (
+            <p className="text-xs text-amber-700 border border-amber-300 bg-amber-50 rounded px-2 py-1">
+              This org is currently halted until next month boundary (UTC).
+            </p>
+          )}
+
+          {watch("llmEvalEnabled") &&
+            (watch("llmMonthlyBudgetUsd") == null ||
+              watch("llmMonthlyBudgetUsd") === 0) && (
+              <p className="text-xs text-amber-700 border border-amber-300 bg-amber-50 rounded px-2 py-1">
+                No budget set. LLM costs are unlimited.
+              </p>
+            )}
+        </section>
+
+        {/* ── LLM Facet Extraction section (Plan 4C) ──────────────────────── */}
+        <section className="space-y-4">
+          <SectionHeading>LLM Facet Extraction</SectionHeading>
+
+          <Controller
+            control={control}
+            name="llmFacetEnabled"
+            render={({ field }) => (
+              <ToggleRow
+                id="llmFacetEnabled"
+                label="Enable facet extraction"
+                description="Adds a per-session LLM classification step to enrich evaluation reports with bug-caught / friction signals. Increases LLM cost; requires LLM evaluation to be enabled."
+                checked={field.value}
+                onChange={field.onChange}
+                disabled={!llmEvalEnabled}
+              />
+            )}
+          />
+
+          <div className="space-y-1.5">
+            <Label htmlFor="llmFacetModel">Facet model</Label>
+            <Controller
+              control={control}
+              name="llmFacetModel"
+              render={({ field }) => (
+                <select
+                  id="llmFacetModel"
+                  className={SELECT_CLASS}
+                  disabled={!watch("llmFacetEnabled")}
+                  value={field.value ?? ""}
+                  onChange={(e) =>
+                    field.onChange(
+                      e.target.value === ""
+                        ? null
+                        : (e.target.value as
+                            | "claude-haiku-4-5"
+                            | "claude-sonnet-4-6"
+                            | "claude-opus-4-7"),
+                    )
+                  }
+                >
+                  <option value="">— Select model —</option>
+                  <option value="claude-haiku-4-5">
+                    claude-haiku-4-5 (recommended)
+                  </option>
+                  <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+                  <option value="claude-opus-4-7">claude-opus-4-7</option>
+                </select>
+              )}
+            />
+            <p className="text-xs text-muted-foreground">
+              Haiku is recommended: ~10× cheaper than Sonnet and sufficient for
+              structured extraction.
+            </p>
+          </div>
+
+          {/* Live cross-field hints. Zod's superRefine in `settingsSchema`
+              also blocks submit if these conditions hold; these messages are
+              for immediate (pre-submit) UX feedback. */}
+          {errors.llmFacetEnabled?.message && (
+            <p className="text-xs text-destructive">
+              {errors.llmFacetEnabled.message}
+            </p>
+          )}
+          {!errors.llmFacetEnabled &&
+            watch("llmFacetEnabled") &&
+            !llmEvalEnabled && (
+              <p className="text-xs text-destructive">
+                Facet extraction requires LLM evaluation to be enabled first.
+              </p>
+            )}
+          {errors.llmFacetModel?.message && (
+            <p className="text-xs text-destructive">
+              {errors.llmFacetModel.message}
+            </p>
+          )}
+          {!errors.llmFacetModel &&
+            watch("llmFacetEnabled") &&
+            !watch("llmFacetModel") && (
+              <p className="text-xs text-destructive">Choose a facet model.</p>
+            )}
         </section>
 
         {/* ── Rubric section ──────────────────────────────────────────────── */}

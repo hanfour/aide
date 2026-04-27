@@ -17,6 +17,15 @@ const settingsPatch = z.object({
   captureThinking: z.boolean().optional(),
   rubricId: z.string().uuid().nullable().optional(),
   leaderboardEnabled: z.boolean().optional(),
+
+  // ── Plan 4C: cost budget + facet ──────────────────────────────────────────
+  llmFacetEnabled: z.boolean().optional(),
+  llmFacetModel: z
+    .enum(["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"])
+    .nullable()
+    .optional(),
+  llmMonthlyBudgetUsd: z.number().min(0).max(100_000).nullable().optional(),
+  llmBudgetOverageBehavior: z.enum(["degrade", "halt"]).optional(),
 });
 
 export const contentCaptureRouter = router({
@@ -41,6 +50,12 @@ export const contentCaptureRouter = router({
           captureThinking: organizations.captureThinking,
           rubricId: organizations.rubricId,
           leaderboardEnabled: organizations.leaderboardEnabled,
+          // Plan 4C — cost budget + facet
+          llmFacetEnabled: organizations.llmFacetEnabled,
+          llmFacetModel: organizations.llmFacetModel,
+          llmMonthlyBudgetUsd: organizations.llmMonthlyBudgetUsd,
+          llmBudgetOverageBehavior: organizations.llmBudgetOverageBehavior,
+          llmHaltedUntilMonthEnd: organizations.llmHaltedUntilMonthEnd,
         })
         .from(organizations)
         .where(eq(organizations.id, input.orgId))
@@ -59,11 +74,15 @@ export const contentCaptureRouter = router({
         throw new TRPCError({ code: "FORBIDDEN" });
       }
 
-      // Fetch current state to detect first-enable transition
+      // Fetch current state to detect first-enable transition AND to compute
+      // the resulting row for cross-field validation (Plan 4C).
       const [prev] = await ctx.db
         .select({
           contentCaptureEnabled: organizations.contentCaptureEnabled,
           contentCaptureEnabledAt: organizations.contentCaptureEnabledAt,
+          llmEvalEnabled: organizations.llmEvalEnabled,
+          llmFacetEnabled: organizations.llmFacetEnabled,
+          llmFacetModel: organizations.llmFacetModel,
         })
         .from(organizations)
         .where(eq(organizations.id, input.orgId))
@@ -71,12 +90,43 @@ export const contentCaptureRouter = router({
 
       if (!prev) throw new TRPCError({ code: "NOT_FOUND" });
 
+      // Plan 4C cross-field validation (defence-in-depth — the form has its
+      // own client-side check, but we must reject bad combos here too).
+      // Validate the *resulting* row, not just the patch, since the patch
+      // may enable facet while assuming eval is already on.
+      const nextEvalEnabled = input.patch.llmEvalEnabled ?? prev.llmEvalEnabled;
+      const nextFacetEnabled =
+        input.patch.llmFacetEnabled ?? prev.llmFacetEnabled;
+      const nextFacetModel =
+        input.patch.llmFacetModel === undefined
+          ? prev.llmFacetModel
+          : input.patch.llmFacetModel;
+
+      if (nextFacetEnabled && !nextEvalEnabled) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Facet extraction requires LLM evaluation to be enabled first",
+        });
+      }
+      if (nextFacetEnabled && !nextFacetModel) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Choose a facet model when enabling facet extraction",
+        });
+      }
+
       const turningOn =
         input.patch.contentCaptureEnabled === true &&
         prev.contentCaptureEnabled === false;
 
       const now = new Date();
       const updates: Record<string, unknown> = { ...input.patch };
+      // Drizzle's `decimal` column expects a string at the type level. The Zod
+      // schema accepts numbers from the UI, so coerce here.
+      if (typeof input.patch.llmMonthlyBudgetUsd === "number") {
+        updates.llmMonthlyBudgetUsd = String(input.patch.llmMonthlyBudgetUsd);
+      }
       if (turningOn) {
         updates.contentCaptureEnabledAt = now;
         updates.contentCaptureEnabledBy = ctx.user.id;

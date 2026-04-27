@@ -84,11 +84,14 @@ docker compose --profile gateway up -d    # opt-in: add gateway service
 ```
 
 Images are published on every `v*` tag to:
-- `ghcr.io/hanfour/aide-api`
-- `ghcr.io/hanfour/aide-web`
-- `ghcr.io/hanfour/aide-gateway` — new in v0.3.0
 
-All three are multi-arch (`linux/amd64`, `linux/arm64`). Operator guides:
+| Image | amd64 | arm64 |
+|-------|-------|-------|
+| `ghcr.io/hanfour/aide-api` | ✅ | ✅ |
+| `ghcr.io/hanfour/aide-gateway` (new in v0.3.0) | ✅ | ✅ |
+| `ghcr.io/hanfour/aide-web` | ✅ | ❌ (dropped in v0.5.0; QEMU cross-build was unstable) |
+
+Operator guides:
 
 - Self-hosting bring-up (api + web + gateway): [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md)
 - Gateway operator + user reference: [`docs/GATEWAY.md`](docs/GATEWAY.md)

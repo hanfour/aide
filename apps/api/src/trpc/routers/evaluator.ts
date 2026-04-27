@@ -5,6 +5,7 @@ import { evaluationReports, organizationMembers } from "@aide/db";
 import { can } from "@aide/auth";
 import { router } from "../procedures.js";
 import { evaluatorProcedure } from "./_evaluatorGate.js";
+import { getCostSummary } from "../../services/evaluatorCost.js";
 
 export const evaluatorRouter = router({
   /**
@@ -82,5 +83,19 @@ export const evaluatorRouter = router({
         reportsWrittenLast24h: recentReports,
         coveragePct: memberCount > 0 ? (recentReports / memberCount) * 100 : 0,
       };
+    }),
+
+  /**
+   * Returns the LLM cost summary for an org: current-month spend, budget,
+   * projected end-of-month, breakdowns by event type/model, 6-month history,
+   * and the warning/halted flags. Requires `evaluator.view_cost` on the org.
+   */
+  costSummary: evaluatorProcedure
+    .input(z.object({ orgId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      if (!can(ctx.perm, { type: "evaluator.view_cost", orgId: input.orgId })) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+      return getCostSummary(ctx.db, input.orgId);
     }),
 });

@@ -1,0 +1,69 @@
+name: Post-release smoke
+
+# Plan 4C Part 11 — fires after the Release workflow succeeds (or via
+# workflow_dispatch). Runs the evaluator smoke script against the canary
+# environment plus a thin Playwright spec covering the cost dashboard render.
+# A failure opens a GitHub issue tagged `release-blocker` so the rollout is
+# paused until the underlying defect is fixed.
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v3
+        with: { version: 9 }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter @aide/web exec playwright install --with-deps chromium
+
+      - name: Run smoke-evaluator.sh
+        env:
+          API_BASE_URL: ${{ secrets.CANARY_API_BASE_URL }}
+          GATEWAY_BASE_URL: ${{ secrets.CANARY_GATEWAY_BASE_URL }}
+          ADMIN_SESSION_COOKIE: ${{ secrets.CANARY_ADMIN_SESSION_COOKIE }}
+          GATEWAY_API_KEY: ${{ secrets.CANARY_GATEWAY_API_KEY }}
+          ORG_ID: ${{ secrets.CANARY_ORG_ID }}
+          USER_ID: ${{ secrets.CANARY_USER_ID }}
+        run: bash scripts/smoke-evaluator.sh
+
+      - name: Run Playwright post-release spec
+        env:
+          CANARY_BASE_URL: ${{ secrets.CANARY_API_BASE_URL }}
+          CANARY_SESSION_COOKIE: ${{ secrets.CANARY_ADMIN_SESSION_COOKIE }}
+          CANARY_ORG_ID: ${{ secrets.CANARY_ORG_ID }}
+        run: pnpm --filter @aide/web exec playwright test specs/99-post-release-smoke.spec.ts
+
+      - name: On failure — open issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.workflow_run.head_branch || github.sha }}"
+          RUN_URL="${{ github.event.workflow_run.html_url || format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          gh issue create \
+            --title "Post-release smoke failed: $TAG" \
+            --body "Smoke workflow failed after release.
+
+          Run: $RUN_URL
+
+          This is a release-blocker. Investigate before promoting v$TAG to user-facing rollout." \
+            --label release-blocker \
+            --label v0.5.0

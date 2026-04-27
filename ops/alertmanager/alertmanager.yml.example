@@ -1,0 +1,56 @@
+# Alertmanager configuration template (Plan 4C).
+#
+# Copy this file to `ops/alertmanager/alertmanager.yml` (gitignored) and fill
+# in the webhook URLs for your environment. Do NOT commit the real file.
+#
+# Validate with `amtool check-config ops/alertmanager/alertmanager.yml`.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default
+  group_by: ["alertname", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: critical
+      continue: true
+    - matchers:
+        - severity="warning"
+      receiver: warnings
+    - matchers:
+        - severity="info"
+      receiver: info
+
+receivers:
+  - name: default
+    webhook_configs:
+      - url: "REPLACE_WITH_YOUR_WEBHOOK_URL"
+        send_resolved: true
+
+  - name: critical
+    webhook_configs:
+      - url: "REPLACE_WITH_CRITICAL_WEBHOOK_URL"
+        send_resolved: true
+
+  - name: warnings
+    webhook_configs:
+      - url: "REPLACE_WITH_WARNINGS_WEBHOOK_URL"
+        send_resolved: true
+
+  - name: info
+    webhook_configs:
+      - url: "REPLACE_WITH_INFO_WEBHOOK_URL"
+        send_resolved: false
+
+# Optional: silence templates for known-noisy alerts during planned
+# maintenance. Add inhibit_rules here as needed.
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: ["alertname", "instance"]

@@ -1,0 +1,285 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "panels": [],
+      "title": "Jobs",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Evaluator LLM call rate by result. gw_eval_job_completed_total is not emitted; we proxy via gw_eval_llm_called_total{result=\"ok\"} (success) vs gw_eval_llm_failed_total (failure).",
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "id": 1,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(gw_eval_llm_called_total{result=\"ok\"}[5m]))",
+          "legendFormat": "completed",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(gw_eval_llm_failed_total[5m]))",
+          "legendFormat": "failed",
+          "refId": "B"
+        }
+      ],
+      "title": "Job rate (completed vs failed)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Parse failures and retries. gw_eval_llm_parse_failed_total fires when the LLM JSON response does not validate.",
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "id": 2,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(gw_eval_llm_parse_failed_total[5m]))",
+          "legendFormat": "parse_failed",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (reason) (rate(gw_eval_llm_failed_total[5m]))",
+          "legendFormat": "failed:{{reason}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Parse failures + failed-by-reason",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "id": 101,
+      "panels": [],
+      "title": "DLQ",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Evaluator BullMQ DLQ depth (failed after all retries). Gauge.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "id": 3,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "gw_eval_dlq_count",
+          "legendFormat": "dlq",
+          "refId": "A"
+        }
+      ],
+      "title": "DLQ depth",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Cumulative LLM cost (USD) across all evaluator deep-analysis calls.",
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "id": 4,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "increase(gw_eval_llm_cost_usd[1h])",
+          "legendFormat": "USD/hour",
+          "refId": "A"
+        }
+      ],
+      "title": "Evaluator LLM cost (USD/hour)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "id": 102,
+      "panels": [],
+      "title": "Facet (Phase 2)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Facet extraction by result. Metric is registered but not yet emitted; will populate when emission is wired in Phase 2.",
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "id": 5,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (result) (rate(gw_facet_extract_total{org_id=~\"$org_id\"}[5m]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Facet extraction by result",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Facet extraction latency heatmap. Metric is registered but not yet emitted; will populate when emission is wired in Phase 2.",
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "id": 6,
+      "options": { "calculate": false, "yAxis": { "unit": "ms" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (le) (rate(gw_facet_extract_duration_ms_bucket{org_id=~\"$org_id\"}[5m]))",
+          "format": "heatmap",
+          "legendFormat": "{{le}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Facet duration heatmap",
+      "type": "heatmap"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Facet cache hit ratio over the last hour. Metric is registered but not yet emitted; will populate when emission is wired in Phase 2.",
+      "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1, "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 27 },
+      "id": 7,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(gw_facet_cache_hit_total[1h])) / (sum(rate(gw_facet_cache_hit_total[1h])) + sum(rate(gw_facet_extract_total[1h])))",
+          "legendFormat": "hit rate",
+          "refId": "A"
+        }
+      ],
+      "title": "Facet cache hit rate",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 },
+      "id": 103,
+      "panels": [],
+      "title": "Cost",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "30-day month-to-date LLM spend per org from the cost ledger.",
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "id": 8,
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] }, "showUnfilled": true },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (org_id) (increase(gw_llm_cost_usd_total[30d]))",
+          "legendFormat": "{{org_id}}",
+          "refId": "A"
+        }
+      ],
+      "title": "LLM spend this month by org",
+      "type": "bargauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Top 5 spending orgs over the last 30 days.",
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "id": 9,
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "topk(5, sum by (org_id) (increase(gw_llm_cost_usd_total[30d])))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "{{org_id}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Top 5 spenders (30d)",
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Rate of soft budget warnings (org crossed 80% of monthly budget).",
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 44 },
+      "id": 10,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(gw_llm_budget_warn_total[15m]))",
+          "legendFormat": "warn rate",
+          "refId": "A"
+        }
+      ],
+      "title": "Budget warnings rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Hard budget breaches by overage behavior (degrade vs halt).",
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 44 },
+      "id": 11,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (behavior) (rate(gw_llm_budget_exceeded_total[15m]))",
+          "legendFormat": "{{behavior}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Budget exceeded by behavior",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["aide", "evaluator", "plan-4c"],
+  "templating": {
+    "list": [
+      {
+        "name": "org_id",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(gw_llm_cost_usd_total, org_id)",
+        "includeAll": true,
+        "allValue": ".*",
+        "current": { "text": "All", "value": "$__all" },
+        "multi": true,
+        "refresh": 2,
+        "sort": 1
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "AIDE — Evaluator",
+  "uid": "aide-evaluator",
+  "version": 1,
+  "weekStart": ""
+}

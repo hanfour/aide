@@ -29,6 +29,13 @@
       "when": 1745280000000,
       "tag": "0003_seed_platform_rubrics",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1777031902347,
+      "tag": "0004_last_gertrude_yorkes",
+      "breakpoints": true
     }
   ]
 }
