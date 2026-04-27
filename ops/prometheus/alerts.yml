@@ -1,0 +1,171 @@
+# Plan 4C — Prometheus alert rules
+#
+# Metric names below match those registered in
+# `apps/gateway/src/plugins/metrics.ts`. Phase 2 facet metrics are registered
+# but not yet emitted; the FacetExtractionFailureRate alert will only start
+# evaluating once Phase 2 wiring lands.
+#
+# Validate with `promtool check rules ops/prometheus/alerts.yml`.
+groups:
+  - name: aide-evaluator
+    rules:
+      - alert: EvaluatorDLQBacklog
+        expr: gw_eval_dlq_count > 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Evaluator DLQ has more than 10 entries"
+          description: |
+            Evaluator BullMQ DLQ depth has been above 10 for 15 minutes.
+            Inspect failed jobs and decide whether to retry or drain.
+          runbook: "docs/runbooks/evaluator-dlq.md"
+
+      - alert: EvaluatorDLQCritical
+        expr: gw_eval_dlq_count > 50
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Evaluator DLQ backlog >50 for 5min"
+          description: |
+            Evaluator DLQ depth above 50 for 5 minutes — the worker is either
+            stuck or the LLM provider is rejecting all jobs. Page on-call.
+          runbook: "docs/runbooks/evaluator-dlq.md"
+
+      - alert: EvaluatorParseFailureSpike
+        # gw_eval_llm_parse_failed_total fires when the LLM JSON response
+        # fails JSON / schema validation. Sustained non-zero rate is suspicious.
+        expr: rate(gw_eval_llm_parse_failed_total[15m]) > 0.05
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Evaluator LLM parse failure rate >0.05/s for 30min"
+          description: |
+            Evaluator LLM responses are failing JSON/schema validation.
+            Likely a prompt or model regression.
+          runbook: "docs/runbooks/facet-parse-errors.md"
+
+      - alert: FacetExtractionFailureRate
+        # Phase 2: gw_facet_extract_total is registered but not emitted yet.
+        # Once emission lands, this alert will activate.
+        expr: |
+          (
+            sum(rate(gw_facet_extract_total{result!="success"}[15m]))
+          )
+          /
+          (
+            sum(rate(gw_facet_extract_total[15m])) > 0
+          )
+          > 0.3
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Facet extraction failure rate >30% for 30min"
+          description: |
+            More than 30% of facet extractions are failing (parse_error,
+            validation_error, timeout, or api_error). Check the LLM provider
+            and the prompt template.
+          runbook: "docs/runbooks/facet-extraction.md"
+
+  - name: aide-body-capture
+    rules:
+      - alert: BodyPurgeLagging
+        expr: gw_body_purge_lag_hours > 6
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Body purge lag >6h"
+          description: |
+            Oldest overdue request_bodies row is more than 6 hours past its
+            retention_until. The 4h purge cron is either not firing or
+            running slower than the inflow.
+          runbook: "docs/runbooks/body-purge-lag.md"
+
+      - alert: BodyPurgeLaggingCritical
+        expr: gw_body_purge_lag_hours > 24
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Body purge lag >24h"
+          description: |
+            Body purge has been lagging more than a full day — GDPR retention
+            obligations may be at risk. Page on-call and DPO.
+          runbook: "docs/runbooks/body-purge-lag.md"
+
+  - name: aide-gdpr
+    rules:
+      # Proxy metric: we don't yet have a "request age (days)" gauge, so we
+      # alert on executor failures instead. Replace with proper
+      # GDPRSLANearing/Violated rules once that gauge lands.
+      - alert: GDPRExecutorFailures
+        expr: rate(gw_gdpr_failures_total[1h]) > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GDPR executor failures over the last hour"
+          description: |
+            One or more GDPR delete requests have failed during execution.
+            Investigate immediately — failed requests count against the
+            30-day SLA.
+          runbook: "docs/runbooks/gdpr-sla.md"
+
+      - alert: GDPRAutoRejectionSpike
+        # Auto-rejection means a request hit the 30-day SLA without being
+        # actioned. A single one is a process failure; many is a governance
+        # incident.
+        expr: increase(gw_gdpr_auto_rejected_total[24h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "GDPR delete request(s) auto-rejected after SLA expiry"
+          description: |
+            One or more GDPR delete requests aged past 30 days without being
+            approved or denied and were auto-rejected. Notify DPO/legal.
+          runbook: "docs/runbooks/gdpr-sla.md"
+
+  - name: aide-llm-cost
+    rules:
+      - alert: LLMBudgetWarning
+        expr: rate(gw_llm_budget_warn_total[1h]) > 0
+        labels:
+          severity: info
+        annotations:
+          summary: "An org crossed 80% of monthly LLM budget"
+          description: |
+            One or more orgs have crossed the 80% soft-warning threshold
+            for their monthly LLM budget. No customer-visible impact yet.
+          runbook: "docs/runbooks/llm-budget.md"
+
+      - alert: LLMBudgetExceeded
+        expr: rate(gw_llm_budget_exceeded_total[1h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "An org exceeded monthly LLM budget"
+          description: |
+            One or more orgs have exceeded their monthly LLM budget. The
+            `behavior` label distinguishes degrade (deep-analysis dropped,
+            rule-based kept) vs halt (blocked until month rolls over).
+          runbook: "docs/runbooks/llm-budget.md"
+
+      - alert: CostLedgerVsAnthropicDrift
+        # Proxy via the existing billing-drift signal from Plan 4A. A real
+        # cost-ledger-vs-Anthropic-bill comparison runs out-of-band; for now
+        # we surface the same drift counter so operators can correlate.
+        expr: increase(gw_billing_drift_total[24h]) > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Billing drift detected in the last 24h"
+          description: |
+            The hourly billing audit found api_keys whose
+            |SUM(usage_logs.total_cost) - quota_used_usd| > $0.01. Investigate
+            before this drifts further from the Anthropic bill.
+          runbook: "docs/runbooks/cost-ledger-mismatch.md"

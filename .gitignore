@@ -16,3 +16,6 @@ test-results/
 
 # Git worktrees
 .worktrees/
+
+# Alertmanager local config (template lives at ops/alertmanager/alertmanager.yml.example)
+ops/alertmanager/alertmanager.yml
