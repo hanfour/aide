@@ -46,6 +46,9 @@ export const organizations = pgTable("organizations", {
   llmHaltedUntilMonthEnd: boolean("llm_halted_until_month_end")
     .notNull()
     .default(false),
+  // When the halt flag was set (UTC). NULL when halt is off.
+  // Used by enforceBudget to detect month rollover and auto-clear stale halts.
+  llmHaltedAt: timestamp("llm_halted_at", { withTimezone: true }),
 });
 
 export const departments = pgTable(

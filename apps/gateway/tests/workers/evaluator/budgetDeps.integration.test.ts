@@ -47,9 +47,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   // CASCADE wipes child tables (llm_usage_events) along with organizations.
-  await db.execute(
-    sql`TRUNCATE TABLE organizations RESTART IDENTITY CASCADE`,
-  );
+  await db.execute(sql`TRUNCATE TABLE organizations RESTART IDENTITY CASCADE`);
 });
 
 async function seedOrg(
@@ -61,7 +59,8 @@ async function seedOrg(
     llmHaltedUntilMonthEnd: boolean;
   }> = {},
 ): Promise<{ id: string }> {
-  const slug = overrides.slug ?? `budget-deps-${Math.random().toString(36).slice(2, 10)}`;
+  const slug =
+    overrides.slug ?? `budget-deps-${Math.random().toString(36).slice(2, 10)}`;
   const [row] = await db
     .insert(organizations)
     .values({
@@ -165,6 +164,30 @@ describe("createBudgetDeps (integration)", () => {
     await deps.clearHalt(org.id);
     loaded = await deps.loadOrg(org.id);
     expect(loaded.llm_halted_until_month_end).toBe(false);
+  });
+
+  it("setHalt populates halt_set_at timestamp; clearHalt clears it", async () => {
+    const org = await seedOrg();
+    const deps = createBudgetDeps(db);
+
+    // Initially no halt timestamp.
+    let loaded = await deps.loadOrg(org.id);
+    expect(loaded.halt_set_at).toBeUndefined();
+
+    const before = Date.now();
+    await deps.setHalt(org.id);
+    const after = Date.now();
+
+    loaded = await deps.loadOrg(org.id);
+    expect(loaded.halt_set_at).toBeInstanceOf(Date);
+    const ts = loaded.halt_set_at!.getTime();
+    // Allow a small clock-skew tolerance against the test container.
+    expect(ts).toBeGreaterThanOrEqual(before - 1000);
+    expect(ts).toBeLessThanOrEqual(after + 1000);
+
+    await deps.clearHalt(org.id);
+    loaded = await deps.loadOrg(org.id);
+    expect(loaded.halt_set_at).toBeUndefined();
   });
 
   it("now returns a Date close to the wall clock", () => {
