@@ -1,4 +1,4 @@
-import { BudgetExceededDegrade, BudgetExceededHalt } from "./errors";
+import { BudgetExceededDegrade, BudgetExceededHalt } from "./errors.js";
 
 export interface OrgBudgetState {
   id: string;

@@ -1,4 +1,4 @@
-import { calculateCost } from "./pricing";
+import { calculateCost } from "./pricing.js";
 
 export interface LlmCallParams {
   orgId: string;
