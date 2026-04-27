@@ -24,14 +24,21 @@
 import type { Database } from "@aide/db";
 import { llmUsageEvents } from "@aide/db";
 import type { LedgerRow } from "@aide/evaluator";
+import type { GatewayMetrics } from "../../plugins/metrics.js";
 
 /**
  * Build a concrete ledger-write function bound to the given Drizzle DB.
  * Returns an immutable closure suitable for passing as `insertLedger` to
  * `callWithCostTracking`.
+ *
+ * If `metrics` is provided, the writer also increments
+ * `gwLlmCostUsdTotal{org_id, event_type, model}` by `row.costUsd` after each
+ * successful insert. The argument is optional so existing call-sites and
+ * integration tests that don't care about Prometheus stay green.
  */
 export function createLedgerWriter(
   db: Database,
+  metrics?: Pick<GatewayMetrics, "gwLlmCostUsdTotal">,
 ): (row: LedgerRow) => Promise<void> {
   return async (row) => {
     await db.insert(llmUsageEvents).values({
@@ -45,5 +52,13 @@ export function createLedgerWriter(
       refType: row.refType ?? null,
       refId: row.refId ?? null,
     });
+    metrics?.gwLlmCostUsdTotal.inc(
+      {
+        org_id: row.orgId,
+        event_type: row.eventType,
+        model: row.model,
+      },
+      row.costUsd,
+    );
   };
 }

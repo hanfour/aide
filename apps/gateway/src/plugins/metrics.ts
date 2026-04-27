@@ -35,6 +35,16 @@ export interface GatewayMetrics {
   gwGdprReportsDeletedTotal: Counter<string>;
   gwGdprFailuresTotal: Counter<string>;
   gwGdprAutoRejectedTotal: Counter<string>;
+
+  // Plan 4C — cost budget infrastructure
+  gwLlmCostUsdTotal: Counter<"org_id" | "event_type" | "model">;
+  gwLlmBudgetWarnTotal: Counter<"org_id">;
+  gwLlmBudgetExceededTotal: Counter<"org_id" | "behavior">;
+
+  // Plan 4C Phase 2 — facet extraction (registered now; emitted in Phase 2)
+  gwFacetExtractTotal: Counter<"org_id" | "result">;
+  gwFacetExtractDurationMs: Histogram<"org_id">;
+  gwFacetCacheHitTotal: Counter<"org_id">;
 }
 
 declare module "fastify" {
@@ -244,6 +254,62 @@ export const metricsPlugin = fp(async (fastify) => {
     registers: [register],
   });
 
+  // Plan 4C — cost budget infrastructure
+  // Cumulative LLM cost in USD per org / event_type / model. Emitted from
+  // `createLedgerWriter` after each successful ledger insert.
+  const gwLlmCostUsdTotal = new Counter({
+    name: "gw_llm_cost_usd_total",
+    help: "Cumulative LLM cost in USD per org/event_type/model",
+    labelNames: ["org_id", "event_type", "model"] as const,
+    registers: [register],
+  });
+
+  // Soft warning when an org's month-to-date spend crosses 80% of its budget.
+  // Emitted from `wrapEnforceBudget` after a successful enforce.
+  const gwLlmBudgetWarnTotal = new Counter({
+    name: "gw_llm_budget_warn_total",
+    help: "LLM budget soft-warning trips (>= 80% of monthly budget)",
+    labelNames: ["org_id"] as const,
+    registers: [register],
+  });
+
+  // Hard breach: org went over budget. Behavior label distinguishes degrade
+  // (drop the deep-analysis call but keep rule-based) vs halt (block until
+  // month rolls over). Emitted from `wrapEnforceBudget` on throw.
+  const gwLlmBudgetExceededTotal = new Counter({
+    name: "gw_llm_budget_exceeded_total",
+    help: "LLM budget exceeded events by overage behavior",
+    labelNames: ["org_id", "behavior"] as const,
+    registers: [register],
+  });
+
+  // Plan 4C Phase 2 — facet extraction (registered now; emitted in Phase 2).
+  // `result` label values used in Phase 2:
+  //   success | parse_error | validation_error | timeout | api_error | budget_skip
+  const gwFacetExtractTotal = new Counter({
+    name: "gw_facet_extract_total",
+    help: "Facet extraction attempts by result",
+    labelNames: ["org_id", "result"] as const,
+    registers: [register],
+  });
+
+  // Latency of facet extraction LLM calls. Anthropic latencies typically span
+  // ~100ms – 30s; buckets sized for that range.
+  const gwFacetExtractDurationMs = new Histogram({
+    name: "gw_facet_extract_duration_ms",
+    help: "Facet extraction duration in milliseconds",
+    labelNames: ["org_id"] as const,
+    buckets: [100, 250, 500, 1000, 2500, 5000, 10000, 15000, 30000],
+    registers: [register],
+  });
+
+  const gwFacetCacheHitTotal = new Counter({
+    name: "gw_facet_cache_hit_total",
+    help: "Facet extraction cache hits per org",
+    labelNames: ["org_id"] as const,
+    registers: [register],
+  });
+
   // Materialize zero values so unlabeled metrics appear in scrape output
   waitQueueDepth.set(0);
   idempotencyHitTotal.inc(0);
@@ -294,5 +360,11 @@ export const metricsPlugin = fp(async (fastify) => {
     gwGdprReportsDeletedTotal,
     gwGdprFailuresTotal,
     gwGdprAutoRejectedTotal,
+    gwLlmCostUsdTotal,
+    gwLlmBudgetWarnTotal,
+    gwLlmBudgetExceededTotal,
+    gwFacetExtractTotal,
+    gwFacetExtractDurationMs,
+    gwFacetCacheHitTotal,
   });
 });
