@@ -34,16 +34,16 @@ describe("migration 0004 cost infra", () => {
     const byName = Object.fromEntries(
       result.rows.map((r) => [r.column_name, r]),
     );
-    expect(byName.llm_facet_enabled.is_nullable).toBe("NO");
-    expect(byName.llm_facet_enabled.column_default).toBe("false");
-    expect(byName.llm_facet_model.is_nullable).toBe("YES");
-    expect(byName.llm_monthly_budget_usd.is_nullable).toBe("YES");
-    expect(byName.llm_budget_overage_behavior.is_nullable).toBe("NO");
-    expect(byName.llm_budget_overage_behavior.column_default).toContain(
+    expect(byName.llm_facet_enabled!.is_nullable).toBe("NO");
+    expect(byName.llm_facet_enabled!.column_default).toBe("false");
+    expect(byName.llm_facet_model!.is_nullable).toBe("YES");
+    expect(byName.llm_monthly_budget_usd!.is_nullable).toBe("YES");
+    expect(byName.llm_budget_overage_behavior!.is_nullable).toBe("NO");
+    expect(byName.llm_budget_overage_behavior!.column_default).toContain(
       "degrade",
     );
-    expect(byName.llm_halted_until_month_end.is_nullable).toBe("NO");
-    expect(byName.llm_halted_until_month_end.column_default).toBe("false");
+    expect(byName.llm_halted_until_month_end!.is_nullable).toBe("NO");
+    expect(byName.llm_halted_until_month_end!.column_default).toBe("false");
   });
 
   it("creates llm_usage_events table with expected columns", async () => {
@@ -75,7 +75,7 @@ describe("migration 0004 cost infra", () => {
     const result = await testDb.db.execute<{ count: string }>(sql`
       SELECT COUNT(*)::text AS count FROM llm_usage_events WHERE org_id = ${org.id}
     `);
-    expect(result.rows[0].count).toBe("1");
+    expect(result.rows[0]!.count).toBe("1");
   });
 
   it("cascades delete from organizations to llm_usage_events", async () => {
@@ -85,11 +85,13 @@ describe("migration 0004 cost infra", () => {
       VALUES (${org.id}, 'deep_analysis', 'claude-haiku-4-5', 1, 1, 0.001)
     `);
 
-    await testDb.db.execute(sql`DELETE FROM organizations WHERE id = ${org.id}`);
+    await testDb.db.execute(
+      sql`DELETE FROM organizations WHERE id = ${org.id}`,
+    );
 
     const result = await testDb.db.execute<{ count: string }>(sql`
       SELECT COUNT(*)::text AS count FROM llm_usage_events WHERE org_id = ${org.id}
     `);
-    expect(result.rows[0].count).toBe("0");
+    expect(result.rows[0]!.count).toBe("0");
   });
 });
