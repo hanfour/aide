@@ -96,7 +96,7 @@ describe("translateResponsesToAnthropic — input items", () => {
         ],
       }),
     );
-    const blocks = out.messages[0]!.content as Array<{
+    const blocks = out.messages[0]!.content as unknown as Array<{
       type: string;
       [k: string]: unknown;
     }>;
@@ -123,7 +123,7 @@ describe("translateResponsesToAnthropic — input items", () => {
         ],
       }),
     );
-    const blocks = out.messages[0]!.content as Array<{
+    const blocks = out.messages[0]!.content as unknown as Array<{
       type: string;
       [k: string]: unknown;
     }>;
@@ -305,9 +305,7 @@ describe("translateResponsesToAnthropic — rejected features", () => {
     expect(() =>
       translateResponsesToAnthropic(
         baseReq({
-          input: [
-            { type: "message", role: "system", content: "system text" },
-          ],
+          input: [{ type: "message", role: "system", content: "system text" }],
         }),
       ),
     ).toThrow(/responses_input_system_role_unsupported/);
@@ -321,9 +319,7 @@ describe("translateResponsesToAnthropic — rejected features", () => {
             {
               type: "message",
               role: "user",
-              content: [
-                { type: "input_image", image_url: "data:bogus" },
-              ],
+              content: [{ type: "input_image", image_url: "data:bogus" }],
             },
           ],
         }),
