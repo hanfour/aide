@@ -50,6 +50,13 @@
       "when": 1777281222985,
       "tag": "0006_curious_felicia_hardy",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1777330000000,
+      "tag": "0007_platform_rubric_v2_facets",
+      "breakpoints": true
     }
   ]
 }
