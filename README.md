@@ -64,9 +64,10 @@ through a shared pool of upstream accounts:
   and tracked in `usage_logs`.
 - **Admin-customizable scoring rubrics** — platform defaults seeded for
   English, Traditional Chinese, and Japanese; organizations can define custom
-  rubrics with dry-run preview. Zod-validated 9-type signal discriminated
-  union (keywords, thresholds, refusal rates, client mix, model diversity,
-  cache patterns, extended thinking, tool variety, iteration counts).
+  rubrics with dry-run preview. Zod-validated signal discriminated union
+  (keywords, thresholds, refusal rates, client mix, model diversity, cache
+  patterns, extended thinking, tool variety, iteration counts) — **extended
+  in v0.5.0** with six facet-based signal types.
 - **GDPR member-initiated delete request workflow** — members request deletion,
   org admins approve (or auto-reject after 30 days). Retention purge and GDPR
   execution run on separate cron workers.
@@ -74,6 +75,46 @@ through a shared pool of upstream accounts:
   evaluation report; team managers see redacted team views (LLM analysis
   fields nulled unless they are also org admins). Leaderboard visibility is
   opt-in per organization (privacy default).
+
+**v0.5.0** extends the v0.4.0 evaluator with **per-org LLM cost budgeting**
+and **opt-in LLM facet extraction** (gated behind `ENABLE_FACET_EXTRACTION`
+env + per-org `llm_facet_enabled`). All v0.4.0 behaviour preserved when both
+flags are off.
+
+- **Cost budget infrastructure** — every org gets `llm_monthly_budget_usd`
+  + `llm_budget_overage_behavior` (`degrade` skips over-budget calls,
+  `halt` stops all LLM until next UTC month). Spend tracked per-call in a
+  new `llm_usage_events` ledger, summed per UTC month, enforced before each
+  LLM call. Cost dashboard at `/dashboard/organizations/<id>/evaluator/costs`
+  with breakdowns by task / model / 6-month history; compact widget on the
+  evaluator status page.
+- **LLM facet extraction** — opt-in second LLM pass per session that
+  classifies each evaluation window's sessions into structured JSON
+  (`{sessionType, outcome, claudeHelpfulness, frictionCount, bugsCaughtCount,
+  codexErrorsCount}`). Extracted rows persisted to `request_body_facets`
+  table with `prompt_version` cache so the same LLM call doesn't fire twice.
+  Deterministic failures (parse / validation / timeout) write an error row
+  so they don't retry; transient failures (5xx, budget hit) skip silently.
+- **Six new rubric signal types** consume the facet aggregate:
+  `facet_claude_helpfulness`, `facet_friction_per_session`,
+  `facet_bugs_caught`, `facet_codex_errors`, `facet_outcome_success_rate`,
+  `facet_session_type_ratio`. Custom rubrics can opt in today; the rubric
+  editor ships an in-form Signal types reference.
+- **Platform default rubrics bumped to v1.1.0** — strictly additive: each
+  section gains one facet support (`facet_outcome_success` to `interaction`,
+  `facet_bugs_caught` to `riskControl`). Orgs without facet extraction see
+  zero scoring change.
+- **Report-page facet drill-down** — when facet rows exist for the period,
+  the user's evaluation report shows session-type distribution, success
+  rate, avg helpfulness, and bug/friction/codex counters. Hidden silently
+  when no rows exist.
+- **Observability artifacts** shipped under `ops/`: 3 Grafana dashboards
+  (evaluator / body-capture / GDPR), 11 Prometheus alert rules, 9 runbooks
+  in `docs/runbooks/`, and a post-release smoke workflow that auto-creates a
+  `release-blocker` issue when the canary fails.
+
+See [`docs/UPGRADE-v0.5.0.md`](docs/UPGRADE-v0.5.0.md) for the upgrade
+playbook (migrations 0004-0007, env flags, three-tier rollback).
 
 Quick start:
 ```sh
