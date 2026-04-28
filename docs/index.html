@@ -425,6 +425,153 @@
     footer a { color: var(--text-secondary); }
     footer .links { display: flex; justify-content: center; gap: 24px; margin-bottom: 16px; }
 
+    /* ── Mode Comparison cards ── */
+    .modes-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+      align-items: stretch;
+    }
+    .mode-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    .mode-card.platform {
+      border: 2px solid var(--accent);
+    }
+    .mode-card .badge {
+      position: absolute;
+      top: -10px;
+      right: 24px;
+      background: var(--accent);
+      color: #fff;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+    .mode-card h3 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .mode-card .subtitle {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+    }
+    .mode-card ul {
+      list-style: none;
+      flex: 1;
+      margin-bottom: 24px;
+    }
+    .mode-card li {
+      font-size: 0.92rem;
+      color: var(--text-secondary);
+      padding: 6px 0 6px 24px;
+      position: relative;
+      line-height: 1.5;
+    }
+    .mode-card li::before {
+      content: "✓";
+      position: absolute;
+      left: 0;
+      color: var(--green);
+      font-weight: 700;
+    }
+    .mode-card .mode-cta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* ── Platform showcase ── */
+    .platform-stack {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    .platform-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: var(--shadow-sm);
+    }
+    .platform-card .version-tag {
+      display: inline-block;
+      background: var(--accent-bg);
+      color: var(--accent);
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      margin-bottom: 10px;
+    }
+    .platform-card.v05 .version-tag { background: var(--purple-bg); color: var(--purple); }
+    .platform-card h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .platform-card p {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      margin-bottom: 12px;
+    }
+    .platform-card ul {
+      list-style: none;
+      margin-top: 4px;
+    }
+    .platform-card li {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      padding: 3px 0 3px 16px;
+      position: relative;
+    }
+    .platform-card li::before {
+      content: "›";
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    /* ── Architecture diagrams ── */
+    .arch-tabs {
+      display: flex;
+      gap: 4px;
+      justify-content: center;
+      margin-bottom: 32px;
+    }
+    .arch-tab {
+      padding: 8px 18px;
+      border-radius: var(--radius-sm);
+      background: var(--bg);
+      color: var(--text-secondary);
+      font-size: 0.92rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      transition: all 0.2s;
+    }
+    .arch-tab.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .arch-pane { display: none; }
+    .arch-pane.active { display: block; }
+
     /* ── Responsive ── */
     @media (max-width: 768px) {
       .hero { padding: 60px 16px 50px; }
@@ -435,6 +582,7 @@
       .nav-links { gap: 12px; }
       .nav-links a { font-size: 0.82rem; }
       section { padding: 50px 0; }
+      .modes-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -446,11 +594,11 @@
         <span>&gt;_</span> aide
       </a>
       <div class="nav-links">
+        <a href="#modes">Modes</a>
         <a href="#features">Features</a>
+        <a href="#platform">Platform</a>
         <a href="#install">Install</a>
         <a href="#usage">Usage</a>
-        <a href="#scoring">Scoring</a>
-        <a href="https://www.npmjs.com/package/@hanfour.huang/aide" target="_blank">npm</a>
         <a href="https://github.com/hanfour/aide" target="_blank">GitHub</a>
         <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
           <span id="theme-icon">&#9790;</span>
@@ -462,7 +610,7 @@
   <!-- Hero -->
   <section class="hero">
     <div class="hero-badges">
-      <div class="hero-badge">CLI Tool &middot; Local &middot; Privacy-first</div>
+      <div class="hero-badge">CLI &middot; Self-hosted Platform &middot; v0.5.0 candidate</div>
       <a href="https://www.npmjs.com/package/@hanfour.huang/aide" target="_blank" aria-label="View package on npm">
         <img src="https://img.shields.io/npm/v/%40hanfour.huang%2Faide" alt="npm version badge">
       </a>
@@ -475,20 +623,67 @@
       Performance Evaluator
     </h1>
     <p>
-      Read local Claude Code &amp; Codex usage data to generate evidence-based
-      technical performance evaluation reports for engineering managers.
+      Two ways to use it: a local <strong>CLI</strong> for individual engineers
+      reading their own Claude Code &amp; Codex usage, or a self-hosted
+      <strong>Platform</strong> with multi-tenant gateway, evaluator, and
+      cost budgeting for engineering teams.
     </p>
     <p style="font-size:0.95rem;color:var(--text-muted);margin-top:-16px;margin-bottom:32px;">
-      AI 開發績效評核工具 — 讀取本地端 AI 工具使用資料，產出技術績效評核報告。
+      AI 開發績效評核工具 — 個人 CLI 讀取本地資料；團隊 Platform 提供 multi-tenant gateway、評核器與成本控管。
     </p>
     <div class="hero-actions">
-      <a href="#install" class="btn btn-primary">Get Started</a>
+      <a href="#modes" class="btn btn-primary">Compare Modes</a>
       <a href="https://www.npmjs.com/package/@hanfour.huang/aide" class="btn btn-secondary" target="_blank">
-        View on npm
+        npm (CLI)
       </a>
       <a href="https://github.com/hanfour/aide" class="btn btn-secondary" target="_blank">
-        View on GitHub
+        GitHub
       </a>
+    </div>
+  </section>
+
+  <!-- Two ways to use aide -->
+  <section id="modes">
+    <div class="container">
+      <div class="section-header">
+        <h2>Two ways to use aide</h2>
+        <p>Pick whichever fits — they share no runtime state.</p>
+      </div>
+      <div class="modes-grid">
+        <div class="mode-card">
+          <h3>CLI mode</h3>
+          <p class="subtitle">v0.1.x &middot; for individual engineers</p>
+          <ul>
+            <li>Reads <code>~/.claude/</code> and <code>~/.codex/</code> on your laptop</li>
+            <li>Generates terminal / JSON / Markdown / HTML reports</li>
+            <li>Bring-your-own evaluation standard (default: OneAD R&amp;D)</li>
+            <li>Monthly / quarterly KPI presets</li>
+            <li>100% local, read-only — nothing leaves your machine</li>
+            <li><code>npm install -g @hanfour.huang/aide</code></li>
+          </ul>
+          <div class="mode-cta">
+            <a href="#install" class="btn btn-primary">Install CLI</a>
+            <a href="#usage" class="btn btn-secondary">CLI usage</a>
+          </div>
+        </div>
+        <div class="mode-card platform">
+          <span class="badge">v0.5.0 candidate</span>
+          <h3>Platform mode</h3>
+          <p class="subtitle">v0.2 → v0.5 &middot; self-hosted for teams</p>
+          <ul>
+            <li>Next.js + Fastify web platform with org-scoped RBAC + invites + audit log</li>
+            <li>Gateway proxies <code>/v1/messages</code> + <code>/v1/chat/completions</code> with shared upstream account pool, per-user API keys, usage + cost dashboards</li>
+            <li>Evaluator subsystem: opt-in content capture, rule-based + LLM scoring, custom rubrics with dry-run preview, GDPR delete workflow</li>
+            <li>Per-org monthly LLM cost budget (degrade / halt) + ledger + cost dashboard</li>
+            <li>Opt-in LLM facet extraction + 6 facet-based rubric signal types</li>
+            <li>Multi-arch Docker images on <code>ghcr.io/hanfour/aide-{api,web,gateway}</code></li>
+          </ul>
+          <div class="mode-cta">
+            <a href="#platform" class="btn btn-primary">See Platform</a>
+            <a href="https://github.com/hanfour/aide/blob/main/docs/SELF_HOSTING.md" class="btn btn-secondary" target="_blank">Self-hosting guide</a>
+          </div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -496,8 +691,8 @@
   <section id="features">
     <div class="container">
       <div class="section-header">
-        <h2>Features</h2>
-        <p>Everything you need to evaluate AI-assisted development performance.</p>
+        <h2>CLI features</h2>
+        <p>Everything an individual engineer needs to evaluate their own AI-assisted development. (Platform-mode capabilities are listed in the Platform section below.)</p>
       </div>
       <div class="features-grid">
         <div class="feature-card">
@@ -554,40 +749,168 @@
     <div class="container">
       <div class="section-header">
         <h2>How It Works</h2>
-        <p>A four-stage pipeline from raw data to scored report.</p>
+        <p>Both modes share an "extract → analyze → score → report" pipeline; Platform adds storage + multi-tenancy + LLM augmentation.</p>
       </div>
-      <div class="pipeline">
-        <div class="pipeline-step">
-          <div class="pipeline-box">
-            <div class="num">Step 1</div>
-            <div class="label">Extract</div>
-            <div class="desc">Read JSON, JSONL, SQLite</div>
+      <div class="arch-tabs" role="tablist">
+        <button class="arch-tab active" data-tab="cli" onclick="switchArch('cli')">CLI pipeline</button>
+        <button class="arch-tab" data-tab="platform" onclick="switchArch('platform')">Platform pipeline</button>
+      </div>
+      <div id="arch-cli" class="arch-pane active">
+        <div class="pipeline">
+          <div class="pipeline-step">
+            <div class="pipeline-box">
+              <div class="num">Step 1</div>
+              <div class="label">Extract</div>
+              <div class="desc">Read JSON, JSONL, SQLite from <code>~/.claude/</code> &amp; <code>~/.codex/</code></div>
+            </div>
+            <div class="pipeline-arrow">&#10132;</div>
           </div>
-          <div class="pipeline-arrow">&#10132;</div>
-        </div>
-        <div class="pipeline-step">
-          <div class="pipeline-box">
-            <div class="num">Step 2</div>
-            <div class="label">Analyze</div>
-            <div class="desc">Aggregate &amp; detect patterns</div>
+          <div class="pipeline-step">
+            <div class="pipeline-box">
+              <div class="num">Step 2</div>
+              <div class="label">Analyze</div>
+              <div class="desc">Aggregate metrics &amp; detect patterns</div>
+            </div>
+            <div class="pipeline-arrow">&#10132;</div>
           </div>
-          <div class="pipeline-arrow">&#10132;</div>
-        </div>
-        <div class="pipeline-step">
-          <div class="pipeline-box">
-            <div class="num">Step 3</div>
-            <div class="label">Score</div>
-            <div class="desc">Compare against thresholds</div>
+          <div class="pipeline-step">
+            <div class="pipeline-box">
+              <div class="num">Step 3</div>
+              <div class="label">Score</div>
+              <div class="desc">Compare against rubric thresholds</div>
+            </div>
+            <div class="pipeline-arrow">&#10132;</div>
           </div>
-          <div class="pipeline-arrow">&#10132;</div>
-        </div>
-        <div class="pipeline-step">
-          <div class="pipeline-box">
-            <div class="num">Step 4</div>
-            <div class="label">Report</div>
-            <div class="desc">Text, JSON, Markdown, or HTML</div>
+          <div class="pipeline-step">
+            <div class="pipeline-box">
+              <div class="num">Step 4</div>
+              <div class="label">Report</div>
+              <div class="desc">Text, JSON, Markdown, or HTML to stdout</div>
+            </div>
           </div>
         </div>
+      </div>
+      <div id="arch-platform" class="arch-pane">
+        <div class="pipeline">
+          <div class="pipeline-step">
+            <div class="pipeline-box">
+              <div class="num">Step 1</div>
+              <div class="label">Capture</div>
+              <div class="desc">Gateway intercepts <code>/v1/messages</code>; bodies AES-256-GCM-encrypted into <code>request_bodies</code></div>
+            </div>
+            <div class="pipeline-arrow">&#10132;</div>
+          </div>
+          <div class="pipeline-step">
+            <div class="pipeline-box">
+              <div class="num">Step 2</div>
+              <div class="label">Enrich</div>
+              <div class="desc">Optional LLM facet extraction → <code>request_body_facets</code> (per-session classification)</div>
+            </div>
+            <div class="pipeline-arrow">&#10132;</div>
+          </div>
+          <div class="pipeline-step">
+            <div class="pipeline-box">
+              <div class="num">Step 3</div>
+              <div class="label">Score</div>
+              <div class="desc">Rule engine + optional LLM Deep Analysis; cost gate via per-org monthly budget</div>
+            </div>
+            <div class="pipeline-arrow">&#10132;</div>
+          </div>
+          <div class="pipeline-step">
+            <div class="pipeline-box">
+              <div class="num">Step 4</div>
+              <div class="label">Surface</div>
+              <div class="desc">Web reports, cost dashboard, leaderboards, export, GDPR delete</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Platform mode deep section -->
+  <section id="platform">
+    <div class="container">
+      <div class="section-header">
+        <h2>Platform mode</h2>
+        <p>Self-hosted multi-tenant evaluator. Released incrementally — every version is a feature flag flip away from the previous one.</p>
+      </div>
+      <div class="platform-stack">
+        <div class="platform-card">
+          <span class="version-tag">v0.2.0</span>
+          <h3>Web platform foundation</h3>
+          <p>Next.js UI + Fastify API on Postgres + Redis. OAuth sign-in, organization-scoped RBAC, member invites, immutable audit log.</p>
+          <ul>
+            <li>Multi-org / department / team hierarchy</li>
+            <li>Role-based action gating throughout the API</li>
+            <li>Audit trail for every privileged change</li>
+          </ul>
+        </div>
+        <div class="platform-card">
+          <span class="version-tag">v0.3.0</span>
+          <h3>Gateway</h3>
+          <p>Anthropic-native + OpenAI-compatible HTTP proxy that pools admin-donated upstream accounts and meters per-user usage.</p>
+          <ul>
+            <li>Pool of <code>sk-ant-...</code> + OAuth bundles; scheduler picks per request</li>
+            <li>Per-user platform API keys (<code>ak_...</code>) authenticated against the pool</li>
+            <li><code>usage_logs</code> with per-call token / cost attribution</li>
+            <li>Dashboards: per-user, per-org, per-team usage drill-downs</li>
+          </ul>
+        </div>
+        <div class="platform-card">
+          <span class="version-tag">v0.4.0</span>
+          <h3>Evaluator subsystem</h3>
+          <p>Opt-in content capture + dual-layer evaluation (rule-based + optional LLM Deep Analysis), with admin-customizable scoring rubrics.</p>
+          <ul>
+            <li>AES-256-GCM body encryption (HKDF domain key); 90-day retention with override</li>
+            <li>Platform default rubrics seeded for en / zh-Hant / ja</li>
+            <li>Custom rubrics with Zod-validated signals (15 types after v0.5.0)</li>
+            <li>GDPR member-initiated delete request workflow with 30-day SLA</li>
+            <li>Labor-law-friendly transparency: members always see own full report</li>
+          </ul>
+        </div>
+        <div class="platform-card v05">
+          <span class="version-tag">v0.5.0 — Plan 4C</span>
+          <h3>Cost budget infrastructure</h3>
+          <p>Per-org monthly USD cap with two enforcement modes. Spend tracked in a dedicated ledger + visualised in a cost dashboard.</p>
+          <ul>
+            <li><code>llm_monthly_budget_usd</code> + <code>llm_budget_overage_behavior</code> (<code>degrade</code> or <code>halt</code>)</li>
+            <li><code>llm_usage_events</code> ledger (one row per LLM call)</li>
+            <li>UTC monthly rollover; halt state auto-clears at month boundary</li>
+            <li>Cost dashboard at <code>/dashboard/organizations/&lt;id&gt;/evaluator/costs</code></li>
+            <li>Settings form fieldset for the budget knobs + cross-field validation</li>
+          </ul>
+        </div>
+        <div class="platform-card v05">
+          <span class="version-tag">v0.5.0 — Plan 4C</span>
+          <h3>LLM facet extraction</h3>
+          <p>Opt-in second LLM pass that classifies each captured session into structured JSON, persisted for rubric signals + report drill-downs.</p>
+          <ul>
+            <li>Per-session classification: <code>sessionType</code>, <code>outcome</code>, <code>claudeHelpfulness</code>, <code>frictionCount</code>, <code>bugsCaughtCount</code>, <code>codexErrorsCount</code></li>
+            <li><code>request_body_facets</code> table; <code>prompt_version</code> cache prevents duplicate LLM calls</li>
+            <li>6 new rubric signal types (<code>facet_*</code>) wired end-to-end</li>
+            <li>Platform default rubrics bumped to v1.1.0 with additive facet supports</li>
+            <li>Report-page facet drill-down (silently hidden when no rows)</li>
+          </ul>
+        </div>
+        <div class="platform-card v05">
+          <span class="version-tag">v0.5.0 — Plan 4C</span>
+          <h3>Operability</h3>
+          <p>Production-ready observability shipped with the release. The pipeline can be deployed and supported without secondary tooling.</p>
+          <ul>
+            <li>3 Grafana dashboards (evaluator / body-capture / GDPR)</li>
+            <li>11 Prometheus alert rules (DLQ / purge lag / GDPR SLA / facet failure / cost budget)</li>
+            <li>9 runbooks under <code>docs/runbooks/</code></li>
+            <li>Post-release smoke workflow auto-creates a <code>release-blocker</code> issue on canary failure</li>
+            <li>SSE → StreamTranscript integration test against MSW-mocked Anthropic</li>
+          </ul>
+        </div>
+      </div>
+      <div style="text-align:center; margin-top:32px;">
+        <a href="https://github.com/hanfour/aide/blob/main/CHANGELOG.md" class="btn btn-secondary" target="_blank">Full changelog</a>
+        <a href="https://github.com/hanfour/aide/blob/main/docs/UPGRADE-v0.5.0.md" class="btn btn-secondary" target="_blank">v0.5.0 upgrade guide</a>
+        <a href="https://github.com/hanfour/aide/blob/main/docs/EVALUATOR.md" class="btn btn-secondary" target="_blank">Evaluator docs</a>
+        <a href="https://github.com/hanfour/aide/blob/main/docs/GATEWAY.md" class="btn btn-secondary" target="_blank">Gateway docs</a>
       </div>
     </div>
   </section>
@@ -596,8 +919,8 @@
   <section>
     <div class="container">
       <div class="section-header">
-        <h2>Data Sources</h2>
-        <p>All data is read locally. Nothing leaves your machine.</p>
+        <h2>CLI data sources</h2>
+        <p>All data is read locally. Nothing leaves your machine. (Platform mode persists captured request bodies in Postgres with AES-256-GCM encryption — see the Platform section above.)</p>
       </div>
       <div class="table-wrap">
         <table>
@@ -623,8 +946,10 @@
     <div class="container">
       <div class="section-header">
         <h2>Installation</h2>
-        <p>Install from npm. Requires Node.js &ge; 18 and local Claude Code / Codex usage data. Package page: <a href="https://www.npmjs.com/package/@hanfour.huang/aide" target="_blank">@hanfour.huang/aide</a></p>
+        <p>Pick the path that matches your use case. Requires Node.js &ge; 18 for the CLI, or Docker + Postgres + Redis for Platform mode.</p>
       </div>
+
+      <h3 style="margin-bottom:12px; font-size:1.05rem; font-weight:700;">CLI mode (npm)</h3>
       <div class="code-block">
         <div class="code-header">
           <span class="lang">bash</span>
@@ -634,20 +959,45 @@
 <span class="cmd">npm install -g</span> @hanfour.huang/aide
 
 <span class="comment"># Verify installation</span>
-<span class="cmd">aide</span> --help</pre>
-      </div>
-      <div class="code-block" style="margin-top:16px;">
-        <div class="code-header">
-          <span class="lang">bash — update</span>
-          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        </div>
-        <pre><span class="comment"># Update to latest version</span>
-<span class="cmd">npm install -g</span> @hanfour.huang/aide@latest
+<span class="cmd">aide</span> --help
 
-<span class="comment"># If you previously used npm link</span>
-<span class="cmd">npm unlink -g</span> aide
+<span class="comment"># Update to latest</span>
 <span class="cmd">npm install -g</span> @hanfour.huang/aide@latest</pre>
       </div>
+
+      <h3 style="margin:32px 0 12px; font-size:1.05rem; font-weight:700;">Platform mode (Docker)</h3>
+      <p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:16px;">
+        Multi-arch images on <code>ghcr.io/hanfour/aide-{api,web,gateway}</code>. <code>aide-web</code> is amd64-only since v0.5.0; <code>aide-api</code> and <code>aide-gateway</code> publish both amd64 and arm64.
+      </p>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="lang">bash — quick start</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <pre><span class="comment"># Clone, configure, start core stack (api + web + postgres + redis)</span>
+<span class="cmd">git clone</span> https://github.com/hanfour/aide.git &amp;&amp; <span class="cmd">cd</span> aide/docker
+<span class="cmd">cp</span> .env.example .env   <span class="comment"># fill in OAuth + bootstrap email + secrets</span>
+<span class="cmd">docker compose up -d</span>
+
+<span class="comment"># Opt-in: add gateway service</span>
+<span class="cmd">docker compose --profile gateway up -d</span>
+
+<span class="comment"># Opt-in: enable evaluator subsystem (v0.4.0+)</span>
+<span class="cmd">echo</span> 'ENABLE_EVALUATOR=true' &gt;&gt; .env
+
+<span class="comment"># Opt-in: enable LLM facet extraction (v0.5.0)</span>
+<span class="cmd">echo</span> 'ENABLE_FACET_EXTRACTION=true' &gt;&gt; .env</pre>
+      </div>
+      <p style="font-size:0.9rem; color:var(--text-secondary); margin-top:16px;">
+        Full setup walk-through:
+        <a href="https://github.com/hanfour/aide/blob/main/docs/SELF_HOSTING.md" target="_blank">docs/SELF_HOSTING.md</a>
+        &middot;
+        Gateway operator guide:
+        <a href="https://github.com/hanfour/aide/blob/main/docs/GATEWAY.md" target="_blank">docs/GATEWAY.md</a>
+        &middot;
+        v0.5.0 upgrade:
+        <a href="https://github.com/hanfour/aide/blob/main/docs/UPGRADE-v0.5.0.md" target="_blank">docs/UPGRADE-v0.5.0.md</a>
+      </p>
     </div>
   </section>
 
@@ -655,8 +1005,8 @@
   <section id="usage">
     <div class="container">
       <div class="section-header">
-        <h2>Usage</h2>
-        <p>Generate reports with a single command.</p>
+        <h2>CLI usage</h2>
+        <p>Generate reports with a single command. (Platform mode is operated via the web UI; see the Platform section above for screenshots / docs.)</p>
       </div>
       <div class="code-block" style="margin-bottom:24px;">
         <div class="code-header">
@@ -710,7 +1060,7 @@
     <div class="container">
       <div class="section-header">
         <h2>Default Scoring Standard</h2>
-        <p>Built-in OneAD R&amp;D AI-Application Evaluation Standard. Fully customizable.</p>
+        <p>Built-in OneAD R&amp;D AI-Application Evaluation Standard. Fully customizable. CLI ships the v1.0.0 baseline; Platform mode v0.5.0 ships v1.1.0 with additive facet supports.</p>
       </div>
       <div class="scoring-grid">
         <div class="scoring-card">
@@ -752,7 +1102,11 @@
         <a href="https://www.npmjs.com/package/@hanfour.huang/aide">npm</a>
         <a href="https://github.com/hanfour/aide">GitHub</a>
         <a href="https://github.com/hanfour/aide/issues">Issues</a>
-        <a href="#install">Get Started</a>
+        <a href="https://github.com/hanfour/aide/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/hanfour/aide/blob/main/docs/SELF_HOSTING.md">Self-hosting</a>
+        <a href="https://github.com/hanfour/aide/blob/main/docs/GATEWAY.md">Gateway</a>
+        <a href="https://github.com/hanfour/aide/blob/main/docs/EVALUATOR.md">Evaluator</a>
+        <a href="https://github.com/hanfour/aide/blob/main/docs/UPGRADE-v0.5.0.md">v0.5.0 Upgrade</a>
       </div>
       <p>MIT License &middot; aide</p>
     </div>
@@ -785,6 +1139,16 @@
       navigator.clipboard.writeText(pre.textContent).then(() => {
         btn.textContent = 'Copied!';
         setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+      });
+    }
+
+    // Architecture-pipeline tab switcher (CLI vs Platform)
+    function switchArch(tab) {
+      document.querySelectorAll('.arch-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.tab === tab);
+      });
+      document.querySelectorAll('.arch-pane').forEach(p => {
+        p.classList.toggle('active', p.id === 'arch-' + tab);
       });
     }
   </script>
