@@ -1,8 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import {
-  createOpenAIOAuthService,
-  parseTokenResponse,
-} from "../../../src/oauth/openai/openaiOAuthService.js";
+import { createOpenAIOAuthService } from "../../../src/oauth/openai/openaiOAuthService.js";
+import { parseTokenResponse } from "../../../src/oauth/openai/openaiTokenParser.js";
 import { OPENAI_CODEX_OAUTH } from "../../../src/oauth/openai/codexConstants.js";
 import { OAuthRefreshError } from "../../../src/oauth/types.js";
 
@@ -149,6 +147,77 @@ describe("openaiOAuthService.exchangeCode", () => {
     await expect(
       svc.exchangeCode({ code: "c", codeVerifier: "v" }),
     ).rejects.toThrow(/openai_oauth_token_response_invalid_expires_in/);
+  });
+
+  it("redirect_uri threads through generateAuthURL → exchangeCode (PKCE symmetric requirement per RFC 7636 §4.5)", async () => {
+    // PKCE requires the redirect_uri at the token-exchange step to
+    // match the redirect_uri sent at the authorize step.  This test
+    // pins the symmetric pass-through so future refactors that change
+    // a default would fail loudly here rather than silently breaking
+    // the live flow with a stray `redirect_uri_mismatch` from OpenAI.
+    const customURI = "http://localhost:9999/cb";
+    const { fakeFetch, calls } = makeFakeFetch([
+      {
+        status: 200,
+        body: {
+          access_token: "atk",
+          refresh_token: "rtk",
+          expires_in: 3600,
+        },
+      },
+    ]);
+    const svc = createOpenAIOAuthService({ fetch: fakeFetch });
+
+    const auth = await svc.generateAuthURL({ redirectURI: customURI });
+    expect(new URL(auth.authUrl).searchParams.get("redirect_uri")).toBe(
+      customURI,
+    );
+
+    await svc.exchangeCode({
+      code: "c",
+      codeVerifier: auth.codeVerifier,
+      redirectURI: customURI,
+    });
+    const body = calls[0]!.init?.body as URLSearchParams;
+    expect(body.get("redirect_uri")).toBe(customURI);
+  });
+
+  it("HTTP 4xx error message does NOT include the upstream body (avoids leaking sensitive content into upstream_accounts.error_message)", async () => {
+    const sensitiveBody =
+      '{"error":"invalid_grant","error_description":"sensitive proxy traceback / cookie / session-id"}';
+    const { fakeFetch } = makeFakeFetch([
+      { status: 400, body: sensitiveBody, contentType: "application/json" },
+    ]);
+    const svc = createOpenAIOAuthService({ fetch: fakeFetch });
+
+    let thrown: Error | undefined;
+    try {
+      await svc.exchangeCode({ code: "x", codeVerifier: "v" });
+    } catch (err) {
+      thrown = err as Error;
+    }
+    expect(thrown).toBeInstanceOf(OAuthRefreshError);
+    // Error message must contain the structured code + status, but NOT
+    // any portion of the response body.
+    expect(thrown!.message).toMatch(/openai_oauth_exchange_failed/);
+    expect(thrown!.message).toMatch(/http_400/);
+    expect(thrown!.message).not.toContain("sensitive");
+    expect(thrown!.message).not.toContain("proxy traceback");
+  });
+
+  it("non-JSON 200 body (e.g. proxy maintenance HTML) throws structured OAuthRefreshError, not raw SyntaxError", async () => {
+    const { fakeFetch } = makeFakeFetch([
+      {
+        status: 200,
+        body: "<html>maintenance</html>",
+        contentType: "text/html",
+      },
+    ]);
+    const svc = createOpenAIOAuthService({ fetch: fakeFetch });
+
+    await expect(
+      svc.exchangeCode({ code: "c", codeVerifier: "v" }),
+    ).rejects.toThrow(/openai_oauth_exchange_response_not_json/);
   });
 });
 

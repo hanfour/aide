@@ -60,7 +60,12 @@ describe("openaiTokenRefresher.refresh", () => {
     expect(body.get("scope")).toBe(OPENAI_CODEX_OAUTH.refreshScopes);
   });
 
-  it("keeps the old refresh_token when the response omits one (no-rotation upstream)", async () => {
+  it("throws when refresh response omits refresh_token (strict OpenAI contract)", async () => {
+    // OpenAI's refresh-grant response always echoes refresh_token (the
+    // existing one or a rotated one).  parseTokenResponse enforces this
+    // — there is no "keep the old one" branch in the refresher because
+    // the upstream contract guarantees the response carries one.  This
+    // test pins that strict contract so future relaxations are explicit.
     const { fakeFetch } = makeFakeFetch([
       {
         status: 200,
@@ -73,9 +78,6 @@ describe("openaiTokenRefresher.refresh", () => {
     ]);
     const refresher = createOpenAITokenRefresher({ fetch: fakeFetch });
 
-    // parseTokenResponse will throw on a missing refresh_token because
-    // the refresh response shape is REQUIRED to include it (refresh
-    // grant always echoes).  This test pins the strict contract.
     await expect(refresher.refresh("rtk_v1")).rejects.toThrow(
       /openai_oauth_token_response_missing_refresh_token/,
     );
@@ -141,5 +143,53 @@ describe("openaiTokenRefresher.refresh", () => {
     }
     expect(thrown).toBeInstanceOf(OAuthRefreshError);
     expect(thrown).not.toBeInstanceOf(OAuthRefreshTokenInvalid);
+  });
+
+  it("network failure throws OAuthRefreshError tagged with `_network` (not bubbled raw)", async () => {
+    const failingFetch: typeof globalThis.fetch = async () => {
+      throw new TypeError("fetch failed: ECONNREFUSED");
+    };
+    const refresher = createOpenAITokenRefresher({ fetch: failingFetch });
+    await expect(refresher.refresh("rtk_v1")).rejects.toThrow(
+      /openai_oauth_refresh_network/,
+    );
+  });
+
+  it("AbortError (fetch timeout) throws OAuthRefreshError tagged with `_timeout`", async () => {
+    const timeoutFetch: typeof globalThis.fetch = async () => {
+      const err = new Error("The operation was aborted due to timeout");
+      err.name = "TimeoutError";
+      throw err;
+    };
+    const refresher = createOpenAITokenRefresher({ fetch: timeoutFetch });
+    await expect(refresher.refresh("rtk_v1")).rejects.toThrow(
+      /openai_oauth_refresh_timeout/,
+    );
+  });
+
+  it("non-JSON 200 body throws structured OAuthRefreshError, not raw SyntaxError", async () => {
+    const { fakeFetch } = makeFakeFetch([
+      { status: 200, body: "<html>maintenance</html>" },
+    ]);
+    const refresher = createOpenAITokenRefresher({ fetch: fakeFetch });
+    await expect(refresher.refresh("rtk_v1")).rejects.toThrow(
+      /openai_oauth_refresh_response_not_json/,
+    );
+  });
+
+  it("invalid_grant error message does NOT include the upstream body", async () => {
+    const sensitive = "invalid_grant: refresh_token=ZNoNoSenSecret123 EXPIRED";
+    const { fakeFetch } = makeFakeFetch([{ status: 400, body: sensitive }]);
+    const refresher = createOpenAITokenRefresher({ fetch: fakeFetch });
+
+    let thrown: Error | undefined;
+    try {
+      await refresher.refresh("rtk_v1");
+    } catch (err) {
+      thrown = err as Error;
+    }
+    expect(thrown).toBeInstanceOf(OAuthRefreshTokenInvalid);
+    expect(thrown!.message).toBe("openai_oauth_invalid_grant");
+    expect(thrown!.message).not.toContain("ZNoNoSenSecret123");
   });
 });

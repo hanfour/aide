@@ -8,14 +8,14 @@
 // boot path so the 4-piece set is ready before the new /v1/responses
 // route comes online in PR 9.
 
-import type { OAuthRefreshAPI } from "../refreshApi.js";
 import type { OAuthRegistry } from "../registry.js";
+import type { RefreshApiLike } from "../types.js";
 import { createOpenAIOAuthService } from "./openaiOAuthService.js";
 import { createOpenAITokenProvider } from "./openaiTokenProvider.js";
 import { createOpenAITokenRefresher } from "./openaiTokenRefresher.js";
 
 export interface RegisterOpenAIOAuthDeps {
-  refreshApi: OAuthRefreshAPI;
+  refreshApi: RefreshApiLike;
   /** Test hook for fetch / clock injection across all 3 pieces. */
   fetch?: typeof globalThis.fetch;
   now?: () => number;
