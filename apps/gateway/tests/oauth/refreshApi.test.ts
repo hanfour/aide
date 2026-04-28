@@ -238,26 +238,38 @@ describe("OAuthRefreshAPI", () => {
       value: "1",
       expiresAt: nowMs + 30_000,
     });
+
+    // Simulate the other worker rotating the token after the Nth poll
+    // tick.  Counter-based instead of timing-based so the assertion is
+    // robust against changes to the internal poll-interval constant.
+    const ROTATE_AFTER_TICKS = 3;
+    let polls = 0;
+    const pollingVault: OAuthVault = {
+      ...wrap.vault,
+      async peekAccessToken(accountId) {
+        polls++;
+        if (polls === ROTATE_AFTER_TICKS) {
+          // Other worker just finished rotating.
+          wrap.state.token = "fresh-3-other-worker";
+          wrap.state.expiresAt = new Date(nowMs + 60 * 60 * 1000);
+        }
+        return wrap.vault.peekAccessToken(accountId);
+      },
+    };
+
     const api = makeApi({
-      vault: wrap.vault,
+      vault: pollingVault,
       redisState,
       refresher,
-    });
-
-    // After ~200ms of sleep, the "other worker" rotates the token.
-    let rotated = false;
-    sleep.mockImplementation(async (ms: number) => {
-      advanceTime(ms);
-      if (!rotated && nowMs - 1_700_000_000_000 >= 200) {
-        wrap.state.token = "fresh-3-other-worker";
-        wrap.state.expiresAt = new Date(nowMs + 60 * 60 * 1000);
-        rotated = true;
-      }
     });
 
     const result = await api.getValidAccessToken(ACCOUNT_ID);
     expect(result.accessToken).toBe("fresh-3-other-worker");
     expect(refresher.calls.length).toBe(0);
+    // The first peek is the hot-path check (counts as poll 1); polls 2-3
+    // are inside waitForCacheRefresh.  Sleep was called at least twice
+    // before the cache freshened.
+    expect(sleep).toHaveBeenCalled();
   });
 
   it("OAuthRefreshTokenInvalid propagates and marks the account oauth_invalid", async () => {
@@ -404,6 +416,96 @@ describe("OAuthRefreshAPI", () => {
     await expect(api.getValidAccessToken(ACCOUNT_ID)).rejects.toThrow(
       /oauth_token_refresher_not_registered_for_platform/,
     );
+  });
+
+  it("fresh cached token short-circuits before failure-marker check (cache > marker)", async () => {
+    // Hot-path ordering matters: a fresh in-vault token must be returned
+    // immediately, even if a stale failure marker happens to be set.
+    // Without the right ordering, the marker would gate the cache and
+    // every request would unnecessarily refresh after the marker TTL.
+    const wrap = makeFakeVault({
+      token: "live-fresh",
+      refreshToken: "rt-fresh",
+      expiresAt: new Date(nowMs + 30 * 60 * 1000), // 30 min — far past leadway
+    });
+    const refresher = makeRefresher(async () => {
+      throw new Error("refresher must not be invoked on fresh cache");
+    });
+    const redisState: FakeRedisState = { store: new Map() };
+    // Pre-set a stale failure marker — should be ignored by the hot path.
+    redisState.store.set(`oauth:refresh-failure:${ACCOUNT_ID}`, {
+      value: "1",
+      expiresAt: nowMs + 60_000,
+    });
+    const api = makeApi({
+      vault: wrap.vault,
+      redisState,
+      refresher,
+    });
+
+    const result = await api.getValidAccessToken(ACCOUNT_ID);
+    expect(result.accessToken).toBe("live-fresh");
+    expect(refresher.calls.length).toBe(0);
+  });
+
+  it("in-process cache hit: second call within TTL skips DB+decrypt entirely", async () => {
+    // After the first call populates the in-process cache, a second
+    // call within `cacheTtlMs` must serve from memory — no vault
+    // access, no DB.
+    const wrap = makeFakeVault({
+      token: "live-mem",
+      refreshToken: "rt-mem",
+      expiresAt: new Date(nowMs + 30 * 60 * 1000),
+    });
+    const peekSpy = vi.fn(wrap.vault.peekAccessToken);
+    const wrappedVault: OAuthVault = {
+      ...wrap.vault,
+      peekAccessToken: peekSpy,
+    };
+    const refresher = makeRefresher(async () => {
+      throw new Error("unreached");
+    });
+    const api = makeApi({
+      vault: wrappedVault,
+      redisState: { store: new Map() },
+      refresher,
+    });
+
+    const first = await api.getValidAccessToken(ACCOUNT_ID);
+    const second = await api.getValidAccessToken(ACCOUNT_ID);
+    expect(first.accessToken).toBe("live-mem");
+    expect(second.accessToken).toBe("live-mem");
+    // Vault peeked exactly once across the two calls.
+    expect(peekSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidate() drops the in-process cache and forces the next call to re-peek the vault", async () => {
+    const wrap = makeFakeVault({
+      token: "live-inv-1",
+      refreshToken: "rt-inv",
+      expiresAt: new Date(nowMs + 30 * 60 * 1000),
+    });
+    const peekSpy = vi.fn(wrap.vault.peekAccessToken);
+    const wrappedVault: OAuthVault = {
+      ...wrap.vault,
+      peekAccessToken: peekSpy,
+    };
+    const refresher = makeRefresher(async () => {
+      throw new Error("unreached");
+    });
+    const api = makeApi({
+      vault: wrappedVault,
+      redisState: { store: new Map() },
+      refresher,
+    });
+
+    await api.getValidAccessToken(ACCOUNT_ID);
+    api.invalidate(ACCOUNT_ID);
+    // External vault rotation simulated.
+    wrap.state.token = "live-inv-2";
+    await api.getValidAccessToken(ACCOUNT_ID);
+
+    expect(peekSpy).toHaveBeenCalledTimes(2);
   });
 
   it("policy=use_existing_token + lock held + no cached token: throws no_token_available", async () => {
