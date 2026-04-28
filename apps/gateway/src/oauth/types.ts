@@ -117,14 +117,25 @@ export class OAuthRefreshTokenInvalid extends OAuthRefreshError {
   }
 }
 
+/**
+ * Subset of `OAuthRefreshAPI` that `TokenProvider` implementations need.
+ * Splitting it out as an interface so unit tests can fake the dep
+ * without instantiating the full class through the cast-via-unknown
+ * workaround.  The concrete `OAuthRefreshAPI` (refreshApi.ts) implements
+ * this implicitly via its public surface.
+ */
+export interface RefreshApiLike {
+  getValidAccessToken(accountId: string): Promise<{ accessToken: string }>;
+  invalidate(accountId: string): void;
+  clearCache(): void;
+}
+
 export class OAuthLockTimeoutError extends OAuthRefreshError {
   constructor(
     public readonly accountId: string,
     public readonly waitedMs: number,
   ) {
-    super(
-      `oauth_lock_timeout: account ${accountId} after ${waitedMs}ms`,
-    );
+    super(`oauth_lock_timeout: account ${accountId} after ${waitedMs}ms`);
     this.name = "OAuthLockTimeoutError";
   }
 }
