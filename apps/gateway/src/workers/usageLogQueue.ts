@@ -93,17 +93,36 @@ export const UsageLogJobPayload = z.object({
   outputTokens: NON_NEGATIVE_INT,
   cacheCreationTokens: NON_NEGATIVE_INT,
   cacheReadTokens: NON_NEGATIVE_INT,
+  // Plan 5A — Anthropic prompt-cache TTL split.  Sums to cacheCreationTokens
+  // when the upstream response exposes the breakdown; otherwise 0.  Callers
+  // (buildUsageLogPayload) always supply explicit values — no zod default
+  // here so the payload type is unambiguous at insertion sites.
+  cacheCreation5mTokens: NON_NEGATIVE_INT,
+  cacheCreation1hTokens: NON_NEGATIVE_INT,
+  // Plan 5A — OpenAI cached_input.  Always 0 for Anthropic rows.
+  cachedInputTokens: NON_NEGATIVE_INT,
 
   // Pre-computed cost decimals (worker just inserts these verbatim)
   inputCost: DECIMAL_STRING,
   outputCost: DECIMAL_STRING,
   cacheCreationCost: DECIMAL_STRING,
   cacheReadCost: DECIMAL_STRING,
+  // Plan 5A — OpenAI cached_input cost; tracked separately from inputCost so
+  // dashboards can attribute the discount.  Always "0" for Anthropic rows.
+  cachedInputCost: DECIMAL_STRING,
   totalCost: DECIMAL_STRING,
+  // Plan 5A — second-stage billing per design §11.3 / X8.
+  // = totalCost × rateMultiplier × accountRateMultiplier.  Computed at
+  // payload-build time so the worker writes a verbatim ledger value.
+  actualCostUsd: DECIMAL_STRING,
 
   // Pricing multipliers in effect at request time (audit trail)
   rateMultiplier: DECIMAL_STRING,
   accountRateMultiplier: DECIMAL_STRING,
+
+  // Plan 5A — group routing trail.  NULL on legacy rows or when the api-key
+  // is not yet bound to a group.
+  groupId: UUID.nullable(),
 
   // Outcome / timing
   statusCode: STATUS_CODE,

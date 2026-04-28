@@ -372,6 +372,26 @@ describe("migration 0008 down migration", () => {
   it("0008_down.sql reverses the schema cleanly", async () => {
     // Down SQL is hand-applied per the file's own header comment. Mirrors
     // 0008_down.sql contents — keep this block in sync if the file changes.
+    //
+    // setupTestDb() applies all migrations through the latest, so 0010 and
+    // 0009 may have introduced dependents on the 0008 schema (notably
+    // usage_logs.group_id → account_groups). Real-world rollback order is
+    // 0010_down → 0009_down → 0008_down; mirror that here so the FK is
+    // dropped before account_groups disappears.
+    await testDb.db.execute(sql`
+      DROP INDEX IF EXISTS usage_logs_group_time_idx;
+      ALTER TABLE usage_logs
+        DROP CONSTRAINT IF EXISTS usage_logs_group_id_account_groups_id_fk;
+      ALTER TABLE usage_logs
+        DROP COLUMN IF EXISTS group_id,
+        DROP COLUMN IF EXISTS actual_cost_usd,
+        DROP COLUMN IF EXISTS cached_input_cost,
+        DROP COLUMN IF EXISTS cached_input_tokens,
+        DROP COLUMN IF EXISTS cache_creation_1h_tokens,
+        DROP COLUMN IF EXISTS cache_creation_5m_tokens;
+      DROP TABLE IF EXISTS model_pricing;
+    `);
+
     await testDb.db.execute(sql`
       ALTER TABLE upstream_accounts
         DROP CONSTRAINT IF EXISTS subscription_tier_values;

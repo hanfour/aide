@@ -49,6 +49,7 @@ import {
   UsageLogWorker,
   type GaugeLike,
 } from "../../src/workers/usageLogWorker.js";
+import { makeUsageLogJobPayload } from "../factories/usageLogPayload.js";
 
 const require = createRequire(import.meta.url);
 const migrationsFolder = path.resolve(
@@ -182,38 +183,16 @@ function makePayload(
   totalCost: string,
   reqIdx: number,
 ): UsageLogJobPayload {
-  return {
+  return makeUsageLogJobPayload({
     requestId: `req-${apiKeyId.slice(0, 8)}-${reqIdx}`,
     userId,
     apiKeyId,
     accountId,
     orgId,
-    teamId: null,
-    requestedModel: "claude-sonnet-4-5",
-    upstreamModel: "claude-sonnet-4-5-20250101",
-    platform: "anthropic",
-    surface: "messages",
-    stream: false,
-    inputTokens: 100,
-    outputTokens: 200,
-    cacheCreationTokens: 0,
-    cacheReadTokens: 0,
     inputCost: "0.0010000000",
     outputCost: "0.0020000000",
-    cacheCreationCost: "0",
-    cacheReadCost: "0",
     totalCost,
-    rateMultiplier: "1.0000",
-    accountRateMultiplier: "1.0000",
-    statusCode: 200,
-    durationMs: 1234,
-    firstTokenMs: null,
-    bufferReleasedAtMs: null,
-    upstreamRetries: 0,
-    failedAccountIds: [],
-    userAgent: null,
-    ipAddress: null,
-  };
+  });
 }
 
 /**
@@ -399,6 +378,12 @@ describe("UsageLogWorker — batched insert + quota update", () => {
         cacheCreationCost: "0",
         cacheReadCost: "0",
         totalCost: TOTAL_COST,
+        cacheCreation5mTokens: 0,
+        cacheCreation1hTokens: 0,
+        cachedInputTokens: 0,
+        cachedInputCost: "0",
+        actualCostUsd: "0",
+        groupId: null,
         rateMultiplier: "1.0000",
         accountRateMultiplier: "1.0000",
         statusCode: 200,
