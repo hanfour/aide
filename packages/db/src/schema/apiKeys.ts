@@ -10,6 +10,7 @@ import {
 import { sql } from "drizzle-orm";
 import { users } from "./auth.js";
 import { organizations, teams } from "./org.js";
+import { accountGroups } from "./accountGroups.js";
 
 export const apiKeys = pgTable(
   "api_keys",
@@ -22,6 +23,9 @@ export const apiKeys = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
     teamId: uuid("team_id").references(() => teams.id, {
+      onDelete: "set null",
+    }),
+    groupId: uuid("group_id").references(() => accountGroups.id, {
       onDelete: "set null",
     }),
     keyHash: text("key_hash").notNull().unique(),
