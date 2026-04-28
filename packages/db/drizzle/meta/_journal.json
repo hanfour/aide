@@ -71,6 +71,13 @@
       "when": 1777365610737,
       "tag": "0009_sturdy_risque",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1777366556877,
+      "tag": "0010_same_the_liberteens",
+      "breakpoints": true
     }
   ]
 }

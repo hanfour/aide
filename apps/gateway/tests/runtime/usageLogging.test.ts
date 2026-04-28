@@ -111,6 +111,9 @@ describe("extractUsageFromAnthropicResponse", () => {
       outputTokens: 50,
       cacheCreationTokens: 10,
       cacheReadTokens: 5,
+      cacheCreation5mTokens: 0,
+      cacheCreation1hTokens: 0,
+      cachedInputTokens: 0,
     });
   });
 
@@ -130,6 +133,9 @@ describe("extractUsageFromAnthropicResponse", () => {
       outputTokens: 0,
       cacheCreationTokens: 0,
       cacheReadTokens: 0,
+      cacheCreation5mTokens: 0,
+      cacheCreation1hTokens: 0,
+      cachedInputTokens: 0,
     });
     expect(extractUsageFromAnthropicResponse("string")).toEqual({
       model: "",
@@ -137,6 +143,9 @@ describe("extractUsageFromAnthropicResponse", () => {
       outputTokens: 0,
       cacheCreationTokens: 0,
       cacheReadTokens: 0,
+      cacheCreation5mTokens: 0,
+      cacheCreation1hTokens: 0,
+      cachedInputTokens: 0,
     });
   });
 
@@ -161,9 +170,9 @@ describe("extractUsageFromAnthropicResponse", () => {
 // ── buildUsageLogPayload ─────────────────────────────────────────────────────
 
 describe("buildUsageLogPayload", () => {
-  it("5. full happy path — payload matches spec shape, decimals scale 10", () => {
+  it("5. full happy path — payload matches spec shape, decimals scale 10", async () => {
     const pricing = getPricing();
-    const { payload, cost } = buildUsageLogPayload({
+    const { payload, cost } = await buildUsageLogPayload({
       req: makeReq({ id: "req-happy-1" }),
       requestedModel: "claude-3-5-haiku-20241022",
       accountId: VALID_UUID_ACCT,
@@ -214,9 +223,9 @@ describe("buildUsageLogPayload", () => {
     expect(payload.totalCost).toBe("0.0028000000");
   });
 
-  it("6. pricing miss — costs are '0.0000000000', miss=true", () => {
+  it("6. pricing miss — costs are '0.0000000000', miss=true", async () => {
     const pricing = getPricing();
-    const { payload, cost } = buildUsageLogPayload({
+    const { payload, cost } = await buildUsageLogPayload({
       req: makeReq(),
       requestedModel: "unknown-model-xyz",
       accountId: VALID_UUID_ACCT,
@@ -241,9 +250,9 @@ describe("buildUsageLogPayload", () => {
     expect(payload.outputTokens).toBe(999);
   });
 
-  it("7. teamId is preserved when apiKey has one", () => {
+  it("7. teamId is preserved when apiKey has one", async () => {
     const pricing = getPricing();
-    const { payload } = buildUsageLogPayload({
+    const { payload } = await buildUsageLogPayload({
       req: makeReq({ teamId: VALID_UUID_TEAM }),
       requestedModel: "claude-3-5-haiku-20241022",
       accountId: VALID_UUID_ACCT,
@@ -260,9 +269,9 @@ describe("buildUsageLogPayload", () => {
     expect(payload.teamId).toBe(VALID_UUID_TEAM);
   });
 
-  it("8. missing user-agent / ip — both null", () => {
+  it("8. missing user-agent / ip — both null", async () => {
     const pricing = getPricing();
-    const { payload } = buildUsageLogPayload({
+    const { payload } = await buildUsageLogPayload({
       req: makeReq({ headers: {}, ip: "" }),
       requestedModel: "claude-3-5-haiku-20241022",
       accountId: VALID_UUID_ACCT,
@@ -283,9 +292,9 @@ describe("buildUsageLogPayload", () => {
     expect(payload.ipAddress).toBeNull();
   });
 
-  it("9a. stream=true + firstTokenMs/bufferReleasedAtMs propagate", () => {
+  it("9a. stream=true + firstTokenMs/bufferReleasedAtMs propagate", async () => {
     const pricing = getPricing();
-    const { payload } = buildUsageLogPayload({
+    const { payload } = await buildUsageLogPayload({
       req: makeReq({ id: "req-stream-1" }),
       requestedModel: "claude-3-5-haiku-20241022",
       accountId: VALID_UUID_ACCT,
@@ -307,9 +316,9 @@ describe("buildUsageLogPayload", () => {
     expect(payload.bufferReleasedAtMs).toBe(400);
   });
 
-  it("9b. stream=true + omitted ms fields default to null", () => {
+  it("9b. stream=true + omitted ms fields default to null", async () => {
     const pricing = getPricing();
-    const { payload } = buildUsageLogPayload({
+    const { payload } = await buildUsageLogPayload({
       req: makeReq({ id: "req-stream-2" }),
       requestedModel: "claude-3-5-haiku-20241022",
       accountId: VALID_UUID_ACCT,
@@ -331,9 +340,9 @@ describe("buildUsageLogPayload", () => {
     expect(payload.bufferReleasedAtMs).toBeNull();
   });
 
-  it("9c. stream=false explicit — ms fields ignored even if provided", () => {
+  it("9c. stream=false explicit — ms fields ignored even if provided", async () => {
     const pricing = getPricing();
-    const { payload } = buildUsageLogPayload({
+    const { payload } = await buildUsageLogPayload({
       req: makeReq({ id: "req-stream-false-1" }),
       requestedModel: "claude-3-5-haiku-20241022",
       accountId: VALID_UUID_ACCT,
@@ -358,9 +367,9 @@ describe("buildUsageLogPayload", () => {
     expect(payload.bufferReleasedAtMs).toBeNull();
   });
 
-  it("9. platform=openai + surface=chat-completions propagate", () => {
+  it("9. platform=openai + surface=chat-completions propagate", async () => {
     const pricing = getPricing();
-    const { payload } = buildUsageLogPayload({
+    const { payload } = await buildUsageLogPayload({
       req: makeReq(),
       requestedModel: "gpt-4",
       accountId: VALID_UUID_ACCT,
@@ -587,5 +596,239 @@ describe("emitUsageLog", () => {
       expect.objectContaining({ requestId: "req-build-throw-1" }),
       expect.stringContaining("usage log emit failed; user request unaffected"),
     );
+  });
+});
+
+// ── Plan 5A: two-stage cost emission ─────────────────────────────────────────
+
+describe("buildUsageLogPayload — Plan 5A two-stage cost", () => {
+  const haikuUpstream = {
+    model: "claude-3-5-haiku-20241022",
+    usage: { input_tokens: 1000, output_tokens: 500 },
+  };
+
+  // Minimal in-memory PricingLookup that always returns a known row.  Lets
+  // the test exercise the new `computeCost` path without spinning up a DB
+  // (an integration test in 0010.test.ts covers the real lookup).
+  function fakeLookup(row: {
+    inputPerMillionMicros: bigint;
+    outputPerMillionMicros: bigint;
+    cached5mPerMillionMicros: bigint | null;
+    cached1hPerMillionMicros: bigint | null;
+    cachedInputPerMillionMicros: bigint | null;
+  }) {
+    return {
+      lookup: vi.fn().mockResolvedValue(row),
+      invalidate: vi.fn(),
+      clearCache: vi.fn(),
+    };
+  }
+  function fakeMissLookup() {
+    return {
+      lookup: vi.fn().mockResolvedValue(null),
+      invalidate: vi.fn(),
+      clearCache: vi.fn(),
+    };
+  }
+
+  it("OAuth account: cost=0, actualCost=0, no DB lookup attempted", async () => {
+    const lookup = fakeLookup({
+      inputPerMillionMicros: 999_999_999n,
+      outputPerMillionMicros: 999_999_999n,
+      cached5mPerMillionMicros: null,
+      cached1hPerMillionMicros: null,
+      cachedInputPerMillionMicros: null,
+    });
+    const { payload } = await buildUsageLogPayload({
+      req: makeReq({ id: "req-oauth-1" }),
+      requestedModel: "claude-3-5-haiku-20241022",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: haikuUpstream,
+      platform: "anthropic",
+      surface: "messages",
+      statusCode: 200,
+      durationMs: 100,
+      pricing: getPricing(),
+      pricingLookup: lookup,
+      accountType: "oauth",
+    });
+    expect(payload.totalCost).toBe("0.0000000000");
+    expect(payload.actualCostUsd).toBe("0.000000");
+    expect(payload.inputCost).toBe("0.0000000000");
+    expect(payload.outputCost).toBe("0.0000000000");
+    // OAuth path skips the lookup entirely — subscription rows shouldn't
+    // even read pricing.
+    expect(lookup.lookup).not.toHaveBeenCalled();
+  });
+
+  it("apikey + pricingLookup hit: uses computeCost path (bigint micros)", async () => {
+    const lookup = fakeLookup({
+      // $5/M input, $25/M output — distinct from anything in litellm.json so
+      // we can prove the new path won.
+      inputPerMillionMicros: 5_000_000n,
+      outputPerMillionMicros: 25_000_000n,
+      cached5mPerMillionMicros: null,
+      cached1hPerMillionMicros: null,
+      cachedInputPerMillionMicros: null,
+    });
+    const { payload } = await buildUsageLogPayload({
+      req: makeReq({ id: "req-lookup-hit-1" }),
+      requestedModel: "claude-3-5-haiku-20241022",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: haikuUpstream,
+      platform: "anthropic",
+      surface: "messages",
+      statusCode: 200,
+      durationMs: 100,
+      pricing: getPricing(),
+      pricingLookup: lookup,
+      accountType: "apikey",
+    });
+    // 1000 × $5/M = $0.005, 500 × $25/M = $0.0125, total $0.0175
+    expect(payload.inputCost).toBe("0.0050000000");
+    expect(payload.outputCost).toBe("0.0125000000");
+    expect(payload.totalCost).toBe("0.0175000000");
+    expect(payload.actualCostUsd).toBe("0.017500");
+    expect(lookup.lookup).toHaveBeenCalledWith(
+      "anthropic",
+      "claude-3-5-haiku-20241022",
+      expect.any(Date),
+    );
+  });
+
+  it("apikey + pricingLookup miss: falls back to legacy resolveCost", async () => {
+    const lookup = fakeMissLookup();
+    // litellm.json HAS claude-3-5-haiku-20241022 at input 0.0000008/token =
+    // $0.80/M, output 0.000004/token = $4/M. 1000 in / 500 out:
+    //   input: 1000 × 0.0000008 = $0.0008
+    //   output: 500 × 0.000004 = $0.002
+    //   total: $0.0028
+    const { payload, cost } = await buildUsageLogPayload({
+      req: makeReq({ id: "req-lookup-miss-1" }),
+      requestedModel: "claude-3-5-haiku-20241022",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: haikuUpstream,
+      platform: "anthropic",
+      surface: "messages",
+      statusCode: 200,
+      durationMs: 100,
+      pricing: getPricing(),
+      pricingLookup: lookup,
+      accountType: "apikey",
+    });
+    expect(cost.miss).toBe(false);
+    expect(payload.inputCost).toBe("0.0008000000");
+    expect(payload.outputCost).toBe("0.0020000000");
+    expect(payload.totalCost).toBe("0.0028000000");
+    expect(lookup.lookup).toHaveBeenCalledTimes(1);
+  });
+
+  it("rateMultiplier=1.5 multiplies actualCost; totalCost stays raw", async () => {
+    const { payload } = await buildUsageLogPayload({
+      req: makeReq({ id: "req-mult-1" }),
+      requestedModel: "claude-3-5-haiku-20241022",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: haikuUpstream,
+      platform: "anthropic",
+      surface: "messages",
+      statusCode: 200,
+      durationMs: 100,
+      pricing: getPricing(),
+      rateMultiplier: "1.5000",
+    });
+    // Legacy path: total = $0.0028; actualCost = $0.0028 × 1.5 = $0.0042
+    expect(payload.totalCost).toBe("0.0028000000");
+    expect(payload.actualCostUsd).toBe("0.004200");
+    expect(payload.rateMultiplier).toBe("1.5000");
+  });
+
+  it("rateMultiplier × accountRateMultiplier compose into actualCost", async () => {
+    const { payload } = await buildUsageLogPayload({
+      req: makeReq({ id: "req-mult-compose-1" }),
+      requestedModel: "claude-3-5-haiku-20241022",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: haikuUpstream,
+      platform: "anthropic",
+      surface: "messages",
+      statusCode: 200,
+      durationMs: 100,
+      pricing: getPricing(),
+      rateMultiplier: "1.5000",
+      accountRateMultiplier: "2.0000",
+    });
+    // total = $0.0028; actual = $0.0028 × 1.5 × 2.0 = $0.0084
+    expect(payload.totalCost).toBe("0.0028000000");
+    expect(payload.actualCostUsd).toBe("0.008400");
+    expect(payload.rateMultiplier).toBe("1.5000");
+    expect(payload.accountRateMultiplier).toBe("2.0000");
+  });
+
+  it("groupId is threaded through to the payload (null when omitted)", async () => {
+    const groupId = "66666666-6666-4666-8666-666666666666";
+    const { payload: withGroup } = await buildUsageLogPayload({
+      req: makeReq({ id: "req-group-1" }),
+      requestedModel: "claude-3-5-haiku-20241022",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: haikuUpstream,
+      platform: "anthropic",
+      surface: "messages",
+      statusCode: 200,
+      durationMs: 100,
+      pricing: getPricing(),
+      groupId,
+    });
+    expect(withGroup.groupId).toBe(groupId);
+
+    const { payload: noGroup } = await buildUsageLogPayload({
+      req: makeReq({ id: "req-no-group-1" }),
+      requestedModel: "claude-3-5-haiku-20241022",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: haikuUpstream,
+      platform: "anthropic",
+      surface: "messages",
+      statusCode: 200,
+      durationMs: 100,
+      pricing: getPricing(),
+    });
+    expect(noGroup.groupId).toBeNull();
+  });
+
+  it("OpenAI cached_input: pricingLookup populates cachedInputCost separately", async () => {
+    const lookup = fakeLookup({
+      inputPerMillionMicros: 2_500_000n, // $2.5/M
+      outputPerMillionMicros: 10_000_000n, // $10/M
+      cached5mPerMillionMicros: null,
+      cached1hPerMillionMicros: null,
+      cachedInputPerMillionMicros: 1_250_000n, // $1.25/M
+    });
+    const openaiUpstream = {
+      // Anthropic-shaped extractor doesn't read OpenAI cached_input from the
+      // wire (Part 9 wires that). For this test we craft an upstream where
+      // cached_input is preset via the extractor returning 0; we simulate
+      // OpenAI cached_input by extending the extracted usage manually.
+      // Plan 5A defaults cached_input to 0 here so the cost is also 0.
+      model: "gpt-4o",
+      usage: { input_tokens: 1000, output_tokens: 100 },
+    };
+    const { payload } = await buildUsageLogPayload({
+      req: makeReq({ id: "req-openai-1" }),
+      requestedModel: "gpt-4o",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: openaiUpstream,
+      platform: "openai",
+      surface: "chat-completions",
+      statusCode: 200,
+      durationMs: 100,
+      pricing: getPricing(),
+      pricingLookup: lookup,
+      accountType: "apikey",
+    });
+    // cachedInputTokens=0 ⇒ cachedInputCost=0; input 1000 × $2.5/M = $0.0025;
+    // output 100 × $10/M = $0.001; total $0.0035.
+    expect(payload.cachedInputTokens).toBe(0);
+    expect(payload.cachedInputCost).toBe("0.0000000000");
+    expect(payload.inputCost).toBe("0.0025000000");
+    expect(payload.outputCost).toBe("0.0010000000");
+    expect(payload.totalCost).toBe("0.0035000000");
   });
 });

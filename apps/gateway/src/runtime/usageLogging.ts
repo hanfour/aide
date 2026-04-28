@@ -28,6 +28,8 @@ import {
   resolveCost,
   type PricingMap,
   type CostBreakdown,
+  computeCost,
+  type PricingLookup,
 } from "@aide/gateway-core";
 import {
   enqueueUsageLog,
@@ -75,8 +77,16 @@ export interface ExtractedUsage {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /** Aggregate cache-creation tokens (5m + 1h on Anthropic; always 0 on OpenAI). */
   cacheCreationTokens: number;
   cacheReadTokens: number;
+  // Plan 5A — fields below default to 0 in the current Anthropic extractor.
+  // Part 9 wires the OpenAI path that populates `cachedInputTokens`, and a
+  // future Anthropic upgrade will populate the 5m/1h split when the API
+  // exposes it via `cache_creation.ephemeral_5m_input_tokens` etc.
+  cacheCreation5mTokens: number;
+  cacheCreation1hTokens: number;
+  cachedInputTokens: number;
 }
 
 /**
@@ -100,6 +110,9 @@ export function extractUsageFromAnthropicResponse(
       outputTokens: 0,
       cacheCreationTokens: 0,
       cacheReadTokens: 0,
+      cacheCreation5mTokens: 0,
+      cacheCreation1hTokens: 0,
+      cachedInputTokens: 0,
     };
   }
   const obj = parsed as Record<string, unknown>;
@@ -107,12 +120,24 @@ export function extractUsageFromAnthropicResponse(
     obj.usage && typeof obj.usage === "object"
       ? (obj.usage as Record<string, unknown>)
       : {};
+  // Anthropic prompt-cache split (when present): usage.cache_creation is an
+  // object with `ephemeral_5m_input_tokens` + `ephemeral_1h_input_tokens`.
+  // Older API versions only return the aggregate `cache_creation_input_tokens`.
+  const cacheCreation =
+    usage.cache_creation && typeof usage.cache_creation === "object"
+      ? (usage.cache_creation as Record<string, unknown>)
+      : {};
   return {
     model: typeof obj.model === "string" ? obj.model : "",
     inputTokens: toNonNegInt(usage.input_tokens),
     outputTokens: toNonNegInt(usage.output_tokens),
     cacheCreationTokens: toNonNegInt(usage.cache_creation_input_tokens),
     cacheReadTokens: toNonNegInt(usage.cache_read_input_tokens),
+    cacheCreation5mTokens: toNonNegInt(cacheCreation.ephemeral_5m_input_tokens),
+    cacheCreation1hTokens: toNonNegInt(cacheCreation.ephemeral_1h_input_tokens),
+    // Anthropic doesn't have an OpenAI-shaped cached_input concept; this
+    // stays 0 here. The OpenAI extractor (Part 9) will populate it.
+    cachedInputTokens: 0,
   };
 }
 
@@ -140,6 +165,41 @@ export interface BuildUsageLogPayloadInput {
   durationMs: number;
   /** Pre-loaded pricing map (pass `getPricing()`). */
   pricing: PricingMap;
+  /**
+   * Plan 5A — DB-backed pricing lookup. When provided AND the upstream model
+   * is in `model_pricing`, the new pricing path runs (`computeCost` over a
+   * bigint micros row) and `inputCost`/`outputCost`/`cacheCreationCost`/
+   * `cacheReadCost`/`cachedInputCost` reflect that source.  When omitted (or
+   * present but missing the model), the legacy `resolveCost(pricing, ...)`
+   * path runs as before — full backwards compat for 4A-era models still
+   * served by `litellm.json` but not yet seeded into `model_pricing`.
+   */
+  pricingLookup?: PricingLookup;
+  /**
+   * Plan 5A — group routing trail.  Threaded through from the upstream
+   * dispatcher when an api-key has been bound to a group (PR #31).  NULL
+   * for legacy/unbound api-keys.
+   */
+  groupId?: string | null;
+  /**
+   * Plan 5A — group rate multiplier in effect for this request.  Defaults
+   * to "1.0000" (no markup).  Persisted verbatim into the `rate_multiplier`
+   * audit column AND used to compute `actualCost`.
+   */
+  rateMultiplier?: string;
+  /**
+   * Plan 5A — per-account rate multiplier in effect for this request.
+   * Defaults to "1.0000".  Persisted verbatim into `account_rate_multiplier`
+   * AND folded into `actualCost`.
+   */
+  accountRateMultiplier?: string;
+  /**
+   * Plan 5A — upstream account.type. When `"oauth"`, the row records cost=0
+   * (subscription is sunk cost per X11) and `actualCost=0`.  When `"apikey"`
+   * (or omitted; the default), per-token cost is computed via
+   * `pricingLookup` / `resolveCost`.
+   */
+  accountType?: "oauth" | "apikey";
   /**
    * True when the client opted into SSE streaming (`stream=true`).  Drives
    * the `usage_logs.stream` column.  Defaults to `false` for backward
@@ -182,16 +242,42 @@ export interface BuildUsageLogPayloadResult {
  *   - `firstTokenMs` (time to first SSE chunk)
  *   - `bufferReleasedAtMs` (time the smart-buffer commit fired)
  */
-export function buildUsageLogPayload(
+export async function buildUsageLogPayload(
   input: BuildUsageLogPayloadInput,
-): BuildUsageLogPayloadResult {
+): Promise<BuildUsageLogPayloadResult> {
   const usage = extractUsageFromAnthropicResponse(input.upstreamResponse);
-  const cost = resolveCost(input.pricing, usage.model, {
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    cacheCreationTokens: usage.cacheCreationTokens,
-    cacheReadTokens: usage.cacheReadTokens,
-  });
+  const accountType = input.accountType ?? "apikey";
+  const rateMultiplier = input.rateMultiplier ?? "1.0000";
+  const accountRateMultiplier = input.accountRateMultiplier ?? "1.0000";
+
+  // Plan 5A two-stage billing:
+  //   - OAuth subscription rows: cost=0 unconditionally (X11 — subscription
+  //     is sunk cost; ledger row written for visibility, not budget).
+  //   - apikey rows: try DB-backed pricingLookup first (when provided), fall
+  //     back to legacy resolveCost otherwise.  Legacy is the canonical 4A
+  //     path; DB lookup is the future home once `model_pricing` covers the
+  //     full model catalogue.
+  let cost: CostBreakdown;
+  let cachedInputCost = 0;
+  if (accountType === "oauth") {
+    cost = {
+      inputCost: 0,
+      outputCost: 0,
+      cacheCreationCost: 0,
+      cacheReadCost: 0,
+      totalCost: 0,
+      miss: false,
+    };
+  } else {
+    cost = await resolveCostViaLookupOrLegacy(input, usage);
+    cachedInputCost = await computeCachedInputCost(input, usage);
+  }
+
+  const totalWithCachedInput = cost.totalCost + cachedInputCost;
+  const actualCostUsd =
+    totalWithCachedInput *
+    parseFloat(rateMultiplier) *
+    parseFloat(accountRateMultiplier);
 
   // The apiKey / gwUser decorations are populated by apiKeyAuthPlugin which
   // rejects with 401 before the route handler runs; the bang assertions
@@ -215,13 +301,22 @@ export function buildUsageLogPayload(
     outputTokens: usage.outputTokens,
     cacheCreationTokens: usage.cacheCreationTokens,
     cacheReadTokens: usage.cacheReadTokens,
+    // Plan 5A — Anthropic 5m/1h split + OpenAI cached_input.  Defaults to 0
+    // until the corresponding upstream-response extractors are wired in
+    // Part 9 (OpenAI route handlers); the columns are populated then.
+    cacheCreation5mTokens: usage.cacheCreation5mTokens,
+    cacheCreation1hTokens: usage.cacheCreation1hTokens,
+    cachedInputTokens: usage.cachedInputTokens,
     inputCost: cost.inputCost.toFixed(10),
     outputCost: cost.outputCost.toFixed(10),
     cacheCreationCost: cost.cacheCreationCost.toFixed(10),
     cacheReadCost: cost.cacheReadCost.toFixed(10),
-    totalCost: cost.totalCost.toFixed(10),
-    rateMultiplier: "1.0000",
-    accountRateMultiplier: "1.0000",
+    cachedInputCost: cachedInputCost.toFixed(10),
+    totalCost: totalWithCachedInput.toFixed(10),
+    actualCostUsd: actualCostUsd.toFixed(6),
+    rateMultiplier,
+    accountRateMultiplier,
+    groupId: input.groupId ?? null,
     statusCode: input.statusCode,
     durationMs: input.durationMs,
     // Streaming-only fields. Non-streaming callers omit them (defaults below)
@@ -247,6 +342,90 @@ export function buildUsageLogPayload(
   return { payload, cost };
 }
 
+/**
+ * Resolve cost via the new DB-backed `pricingLookup` when provided and the
+ * upstream model is present; otherwise fall back to the legacy
+ * `resolveCost(loadPricing(), ...)` path. The fallback keeps 4A-era model
+ * names served by `litellm.json` working until `model_pricing` is fully
+ * seeded.
+ *
+ * The new path uses `computeCost` (bigint micros) and projects its
+ * breakdown into the legacy 4-field `CostBreakdown` shape so the calling
+ * payload assembly is uniform across both paths. OpenAI cached_input is
+ * pulled out separately by `computeCachedInputCost` and added to totalCost
+ * before persistence.
+ */
+async function resolveCostViaLookupOrLegacy(
+  input: BuildUsageLogPayloadInput,
+  usage: ExtractedUsage,
+): Promise<CostBreakdown> {
+  if (input.pricingLookup && usage.model) {
+    const row = await input.pricingLookup.lookup(
+      input.platform,
+      usage.model,
+      new Date(),
+    );
+    if (row) {
+      const computed = computeCost(row, {
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cacheCreation5mTokens: usage.cacheCreation5mTokens,
+        cacheCreation1hTokens: usage.cacheCreation1hTokens,
+        cacheReadTokens: usage.cacheReadTokens,
+        cachedInputTokens: usage.cachedInputTokens,
+      });
+      return {
+        inputCost: computed.breakdown.input,
+        outputCost: computed.breakdown.output,
+        cacheCreationCost: computed.breakdown.cacheCreation,
+        cacheReadCost: computed.breakdown.cacheRead,
+        // computed.totalCost includes cachedInput; subtract here so the
+        // CostBreakdown.totalCost mirrors the legacy 4-field shape (which
+        // had no cachedInput concept). Cached-input cost is re-added to
+        // totalCost at the payload level alongside `cachedInputCost`.
+        totalCost: computed.totalCost - computed.breakdown.cachedInput,
+        miss: false,
+      };
+    }
+  }
+  return resolveCost(input.pricing, usage.model, {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cacheCreationTokens: usage.cacheCreationTokens,
+    cacheReadTokens: usage.cacheReadTokens,
+  });
+}
+
+/**
+ * OpenAI cached_input cost is not in the legacy `CostBreakdown` shape, so it
+ * has to be extracted from the new pricing path separately. Returns 0 when
+ * the new path isn't in play (legacy `resolveCost` flow has no
+ * cached_input).
+ */
+async function computeCachedInputCost(
+  input: BuildUsageLogPayloadInput,
+  usage: ExtractedUsage,
+): Promise<number> {
+  if (!input.pricingLookup || !usage.model || !usage.cachedInputTokens) {
+    return 0;
+  }
+  const row = await input.pricingLookup.lookup(
+    input.platform,
+    usage.model,
+    new Date(),
+  );
+  if (!row) return 0;
+  const computed = computeCost(row, {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cacheCreation5mTokens: usage.cacheCreation5mTokens,
+    cacheCreation1hTokens: usage.cacheCreation1hTokens,
+    cacheReadTokens: usage.cacheReadTokens,
+    cachedInputTokens: usage.cachedInputTokens,
+  });
+  return computed.breakdown.cachedInput;
+}
+
 // ── Enqueue wrapper ──────────────────────────────────────────────────────────
 
 export interface EmitUsageLogInput {
@@ -268,6 +447,14 @@ export interface EmitUsageLogInput {
   stream?: boolean;
   firstTokenMs?: number | null;
   bufferReleasedAtMs?: number | null;
+  // Plan 5A — pass-through to buildUsageLogPayload.  All optional; when
+  // omitted, the legacy 4A behaviour is preserved (no DB pricing lookup,
+  // multipliers default to 1.0, groupId null, account treated as apikey).
+  pricingLookup?: PricingLookup;
+  groupId?: string | null;
+  rateMultiplier?: string;
+  accountRateMultiplier?: string;
+  accountType?: "oauth" | "apikey";
 }
 
 /**
@@ -293,7 +480,7 @@ export async function emitUsageLog(input: EmitUsageLogInput): Promise<void> {
   // `buildUsageLogPayload`, the pricing-miss metering, AND the enqueue
   // — so any thrown error lands here and is logged, not propagated.
   try {
-    const { payload, cost } = buildUsageLogPayload({
+    const { payload, cost } = await buildUsageLogPayload({
       req,
       requestedModel: input.requestedModel,
       accountId: input.accountId,
@@ -306,6 +493,11 @@ export async function emitUsageLog(input: EmitUsageLogInput): Promise<void> {
       stream: input.stream,
       firstTokenMs: input.firstTokenMs,
       bufferReleasedAtMs: input.bufferReleasedAtMs,
+      pricingLookup: input.pricingLookup,
+      groupId: input.groupId,
+      rateMultiplier: input.rateMultiplier,
+      accountRateMultiplier: input.accountRateMultiplier,
+      accountType: input.accountType,
     });
 
     if (cost.miss) {
