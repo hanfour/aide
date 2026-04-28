@@ -50,6 +50,7 @@ export const upstreamAccounts = pgTable(
       .default(true),
     status: text("status").notNull().default("active"),
     errorMessage: text("error_message"),
+    subscriptionTier: text("subscription_tier"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

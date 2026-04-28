@@ -5,6 +5,7 @@ export * from "./roles.js";
 export * from "./invites.js";
 export * from "./audit.js";
 export * from "./accounts.js";
+export * from "./accountGroups.js";
 export * from "./credentialVault.js";
 export * from "./apiKeys.js";
 export * from "./usageLogs.js";

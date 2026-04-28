@@ -57,6 +57,13 @@
       "when": 1777330000000,
       "tag": "0007_platform_rubric_v2_facets",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1777363335069,
+      "tag": "0008_magical_daimon_hellstrom",
+      "breakpoints": true
     }
   ]
 }
