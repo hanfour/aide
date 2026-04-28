@@ -1,4 +1,6 @@
 export * from "./pricing/index.js";
+export * from "./pricing/computeCost.js";
+export * from "./pricing/pricingLookup.js";
 export * from "./stateMachine/classifier.js";
 export * from "./stateMachine/types.js";
 export * from "./crypto/credentialCipher.js";
