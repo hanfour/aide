@@ -4,7 +4,6 @@ import {
   text,
   bigint,
   timestamp,
-  index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
@@ -53,12 +52,12 @@ export const modelPricing = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    // UNIQUE on (platform, model_id, effective_from) doubles as the lookup
+    // index — PostgreSQL scans a unique B-tree index in reverse direction
+    // efficiently for `ORDER BY effective_from DESC LIMIT 1`. A separate
+    // non-unique idx on the same columns (as drafted in design §4.2) would
+    // be redundant disk + write cost.
     activeIdx: uniqueIndex("model_pricing_active_idx").on(
-      t.platform,
-      t.modelId,
-      t.effectiveFrom,
-    ),
-    lookupIdx: index("model_pricing_lookup_idx").on(
       t.platform,
       t.modelId,
       t.effectiveFrom,

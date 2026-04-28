@@ -1,5 +1,5 @@
 {
-  "id": "1512d8c2-a1b1-43f4-bf17-be7df5f22110",
+  "id": "bd55e4ac-3153-48cd-9592-05fb4183e838",
   "prevId": "1ed2d9ba-0515-4714-9a3a-2701859625cc",
   "version": "7",
   "dialect": "postgresql",
@@ -1643,33 +1643,6 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "model_pricing_lookup_idx": {
-          "name": "model_pricing_lookup_idx",
-          "columns": [
-            {
-              "expression": "platform",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "model_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "effective_from",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}

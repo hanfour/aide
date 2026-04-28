@@ -9,6 +9,16 @@ import type { ModelPricingRow } from "./computeCost.js";
 // keyed by `(platform, modelId)`; a NULL cache entry encodes a confirmed
 // miss so repeated unknown models don't re-query.
 //
+// Concurrency: an in-flight Promise map de-duplicates simultaneous misses
+// for the same key; without it, a thundering herd of concurrent lookups
+// (e.g. burst traffic on a cold cache) would each issue an independent
+// DB query.
+//
+// Hit vs. miss TTL: confirmed hits use `cacheTtlMs` (5min default — pricing
+// rows change rarely). Confirmed misses use `missCacheTtlMs` (30s default
+// — short, so a model added to model_pricing after a miss becomes visible
+// quickly without forcing every miss to re-query the DB).
+//
 // NOTE: the cache key does NOT include `at`. In production `at` is always
 // "now", so the active row is unambiguous and a single cache entry per
 // model is correct. Callers that query different points in time within one
@@ -30,8 +40,10 @@ export interface PricingLookup {
 }
 
 export interface CreatePricingLookupOpts {
-  /** TTL for cache entries in ms. Defaults to 5 minutes. */
+  /** TTL for confirmed-hit cache entries in ms. Defaults to 5 minutes. */
   cacheTtlMs?: number;
+  /** TTL for confirmed-miss cache entries in ms. Defaults to 30 seconds. */
+  missCacheTtlMs?: number;
   /** Test hook: inject a clock. Defaults to `Date.now`. */
   now?: () => number;
 }
@@ -41,7 +53,8 @@ interface CacheEntry {
   expiresAt: number;
 }
 
-const DEFAULT_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_HIT_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_MISS_TTL_MS = 30 * 1000;
 
 const cacheKey = (platform: Platform, modelId: string): string =>
   `${platform}:${modelId}`;
@@ -50,9 +63,11 @@ export function createPricingLookup(
   db: Database,
   opts: CreatePricingLookupOpts = {},
 ): PricingLookup {
-  const ttl = opts.cacheTtlMs ?? DEFAULT_TTL_MS;
+  const hitTtl = opts.cacheTtlMs ?? DEFAULT_HIT_TTL_MS;
+  const missTtl = opts.missCacheTtlMs ?? DEFAULT_MISS_TTL_MS;
   const now = opts.now ?? Date.now;
   const cache = new Map<string, CacheEntry>();
+  const inflight = new Map<string, Promise<ModelPricingRow | null>>();
 
   async function fetchFromDb(
     platform: Platform,
@@ -87,11 +102,25 @@ export function createPricingLookup(
   return {
     async lookup(platform, modelId, at) {
       const key = cacheKey(platform, modelId);
+
       const cached = cache.get(key);
       if (cached && cached.expiresAt > now()) {
         return cached.row;
       }
-      const row = await fetchFromDb(platform, modelId, at);
+
+      // De-dupe concurrent misses for the same key.
+      const pending = inflight.get(key);
+      if (pending) {
+        return pending;
+      }
+
+      const promise = fetchFromDb(platform, modelId, at).finally(() => {
+        inflight.delete(key);
+      });
+      inflight.set(key, promise);
+
+      const row = await promise;
+      const ttl = row === null ? missTtl : hitTtl;
       cache.set(key, { row, expiresAt: now() + ttl });
       return row;
     },

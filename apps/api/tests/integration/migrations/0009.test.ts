@@ -13,7 +13,7 @@ import { setupTestDb, type TestDb } from "../../factories/db.js";
 //   * Seed of 7 rows (3 Anthropic, 4 OpenAI) with effective_from
 //     '2026-04-28T00:00:00Z'. Numbers verified against provider pricing
 //     pages on that date and mirrored in
-//     packages/db/src/seed/modelPricingSnapshot2026Q2.ts.
+//     packages/db/src/seed/modelPricingSnapshot20260428.ts.
 //
 // Tests cover the schema shape, seed correctness, CHECK constraint behaviour,
 // and the createPricingLookup() runtime contract (active row selection +
@@ -51,7 +51,7 @@ describe("migration 0009 model_pricing", () => {
     ]);
   });
 
-  it("creates the unique active idx and the lookup idx", async () => {
+  it("creates the unique active idx (which doubles as the lookup idx)", async () => {
     const idx = await testDb.db.execute<{ indexname: string }>(sql`
       SELECT indexname FROM pg_indexes
       WHERE tablename = 'model_pricing'
@@ -59,7 +59,11 @@ describe("migration 0009 model_pricing", () => {
     `);
     const names = idx.rows.map((r) => r.indexname);
     expect(names).toContain("model_pricing_active_idx");
-    expect(names).toContain("model_pricing_lookup_idx");
+    // Design §4.2 originally drafted a separate lookup_idx on the same
+    // columns; since PG can scan a UNIQUE B-tree index in reverse direction
+    // efficiently for ORDER BY effective_from DESC LIMIT 1, the second
+    // index would be redundant write+disk cost for no query gain.
+    expect(names).not.toContain("model_pricing_lookup_idx");
   });
 
   it("seeds 7 rows (3 anthropic + 4 openai) at effective_from 2026-04-28", async () => {
@@ -246,53 +250,58 @@ describe("createPricingLookup", () => {
       now: () => nowMs,
     });
     const at = new Date("2026-05-01");
-    await lookup.lookup("anthropic", "claude-opus-4-7", at);
+    try {
+      await lookup.lookup("anthropic", "claude-opus-4-7", at);
 
-    // Hot-modify the row directly in DB; cached lookup should NOT reflect it.
-    await testDb.db.execute(sql`
-      UPDATE model_pricing
-      SET input_per_million_micros = 999999999
-      WHERE platform = 'anthropic' AND model_id = 'claude-opus-4-7'
-    `);
-    const cached = await lookup.lookup("anthropic", "claude-opus-4-7", at);
-    expect(cached?.inputPerMillionMicros).toBe(15_000_000n);
+      // Hot-modify the row directly in DB; cached lookup should NOT reflect it.
+      await testDb.db.execute(sql`
+        UPDATE model_pricing
+        SET input_per_million_micros = 999999999
+        WHERE platform = 'anthropic' AND model_id = 'claude-opus-4-7'
+      `);
+      const cached = await lookup.lookup("anthropic", "claude-opus-4-7", at);
+      expect(cached?.inputPerMillionMicros).toBe(15_000_000n);
 
-    // Past TTL → cache miss → re-query → see the modification.
-    nowMs += 2000;
-    const fresh = await lookup.lookup("anthropic", "claude-opus-4-7", at);
-    expect(fresh?.inputPerMillionMicros).toBe(999_999_999n);
-
-    // Restore for any later test in this file.
-    await testDb.db.execute(sql`
-      UPDATE model_pricing
-      SET input_per_million_micros = 15000000
-      WHERE platform = 'anthropic' AND model_id = 'claude-opus-4-7'
-    `);
+      // Past TTL → cache miss → re-query → see the modification.
+      nowMs += 2000;
+      const fresh = await lookup.lookup("anthropic", "claude-opus-4-7", at);
+      expect(fresh?.inputPerMillionMicros).toBe(999_999_999n);
+    } finally {
+      // Restore even if an assertion above threw — protects later tests in
+      // this describe from cascading-failure on shared testDb state.
+      await testDb.db.execute(sql`
+        UPDATE model_pricing
+        SET input_per_million_micros = 15000000
+        WHERE platform = 'anthropic' AND model_id = 'claude-opus-4-7'
+      `);
+    }
   });
 
   it("invalidate() drops the cached entry for a single (platform, modelId)", async () => {
     const lookup = createPricingLookup(testDb.db);
     const at = new Date("2026-05-01");
-    await lookup.lookup("anthropic", "claude-opus-4-7", at);
+    try {
+      await lookup.lookup("anthropic", "claude-opus-4-7", at);
 
-    await testDb.db.execute(sql`
-      UPDATE model_pricing
-      SET input_per_million_micros = 7777777
-      WHERE platform = 'anthropic' AND model_id = 'claude-opus-4-7'
-    `);
-    lookup.invalidate("anthropic", "claude-opus-4-7");
-    const fresh = await lookup.lookup("anthropic", "claude-opus-4-7", at);
-    expect(fresh?.inputPerMillionMicros).toBe(7_777_777n);
-
-    await testDb.db.execute(sql`
-      UPDATE model_pricing
-      SET input_per_million_micros = 15000000
-      WHERE platform = 'anthropic' AND model_id = 'claude-opus-4-7'
-    `);
+      await testDb.db.execute(sql`
+        UPDATE model_pricing
+        SET input_per_million_micros = 7777777
+        WHERE platform = 'anthropic' AND model_id = 'claude-opus-4-7'
+      `);
+      lookup.invalidate("anthropic", "claude-opus-4-7");
+      const fresh = await lookup.lookup("anthropic", "claude-opus-4-7", at);
+      expect(fresh?.inputPerMillionMicros).toBe(7_777_777n);
+    } finally {
+      await testDb.db.execute(sql`
+        UPDATE model_pricing
+        SET input_per_million_micros = 15000000
+        WHERE platform = 'anthropic' AND model_id = 'claude-opus-4-7'
+      `);
+    }
   });
 
   it("picks the row with the latest effective_from when multiple rows exist for the same model", async () => {
-    // Insert a future repricing row, then look up after that date.
+    // Insert a future repricing row, then look up before and after that date.
     await testDb.db.execute(sql`
       UPDATE model_pricing
       SET effective_to = '2026-09-01T00:00:00Z'
@@ -305,33 +314,35 @@ describe("createPricingLookup", () => {
       VALUES ('openai', 'gpt-4o-mini', 100000, 400000, 50000, '2026-09-01T00:00:00Z')
     `);
 
-    const lookup = createPricingLookup(testDb.db);
-    const before = await lookup.lookup(
-      "openai",
-      "gpt-4o-mini",
-      new Date("2026-08-31T23:59:59.999Z"),
-    );
-    expect(before?.inputPerMillionMicros).toBe(150_000n); // original seed
+    try {
+      const lookup = createPricingLookup(testDb.db);
+      const before = await lookup.lookup(
+        "openai",
+        "gpt-4o-mini",
+        new Date("2026-08-31T23:59:59.999Z"),
+      );
+      expect(before?.inputPerMillionMicros).toBe(150_000n); // original seed
 
-    lookup.invalidate("openai", "gpt-4o-mini");
-    const after = await lookup.lookup(
-      "openai",
-      "gpt-4o-mini",
-      new Date("2026-09-01T00:00:00.000Z"),
-    );
-    expect(after?.inputPerMillionMicros).toBe(100_000n); // new row
-
-    // Cleanup so other tests aren't affected by the second row.
-    await testDb.db.execute(sql`
-      DELETE FROM model_pricing
-      WHERE platform = 'openai' AND model_id = 'gpt-4o-mini'
-        AND effective_from = '2026-09-01T00:00:00Z'
-    `);
-    await testDb.db.execute(sql`
-      UPDATE model_pricing
-      SET effective_to = NULL
-      WHERE platform = 'openai' AND model_id = 'gpt-4o-mini'
-    `);
+      lookup.invalidate("openai", "gpt-4o-mini");
+      const after = await lookup.lookup(
+        "openai",
+        "gpt-4o-mini",
+        new Date("2026-09-01T00:00:00.000Z"),
+      );
+      expect(after?.inputPerMillionMicros).toBe(100_000n); // new row
+    } finally {
+      // Cleanup runs even if an assertion above threw.
+      await testDb.db.execute(sql`
+        DELETE FROM model_pricing
+        WHERE platform = 'openai' AND model_id = 'gpt-4o-mini'
+          AND effective_from = '2026-09-01T00:00:00Z'
+      `);
+      await testDb.db.execute(sql`
+        UPDATE model_pricing
+        SET effective_to = NULL
+        WHERE platform = 'openai' AND model_id = 'gpt-4o-mini'
+      `);
+    }
   });
 });
 

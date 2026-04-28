@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { computeCost, type ModelPricingRow } from "../src/pricing/computeCost.js";
+import {
+  computeCost,
+  type ModelPricingRow,
+} from "../src/pricing/computeCost.js";
 
 // Plan 5A §11.2 — pure cost compute tests. No DB.
 //
@@ -90,6 +93,24 @@ describe("computeCost", () => {
     expect(result.breakdown.cachedInput).toBe(0);
     // billableInput = 100K - 50K = 50K × $15/M = $0.75
     expect(result.breakdown.input).toBeCloseTo(0.75, 6);
+  });
+
+  it("OpenAI row with stray cacheReadTokens still bills at input rate (defensive)", () => {
+    // OpenAI rows don't normally carry cacheReadTokens (it's an Anthropic
+    // concept). If a caller passes them anyway, computeCost still bills
+    // them at the regular input rate so no token escapes accounting.
+    const result = computeCost(OPENAI_GPT4O, {
+      inputTokens: 1000,
+      outputTokens: 0,
+      cacheReadTokens: 200,
+    });
+    // billable = 1000 - 200 = 800; 800 × $2.5/M = $0.002
+    // cacheRead = 200 × $2.5/M = $0.0005 (input rate)
+    expect(result.breakdown.input).toBeCloseTo(0.002, 8);
+    expect(result.breakdown.cacheRead).toBeCloseTo(0.0005, 8);
+    expect(result.breakdown.cacheCreation).toBe(0);
+    expect(result.breakdown.cachedInput).toBe(0);
+    expect(result.totalCost).toBeCloseTo(0.0025, 8);
   });
 
   it("computes OpenAI cached_input correctly", () => {
