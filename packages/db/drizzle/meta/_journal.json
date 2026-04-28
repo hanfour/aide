@@ -64,6 +64,13 @@
       "when": 1777363335069,
       "tag": "0008_magical_daimon_hellstrom",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1777365610737,
+      "tag": "0009_sturdy_risque",
+      "breakpoints": true
     }
   ]
 }
