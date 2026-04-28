@@ -22,6 +22,7 @@ import {
   type QueueLike,
   type UsageLogEnqueueFallback,
 } from "../../src/workers/usageLogQueue.js";
+import { makeUsageLogJobPayload } from "../factories/usageLogPayload.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -33,45 +34,14 @@ const VALID_UUID_4 = "44444444-4444-4444-8444-444444444444";
 function validPayload(
   overrides: Partial<UsageLogJobPayload> = {},
 ): UsageLogJobPayload {
-  return {
+  return makeUsageLogJobPayload({
     requestId: "req_fallback_1",
     userId: VALID_UUID_1,
     apiKeyId: VALID_UUID_2,
     accountId: VALID_UUID_3,
     orgId: VALID_UUID_4,
-    teamId: null,
-    requestedModel: "claude-sonnet-4-5",
-    upstreamModel: "claude-sonnet-4-5-20250101",
-    platform: "anthropic",
-    surface: "messages",
-    stream: false,
-    inputTokens: 100,
-    outputTokens: 200,
-    cacheCreationTokens: 0,
-    cacheReadTokens: 0,
-    inputCost: "0.0030000000",
-    outputCost: "0.0090000000",
-    cacheCreationCost: "0",
-    cacheReadCost: "0",
-    totalCost: "0.0120000000",
-    cacheCreation5mTokens: 0,
-    cacheCreation1hTokens: 0,
-    cachedInputTokens: 0,
-    cachedInputCost: "0",
-    actualCostUsd: "0",
-    groupId: null,
-    rateMultiplier: "1.0000",
-    accountRateMultiplier: "1.0000",
-    statusCode: 200,
-    durationMs: 1234,
-    firstTokenMs: null,
-    bufferReleasedAtMs: null,
-    upstreamRetries: 0,
-    failedAccountIds: [],
-    userAgent: null,
-    ipAddress: null,
     ...overrides,
-  };
+  });
 }
 
 interface RecordedAdd {

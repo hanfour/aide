@@ -34,6 +34,7 @@ import {
   type Database,
 } from "@aide/db";
 import type { UsageLogJobPayload } from "../../src/workers/usageLogQueue.js";
+import { makeUsageLogJobPayload } from "../factories/usageLogPayload.js";
 import { writeUsageLogBatch } from "../../src/workers/writeUsageLogBatch.js";
 
 const require = createRequire(import.meta.url);
@@ -120,44 +121,16 @@ function makePayload(
   totalCost: string,
   requestId: string,
 ): UsageLogJobPayload {
-  return {
+  return makeUsageLogJobPayload({
     requestId,
     userId,
     apiKeyId,
     accountId,
     orgId,
-    teamId: null,
-    requestedModel: "claude-sonnet-4-5",
-    upstreamModel: "claude-sonnet-4-5-20250101",
-    platform: "anthropic",
-    surface: "messages",
-    stream: false,
-    inputTokens: 100,
-    outputTokens: 200,
-    cacheCreationTokens: 0,
-    cacheReadTokens: 0,
     inputCost: "0.0010000000",
     outputCost: "0.0020000000",
-    cacheCreationCost: "0",
-    cacheReadCost: "0",
     totalCost,
-    cacheCreation5mTokens: 0,
-    cacheCreation1hTokens: 0,
-    cachedInputTokens: 0,
-    cachedInputCost: "0",
-    actualCostUsd: "0",
-    groupId: null,
-    rateMultiplier: "1.0000",
-    accountRateMultiplier: "1.0000",
-    statusCode: 200,
-    durationMs: 1234,
-    firstTokenMs: null,
-    bufferReleasedAtMs: null,
-    upstreamRetries: 0,
-    failedAccountIds: [],
-    userAgent: null,
-    ipAddress: null,
-  };
+  });
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────

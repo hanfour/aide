@@ -127,6 +127,17 @@ export function extractUsageFromAnthropicResponse(
     usage.cache_creation && typeof usage.cache_creation === "object"
       ? (usage.cache_creation as Record<string, unknown>)
       : {};
+  // OpenAI cached_input lives at `usage.prompt_tokens_details.cached_tokens`.
+  // We read it here defensively so a future OpenAI-shaped response routed
+  // through this extractor still records `cachedInputTokens` correctly;
+  // Part 9 may add a dedicated `extractUsageFromOpenaiResponse` that uses
+  // `prompt_tokens` / `completion_tokens` for the totals, but the cached
+  // sub-portion still surfaces the same way.
+  const promptDetails =
+    usage.prompt_tokens_details &&
+    typeof usage.prompt_tokens_details === "object"
+      ? (usage.prompt_tokens_details as Record<string, unknown>)
+      : {};
   return {
     model: typeof obj.model === "string" ? obj.model : "",
     inputTokens: toNonNegInt(usage.input_tokens),
@@ -135,9 +146,7 @@ export function extractUsageFromAnthropicResponse(
     cacheReadTokens: toNonNegInt(usage.cache_read_input_tokens),
     cacheCreation5mTokens: toNonNegInt(cacheCreation.ephemeral_5m_input_tokens),
     cacheCreation1hTokens: toNonNegInt(cacheCreation.ephemeral_1h_input_tokens),
-    // Anthropic doesn't have an OpenAI-shaped cached_input concept; this
-    // stays 0 here. The OpenAI extractor (Part 9) will populate it.
-    cachedInputTokens: 0,
+    cachedInputTokens: toNonNegInt(promptDetails.cached_tokens),
   };
 }
 
@@ -269,11 +278,18 @@ export async function buildUsageLogPayload(
       miss: false,
     };
   } else {
-    cost = await resolveCostViaLookupOrLegacy(input, usage);
-    cachedInputCost = await computeCachedInputCost(input, usage);
+    const resolved = await resolveCostAndCachedInput(input, usage);
+    cost = resolved.cost;
+    cachedInputCost = resolved.cachedInputCost;
   }
 
   const totalWithCachedInput = cost.totalCost + cachedInputCost;
+  // TODO(plan-5a): float-arithmetic precision is fine for numeric(20, 10)
+  // truncated to 10 decimals, but leaves a tiny ULP-drift risk on the
+  // last digit. If/when high-volume aggregation depends on this column
+  // being exact, switch to bigint-micros math (multiply numerator
+  // multipliers as integer percentages, e.g. rateMultiplier 1.5 → 15000n
+  // with scale 10000) and convert to dollar string at the boundary.
   const actualCostUsd =
     totalWithCachedInput *
     parseFloat(rateMultiplier) *
@@ -313,7 +329,7 @@ export async function buildUsageLogPayload(
     cacheReadCost: cost.cacheReadCost.toFixed(10),
     cachedInputCost: cachedInputCost.toFixed(10),
     totalCost: totalWithCachedInput.toFixed(10),
-    actualCostUsd: actualCostUsd.toFixed(6),
+    actualCostUsd: actualCostUsd.toFixed(10),
     rateMultiplier,
     accountRateMultiplier,
     groupId: input.groupId ?? null,
@@ -343,22 +359,29 @@ export async function buildUsageLogPayload(
 }
 
 /**
- * Resolve cost via the new DB-backed `pricingLookup` when provided and the
- * upstream model is present; otherwise fall back to the legacy
- * `resolveCost(loadPricing(), ...)` path. The fallback keeps 4A-era model
- * names served by `litellm.json` working until `model_pricing` is fully
- * seeded.
+ * Resolve cost (4-field legacy shape) and OpenAI cached_input cost in a
+ * single call.  Behaviour:
  *
- * The new path uses `computeCost` (bigint micros) and projects its
- * breakdown into the legacy 4-field `CostBreakdown` shape so the calling
- * payload assembly is uniform across both paths. OpenAI cached_input is
- * pulled out separately by `computeCachedInputCost` and added to totalCost
- * before persistence.
+ *   - When `pricingLookup` is provided AND the upstream model is in
+ *     `model_pricing`: use `computeCost` (bigint micros). One DB lookup,
+ *     one computeCost — both branches share the result.
+ *   - Otherwise: fall back to legacy `resolveCost(loadPricing(), ...)`.
+ *     `cachedInputCost` is 0 in that branch (the legacy 4A pricing path
+ *     has no cached_input concept).
+ *
+ * Provider-specific normalisation: `computeCost`'s contract is "inputTokens
+ * = total prompt size; cache-classified tokens are subtracted before
+ * billing input."  Anthropic's `usage.input_tokens` is **uncached-only**
+ * (cache_creation/read are independent counts that don't overlap), so
+ * passing it raw would underbill input.  We re-aggregate cache fields back
+ * into inputTokens here so each token bills exactly once.  OpenAI's
+ * `prompt_tokens` is already the total — for OpenAI rows the
+ * cache_5m/1h/read fields are 0 so the addition is a no-op.
  */
-async function resolveCostViaLookupOrLegacy(
+async function resolveCostAndCachedInput(
   input: BuildUsageLogPayloadInput,
   usage: ExtractedUsage,
-): Promise<CostBreakdown> {
+): Promise<{ cost: CostBreakdown; cachedInputCost: number }> {
   if (input.pricingLookup && usage.model) {
     const row = await input.pricingLookup.lookup(
       input.platform,
@@ -366,64 +389,65 @@ async function resolveCostViaLookupOrLegacy(
       new Date(),
     );
     if (row) {
+      // Anthropic's API may return either the per-tier split
+      // (`cache_creation.ephemeral_5m/1h_input_tokens`) OR only the
+      // aggregate `cache_creation_input_tokens`.  When only the aggregate
+      // is present, the upstream defaulted to the 5min cache TTL (per
+      // Anthropic prompt-cache docs) — bill the aggregate as 5m so the
+      // ledger matches the legacy `resolveCost` path's
+      // `cache_creation_input_token_cost` bucket.
+      const haveSplit =
+        usage.cacheCreation5mTokens > 0 || usage.cacheCreation1hTokens > 0;
+      const cache5mTokens = haveSplit
+        ? usage.cacheCreation5mTokens
+        : usage.cacheCreationTokens;
+      const cache1hTokens = haveSplit ? usage.cacheCreation1hTokens : 0;
+      // computeCost contract: `inputTokens` is total prompt size; cache
+      // fields are subtracted from it before billing input.  Anthropic's
+      // `usage.input_tokens` is uncached-only, so re-aggregate cache
+      // counts back in here to match the contract.  OpenAI's
+      // `prompt_tokens` is already total — but for OpenAI rows the
+      // cache_creation/read fields are 0 (Anthropic concept), so the
+      // addition is a no-op there.
+      const totalPromptInput =
+        usage.inputTokens +
+        cache5mTokens +
+        cache1hTokens +
+        usage.cacheReadTokens;
       const computed = computeCost(row, {
-        inputTokens: usage.inputTokens,
+        inputTokens: totalPromptInput,
         outputTokens: usage.outputTokens,
-        cacheCreation5mTokens: usage.cacheCreation5mTokens,
-        cacheCreation1hTokens: usage.cacheCreation1hTokens,
+        cacheCreation5mTokens: cache5mTokens,
+        cacheCreation1hTokens: cache1hTokens,
         cacheReadTokens: usage.cacheReadTokens,
         cachedInputTokens: usage.cachedInputTokens,
       });
       return {
-        inputCost: computed.breakdown.input,
-        outputCost: computed.breakdown.output,
-        cacheCreationCost: computed.breakdown.cacheCreation,
-        cacheReadCost: computed.breakdown.cacheRead,
-        // computed.totalCost includes cachedInput; subtract here so the
-        // CostBreakdown.totalCost mirrors the legacy 4-field shape (which
-        // had no cachedInput concept). Cached-input cost is re-added to
-        // totalCost at the payload level alongside `cachedInputCost`.
-        totalCost: computed.totalCost - computed.breakdown.cachedInput,
-        miss: false,
+        cost: {
+          inputCost: computed.breakdown.input,
+          outputCost: computed.breakdown.output,
+          cacheCreationCost: computed.breakdown.cacheCreation,
+          cacheReadCost: computed.breakdown.cacheRead,
+          // computed.totalCost includes cachedInput; subtract here so the
+          // CostBreakdown.totalCost mirrors the legacy 4-field shape
+          // (which had no cachedInput concept). Cached-input cost is
+          // re-added at the payload level alongside `cachedInputCost`.
+          totalCost: computed.totalCost - computed.breakdown.cachedInput,
+          miss: false,
+        },
+        cachedInputCost: computed.breakdown.cachedInput,
       };
     }
   }
-  return resolveCost(input.pricing, usage.model, {
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    cacheCreationTokens: usage.cacheCreationTokens,
-    cacheReadTokens: usage.cacheReadTokens,
-  });
-}
-
-/**
- * OpenAI cached_input cost is not in the legacy `CostBreakdown` shape, so it
- * has to be extracted from the new pricing path separately. Returns 0 when
- * the new path isn't in play (legacy `resolveCost` flow has no
- * cached_input).
- */
-async function computeCachedInputCost(
-  input: BuildUsageLogPayloadInput,
-  usage: ExtractedUsage,
-): Promise<number> {
-  if (!input.pricingLookup || !usage.model || !usage.cachedInputTokens) {
-    return 0;
-  }
-  const row = await input.pricingLookup.lookup(
-    input.platform,
-    usage.model,
-    new Date(),
-  );
-  if (!row) return 0;
-  const computed = computeCost(row, {
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    cacheCreation5mTokens: usage.cacheCreation5mTokens,
-    cacheCreation1hTokens: usage.cacheCreation1hTokens,
-    cacheReadTokens: usage.cacheReadTokens,
-    cachedInputTokens: usage.cachedInputTokens,
-  });
-  return computed.breakdown.cachedInput;
+  return {
+    cost: resolveCost(input.pricing, usage.model, {
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cacheCreationTokens: usage.cacheCreationTokens,
+      cacheReadTokens: usage.cacheReadTokens,
+    }),
+    cachedInputCost: 0,
+  };
 }
 
 // ── Enqueue wrapper ──────────────────────────────────────────────────────────

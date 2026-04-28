@@ -83,8 +83,10 @@ export const usageLogs = pgTable(
     // Plan 5A — second-stage billing per design §11.3 / X8: total_cost is
     // the raw provider cost (or 0 for OAuth subscription rows); actual_cost
     // = total_cost × group rate_multiplier × account rate_multiplier.  This
-    // is the value group-level dashboards charge against budgets.
-    actualCostUsd: decimal("actual_cost_usd", { precision: 10, scale: 6 })
+    // is the value group-level dashboards charge against budgets.  Precision
+    // matches `total_cost` (numeric(20, 10)) so multiplier-applied values
+    // never lose precision relative to the raw cost.
+    actualCostUsd: decimal("actual_cost_usd", { precision: 20, scale: 10 })
       .notNull()
       .default("0"),
     rateMultiplier: decimal("rate_multiplier", { precision: 10, scale: 4 })

@@ -653,7 +653,7 @@ describe("buildUsageLogPayload — Plan 5A two-stage cost", () => {
       accountType: "oauth",
     });
     expect(payload.totalCost).toBe("0.0000000000");
-    expect(payload.actualCostUsd).toBe("0.000000");
+    expect(payload.actualCostUsd).toBe("0.0000000000");
     expect(payload.inputCost).toBe("0.0000000000");
     expect(payload.outputCost).toBe("0.0000000000");
     // OAuth path skips the lookup entirely — subscription rows shouldn't
@@ -688,7 +688,7 @@ describe("buildUsageLogPayload — Plan 5A two-stage cost", () => {
     expect(payload.inputCost).toBe("0.0050000000");
     expect(payload.outputCost).toBe("0.0125000000");
     expect(payload.totalCost).toBe("0.0175000000");
-    expect(payload.actualCostUsd).toBe("0.017500");
+    expect(payload.actualCostUsd).toBe("0.0175000000");
     expect(lookup.lookup).toHaveBeenCalledWith(
       "anthropic",
       "claude-3-5-haiku-20241022",
@@ -738,7 +738,7 @@ describe("buildUsageLogPayload — Plan 5A two-stage cost", () => {
     });
     // Legacy path: total = $0.0028; actualCost = $0.0028 × 1.5 = $0.0042
     expect(payload.totalCost).toBe("0.0028000000");
-    expect(payload.actualCostUsd).toBe("0.004200");
+    expect(payload.actualCostUsd).toBe("0.0042000000");
     expect(payload.rateMultiplier).toBe("1.5000");
   });
 
@@ -758,7 +758,7 @@ describe("buildUsageLogPayload — Plan 5A two-stage cost", () => {
     });
     // total = $0.0028; actual = $0.0028 × 1.5 × 2.0 = $0.0084
     expect(payload.totalCost).toBe("0.0028000000");
-    expect(payload.actualCostUsd).toBe("0.008400");
+    expect(payload.actualCostUsd).toBe("0.0084000000");
     expect(payload.rateMultiplier).toBe("1.5000");
     expect(payload.accountRateMultiplier).toBe("2.0000");
   });
@@ -830,5 +830,156 @@ describe("buildUsageLogPayload — Plan 5A two-stage cost", () => {
     expect(payload.inputCost).toBe("0.0025000000");
     expect(payload.outputCost).toBe("0.0010000000");
     expect(payload.totalCost).toBe("0.0035000000");
+  });
+
+  it("OpenAI cached_input > 0: cached portion charged at discount rate, separate column", async () => {
+    // The extractor reads `usage.prompt_tokens_details.cached_tokens` so we
+    // can drive the OpenAI cached-input path without a Part 9 dedicated
+    // OpenAI extractor — keep the test's only inputs the upstream wire
+    // shape + lookup row.
+    const lookup = fakeLookup({
+      inputPerMillionMicros: 2_500_000n, // $2.5/M
+      outputPerMillionMicros: 10_000_000n, // $10/M
+      cached5mPerMillionMicros: null,
+      cached1hPerMillionMicros: null,
+      cachedInputPerMillionMicros: 1_250_000n, // $1.25/M
+    });
+    const openaiUpstream = {
+      model: "gpt-4o",
+      usage: {
+        // The extractor reads `input_tokens` (the Anthropic field name).
+        // OpenAI emits `prompt_tokens` natively; Part 9 will route OpenAI
+        // responses to a parallel extractor.  Using the Anthropic field
+        // name here exercises the cost path without depending on Part 9.
+        input_tokens: 1000,
+        output_tokens: 100,
+        prompt_tokens_details: { cached_tokens: 200 },
+      },
+    };
+    const { payload } = await buildUsageLogPayload({
+      req: makeReq({ id: "req-openai-cached-1" }),
+      requestedModel: "gpt-4o",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: openaiUpstream,
+      platform: "openai",
+      surface: "chat-completions",
+      statusCode: 200,
+      durationMs: 100,
+      pricing: getPricing(),
+      pricingLookup: lookup,
+      accountType: "apikey",
+    });
+    // OpenAI semantics: prompt_tokens = 1000 includes the 200 cached portion.
+    // billable = 1000 - 200 = 800 → input cost 800 × $2.5/M = $0.002
+    // cached_input cost 200 × $1.25/M = $0.00025
+    // output cost 100 × $10/M = $0.001
+    // total = $0.002 + $0.00025 + $0.001 = $0.00325
+    expect(payload.cachedInputTokens).toBe(200);
+    expect(payload.cachedInputCost).toBe("0.0002500000");
+    expect(payload.inputCost).toBe("0.0020000000");
+    expect(payload.outputCost).toBe("0.0010000000");
+    expect(payload.totalCost).toBe("0.0032500000");
+    // pricingLookup.lookup was called exactly once for this request (no
+    // double-lookup between cost path and cached-input path).
+    expect(lookup.lookup).toHaveBeenCalledTimes(1);
+  });
+
+  it("Anthropic + cache_creation/read tokens: matches legacy resolveCost (no underbill regression)", async () => {
+    // PR #33 review #1: Anthropic's input_tokens is uncached-only;
+    // cache_creation_input_tokens + cache_read_input_tokens are independent
+    // counts that don't overlap.  computeCost's contract treats inputTokens
+    // as "total prompt size", so the caller must re-aggregate before
+    // calling — otherwise the subtraction in computeCost would underbill.
+    //
+    // This test feeds the same usage through BOTH the new (lookup hit)
+    // path and the legacy resolveCost path and asserts the resulting
+    // dollar amounts match — protecting against future drift.
+    const upstream = {
+      model: "claude-3-5-haiku-20241022",
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 500,
+        cache_creation_input_tokens: 100,
+        cache_read_input_tokens: 200,
+      },
+    };
+    // Pricing row equal to litellm.json claude-3-5-haiku-20241022:
+    //   input    $0.80/M = 800_000 micros
+    //   output   $4/M    = 4_000_000 micros
+    //   cached_5m $1/M   = 1_000_000 micros (litellm's
+    //                       cache_creation_input_token_cost; we use it as
+    //                       the 5m bucket since legacy maps everything
+    //                       there)
+    //   cache read uses input rate ($0.80/M) per Anthropic semantics
+    const lookup = fakeLookup({
+      inputPerMillionMicros: 800_000n,
+      outputPerMillionMicros: 4_000_000n,
+      cached5mPerMillionMicros: 1_000_000n,
+      cached1hPerMillionMicros: null,
+      cachedInputPerMillionMicros: null,
+    });
+
+    const { payload: newPath } = await buildUsageLogPayload({
+      req: makeReq({ id: "req-anthropic-cache-new-1" }),
+      requestedModel: "claude-3-5-haiku-20241022",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: upstream,
+      platform: "anthropic",
+      surface: "messages",
+      statusCode: 200,
+      durationMs: 100,
+      pricing: getPricing(),
+      pricingLookup: lookup,
+      accountType: "apikey",
+    });
+    const { payload: legacyPath } = await buildUsageLogPayload({
+      req: makeReq({ id: "req-anthropic-cache-legacy-1" }),
+      requestedModel: "claude-3-5-haiku-20241022",
+      accountId: VALID_UUID_ACCT,
+      upstreamResponse: upstream,
+      platform: "anthropic",
+      surface: "messages",
+      statusCode: 200,
+      durationMs: 100,
+      pricing: getPricing(),
+      // No pricingLookup → legacy path.
+      accountType: "apikey",
+    });
+
+    // The regression target for review #1 is INPUT cost — Anthropic's
+    // input_tokens is uncached-only and the caller must re-aggregate it
+    // before passing into computeCost, otherwise the subtraction inside
+    // computeCost double-discounts the cache portion.  The fix should
+    // make the new and legacy paths agree on input + output + cache
+    // creation.
+    expect(newPath.inputCost).toBe(legacyPath.inputCost);
+    expect(newPath.outputCost).toBe(legacyPath.outputCost);
+    expect(newPath.cacheCreationCost).toBe(legacyPath.cacheCreationCost);
+    // Concrete dollar check (anchors the assertion above).
+    //   input         1000 × $0.80/M = $0.0008  (re-aggregated cache→input then subtracted)
+    //   output         500 × $4/M    = $0.002
+    //   cache_creation 100 × $1/M    = $0.0001  (legacy cache_creation_input_token_cost
+    //                                            == new cached_5m_per_million_micros here)
+    expect(newPath.inputCost).toBe("0.0008000000");
+    expect(newPath.cacheCreationCost).toBe("0.0001000000");
+
+    // KNOWN DIVERGENCE — cache_read.  The new model_pricing schema (PR #32)
+    // doesn't have a dedicated cache_read column; computeCost (design §11.2)
+    // bills cache_read at `inputPerMillionMicros` ($0.80/M here).  The
+    // legacy litellm.json carries a separate `cache_read_input_token_cost`
+    // (Anthropic's published cache_read rate is roughly 1/10 of input —
+    // $0.08/M for haiku).  So:
+    //
+    //   legacy cache_read = 200 × $0.08/M = $0.000016
+    //   new    cache_read = 200 × $0.80/M = $0.000160
+    //
+    // The new path will OVERBILL Anthropic cache reads ~10× when ENABLED.
+    // Tracked for follow-up: a future migration must add
+    // `cache_read_per_million_micros` to model_pricing and seed the
+    // documented Anthropic cache_read rates.  Until then this PR keeps
+    // the new path dormant (server.ts doesn't inject pricingLookup yet —
+    // Part 9), so production billing is unaffected.
+    expect(legacyPath.cacheReadCost).toBe("0.0000160000");
+    expect(newPath.cacheReadCost).toBe("0.0001600000");
   });
 });

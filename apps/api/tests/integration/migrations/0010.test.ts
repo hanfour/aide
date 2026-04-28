@@ -6,8 +6,9 @@ import { setupTestDb, type TestDb } from "../../factories/db.js";
 // Plan 5A migration 0010 — additive extension of usage_logs:
 //   * cache_creation_5m_tokens / cache_creation_1h_tokens (Anthropic split)
 //   * cached_input_tokens (OpenAI cached_input)
-//   * cached_input_cost (OpenAI cached_input cost)
-//   * actual_cost_usd (second-stage billing — total × multipliers)
+//   * cached_input_cost numeric(20, 10) (OpenAI cached_input cost)
+//   * actual_cost_usd numeric(20, 10) (second-stage billing — aligned with
+//     total_cost precision so multiplier-applied values never lose digits)
 //   * group_id (FK accountGroups ON DELETE SET NULL)
 //   * usage_logs_group_time_idx
 //

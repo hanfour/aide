@@ -3,7 +3,7 @@
 -- Run manually with: psql $DATABASE_URL -f packages/db/drizzle/0010_down.sql
 -- After running, manually remove the 0010 entry from drizzle/meta/_journal.json.
 --
--- Reverses 0010_same_the_liberteens.sql by dropping the partial idx, the
+-- Reverses 0010_flashy_swarm.sql by dropping the partial idx, the
 -- group_id FK, and the six new columns.  Pre-existing 4A/4C rows in
 -- usage_logs are preserved — only the new columns are dropped, so historical
 -- request data stays intact.
