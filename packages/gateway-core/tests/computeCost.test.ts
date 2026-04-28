@@ -14,6 +14,7 @@ const ANTHROPIC_OPUS: ModelPricingRow = {
   outputPerMillionMicros: 75_000_000n,
   cached5mPerMillionMicros: 18_750_000n,
   cached1hPerMillionMicros: 30_000_000n,
+  cacheReadPerMillionMicros: 1_500_000n, // $1.50/M, ~10% of $15/M input
   cachedInputPerMillionMicros: null,
 };
 
@@ -22,7 +23,23 @@ const OPENAI_GPT4O: ModelPricingRow = {
   outputPerMillionMicros: 10_000_000n,
   cached5mPerMillionMicros: null,
   cached1hPerMillionMicros: null,
+  cacheReadPerMillionMicros: null,
   cachedInputPerMillionMicros: 1_250_000n,
+};
+
+/**
+ * Pre-migration-0011 row shape: cache_read column missing → null.
+ * computeCost should fall back to billing cache_read at the input rate
+ * (the original Plan 5A §11.2 behaviour, preserved for backwards
+ * compatibility with rows that haven't been backfilled yet).
+ */
+const ANTHROPIC_LEGACY_NO_CACHE_READ: ModelPricingRow = {
+  inputPerMillionMicros: 15_000_000n,
+  outputPerMillionMicros: 75_000_000n,
+  cached5mPerMillionMicros: 18_750_000n,
+  cached1hPerMillionMicros: 30_000_000n,
+  cacheReadPerMillionMicros: null,
+  cachedInputPerMillionMicros: null,
 };
 
 describe("computeCost", () => {
@@ -44,9 +61,9 @@ describe("computeCost", () => {
     // inputTokens=1_000_000 includes 200K cache-creation 5m + 100K cache-read.
     // Billable input = 1M - 200K - 100K = 700K → 700K × $15/M = $10.50
     // Cache 5m: 200K × $18.75/M = $3.75
-    // Cache read: 100K × $15/M (input rate) = $1.50
+    // Cache read: 100K × $1.50/M (dedicated cache_read rate, post-0011) = $0.15
     // Output: 0
-    // Total: $15.75
+    // Total: $14.40
     const result = computeCost(ANTHROPIC_OPUS, {
       inputTokens: 1_000_000,
       outputTokens: 0,
@@ -55,7 +72,26 @@ describe("computeCost", () => {
     });
     expect(result.breakdown.input).toBeCloseTo(10.5, 6);
     expect(result.breakdown.cacheCreation).toBeCloseTo(3.75, 6);
-    expect(result.breakdown.cacheRead).toBeCloseTo(1.5, 6);
+    expect(result.breakdown.cacheRead).toBeCloseTo(0.15, 6);
+    expect(result.totalCost).toBeCloseTo(14.4, 6);
+  });
+
+  it("falls back to input rate for cache_read when cacheReadPerMillionMicros is NULL (pre-0011 row shape)", async () => {
+    // Pre-migration-0011 rows have NULL cache_read; computeCost must
+    // continue to bill them at the input rate so historical pricing
+    // queries (e.g. cost replay against an old `effective_from` date)
+    // produce the same numbers as the original Plan 5A §11.2 contract.
+    // Same usage as the prior test, against a row WITHOUT the dedicated
+    // rate; cache_read should bill at $15/M instead of $1.50/M.
+    const result = computeCost(ANTHROPIC_LEGACY_NO_CACHE_READ, {
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      cacheCreation5mTokens: 200_000,
+      cacheReadTokens: 100_000,
+    });
+    expect(result.breakdown.input).toBeCloseTo(10.5, 6);
+    expect(result.breakdown.cacheCreation).toBeCloseTo(3.75, 6);
+    expect(result.breakdown.cacheRead).toBeCloseTo(1.5, 6); // input rate
     expect(result.totalCost).toBeCloseTo(15.75, 6);
   });
 

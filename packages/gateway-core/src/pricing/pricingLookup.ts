@@ -80,6 +80,7 @@ export function createPricingLookup(
         outputPerMillionMicros: modelPricing.outputPerMillionMicros,
         cached5mPerMillionMicros: modelPricing.cached5mPerMillionMicros,
         cached1hPerMillionMicros: modelPricing.cached1hPerMillionMicros,
+        cacheReadPerMillionMicros: modelPricing.cacheReadPerMillionMicros,
         cachedInputPerMillionMicros: modelPricing.cachedInputPerMillionMicros,
       })
       .from(modelPricing)

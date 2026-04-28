@@ -26,6 +26,12 @@ export interface ModelPricingSeedRow {
   outputPerMillionMicros: bigint;
   cached5mPerMillionMicros: bigint | null;
   cached1hPerMillionMicros: bigint | null;
+  /**
+   * Anthropic prompt-cache READ pricing.  ~10% of input rate per
+   * Anthropic docs.  NULL for OpenAI rows (OpenAI uses cached_input).
+   * Added by migration 0011.
+   */
+  cacheReadPerMillionMicros: bigint | null;
   cachedInputPerMillionMicros: bigint | null;
   effectiveFrom: string;
 }
@@ -40,6 +46,7 @@ export const MODEL_PRICING_SNAPSHOT_2026_04_28: readonly ModelPricingSeedRow[] =
       outputPerMillionMicros: 75_000_000n,
       cached5mPerMillionMicros: 18_750_000n,
       cached1hPerMillionMicros: 30_000_000n,
+      cacheReadPerMillionMicros: 1_500_000n, // $1.50/M = 10% of $15/M input
       cachedInputPerMillionMicros: null,
       effectiveFrom: "2026-04-28T00:00:00Z",
     },
@@ -50,6 +57,7 @@ export const MODEL_PRICING_SNAPSHOT_2026_04_28: readonly ModelPricingSeedRow[] =
       outputPerMillionMicros: 15_000_000n,
       cached5mPerMillionMicros: 3_750_000n,
       cached1hPerMillionMicros: 6_000_000n,
+      cacheReadPerMillionMicros: 300_000n, // $0.30/M = 10% of $3/M input
       cachedInputPerMillionMicros: null,
       effectiveFrom: "2026-04-28T00:00:00Z",
     },
@@ -60,6 +68,7 @@ export const MODEL_PRICING_SNAPSHOT_2026_04_28: readonly ModelPricingSeedRow[] =
       outputPerMillionMicros: 5_000_000n,
       cached5mPerMillionMicros: 1_250_000n,
       cached1hPerMillionMicros: 2_000_000n,
+      cacheReadPerMillionMicros: 100_000n, // $0.10/M = 10% of $1/M input
       cachedInputPerMillionMicros: null,
       effectiveFrom: "2026-04-28T00:00:00Z",
     },
@@ -71,6 +80,7 @@ export const MODEL_PRICING_SNAPSHOT_2026_04_28: readonly ModelPricingSeedRow[] =
       outputPerMillionMicros: 10_000_000n,
       cached5mPerMillionMicros: null,
       cached1hPerMillionMicros: null,
+      cacheReadPerMillionMicros: null,
       cachedInputPerMillionMicros: 1_250_000n,
       effectiveFrom: "2026-04-28T00:00:00Z",
     },
@@ -81,6 +91,7 @@ export const MODEL_PRICING_SNAPSHOT_2026_04_28: readonly ModelPricingSeedRow[] =
       outputPerMillionMicros: 600_000n,
       cached5mPerMillionMicros: null,
       cached1hPerMillionMicros: null,
+      cacheReadPerMillionMicros: null,
       cachedInputPerMillionMicros: 75_000n,
       effectiveFrom: "2026-04-28T00:00:00Z",
     },
@@ -91,6 +102,7 @@ export const MODEL_PRICING_SNAPSHOT_2026_04_28: readonly ModelPricingSeedRow[] =
       outputPerMillionMicros: 60_000_000n,
       cached5mPerMillionMicros: null,
       cached1hPerMillionMicros: null,
+      cacheReadPerMillionMicros: null,
       cachedInputPerMillionMicros: 7_500_000n,
       effectiveFrom: "2026-04-28T00:00:00Z",
     },
@@ -101,6 +113,7 @@ export const MODEL_PRICING_SNAPSHOT_2026_04_28: readonly ModelPricingSeedRow[] =
       outputPerMillionMicros: 12_000_000n,
       cached5mPerMillionMicros: null,
       cached1hPerMillionMicros: null,
+      cacheReadPerMillionMicros: null,
       cachedInputPerMillionMicros: 1_500_000n,
       effectiveFrom: "2026-04-28T00:00:00Z",
     },

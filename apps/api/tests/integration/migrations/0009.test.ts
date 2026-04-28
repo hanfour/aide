@@ -48,6 +48,8 @@ describe("migration 0009 model_pricing", () => {
       "effective_from",
       "effective_to",
       "created_at",
+      // Added by migration 0011 (PR #32 follow-up)
+      "cache_read_per_million_micros",
     ]);
   });
 
