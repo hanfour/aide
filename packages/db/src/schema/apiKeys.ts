@@ -72,5 +72,8 @@ export const apiKeys = pgTable(
     revealIdx: index("api_keys_reveal_idx")
       .on(t.revealTokenHash)
       .where(sql`${t.revealTokenHash} IS NOT NULL`),
+    groupIdx: index("api_keys_group_idx")
+      .on(t.groupId)
+      .where(sql`${t.revokedAt} IS NULL AND ${t.groupId} IS NOT NULL`),
   }),
 );

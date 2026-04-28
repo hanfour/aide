@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS "account_groups" (
 	"status" text DEFAULT 'active' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"deleted_at" timestamp with time zone
+	"deleted_at" timestamp with time zone,
+	CONSTRAINT "account_groups_org_name_unique" UNIQUE("org_id","name")
 );
 --> statement-breakpoint
 ALTER TABLE "upstream_accounts" ADD COLUMN "subscription_tier" text;--> statement-breakpoint
@@ -40,36 +41,26 @@ EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
 --> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "account_group_members_group_priority_idx" ON "account_group_members" USING btree ("group_id","priority");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "account_groups_org_platform_idx" ON "account_groups" USING btree ("org_id","platform") WHERE "account_groups"."deleted_at" IS NULL;--> statement-breakpoint
 DO $$ BEGIN
  ALTER TABLE "api_keys" ADD CONSTRAINT "api_keys_group_id_account_groups_id_fk" FOREIGN KEY ("group_id") REFERENCES "public"."account_groups"("id") ON DELETE set null ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
 --> statement-breakpoint
--- Plan 5A §4.1 — hand-appended constraints, partial indexes, and backfill.
--- drizzle-kit cannot generate CHECK constraints, partial indexes, or DO blocks.
+CREATE INDEX IF NOT EXISTS "api_keys_group_idx" ON "api_keys" USING btree ("group_id") WHERE "api_keys"."revoked_at" IS NULL AND "api_keys"."group_id" IS NOT NULL;
+--> statement-breakpoint
+-- Plan 5A §4.1 — hand-appended CHECK constraints (drizzle-kit 0.28 cannot
+-- generate them) and backfill DO block. Indexes + UNIQUE are now declared
+-- in Drizzle schema (accountGroups.ts, apiKeys.ts) so drizzle-kit emits
+-- them inline above.
 
 ALTER TABLE "account_groups" ADD CONSTRAINT "account_groups_platform_values"
   CHECK ("platform" IN ('anthropic', 'openai', 'gemini', 'antigravity'));
 --> statement-breakpoint
 ALTER TABLE "account_groups" ADD CONSTRAINT "account_groups_status_values"
   CHECK ("status" IN ('active', 'disabled'));
---> statement-breakpoint
-ALTER TABLE "account_groups" ADD CONSTRAINT "account_groups_org_name_unique"
-  UNIQUE ("org_id", "name");
---> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "account_groups_org_platform_idx"
-  ON "account_groups" ("org_id", "platform")
-  WHERE "deleted_at" IS NULL;
---> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "account_group_members_group_priority_idx"
-  ON "account_group_members" ("group_id", "priority");
---> statement-breakpoint
--- api_keys uses revoked_at (not deleted_at) as the soft-delete marker;
--- match the existing partial-index convention on this table.
-CREATE INDEX IF NOT EXISTS "api_keys_group_idx"
-  ON "api_keys" ("group_id")
-  WHERE "revoked_at" IS NULL;
 --> statement-breakpoint
 ALTER TABLE "upstream_accounts" ADD CONSTRAINT "subscription_tier_values"
   CHECK (
@@ -78,8 +69,8 @@ ALTER TABLE "upstream_accounts" ADD CONSTRAINT "subscription_tier_values"
   );
 --> statement-breakpoint
 -- Backfill: per-org legacy-anthropic group + migrate existing accounts and
--- unassigned api_keys into it. Idempotent within one migration run only;
--- guarded by the per-org scan over upstream_accounts.platform = 'anthropic'.
+-- unassigned api_keys into it. Runs once via _journal.json registration; not
+-- guarded by ON CONFLICT (would mask half-applied state).
 DO $$
 DECLARE
   v_org_id UUID;

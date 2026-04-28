@@ -22,13 +22,20 @@ import { makeUser } from "../../factories/user.js";
 //
 // setupTestDb() applies migrate() against a clean container, so the backfill
 // DO block executes against an empty upstream_accounts table (no-op). Tests
-// that exercise backfill behaviour re-run the same SQL against post-migration
+// that exercise backfill behaviour re-run the SQL below against post-migration
 // seed data — this validates the SQL logic rather than the migrator.
 //
 // The "down migration reverses cleanly" test uses a SECOND testcontainer so
 // it does not corrupt the schema state shared by the other tests.
+//
+// IMPORTANT: this is NOT byte-identical to the migration's backfill block. It
+// adds two `ON CONFLICT … DO NOTHING` guards (marked TEST ONLY below) so
+// successive test cases inside the same testDb don't trip the (org_id, name)
+// UNIQUE constraint when the loop revisits orgs from prior cases. The actual
+// migration runs exactly once per environment, so it has no ON CONFLICT —
+// adding it there would mask half-applied state.
 
-const BACKFILL_SQL = sql`
+const BACKFILL_SQL_TEST_VARIANT = sql`
   DO $$
   DECLARE
     v_org_id UUID;
@@ -45,7 +52,7 @@ const BACKFILL_SQL = sql`
         'anthropic',
         'Auto-created during 5A migration; reorganise in admin UI'
       )
-      ON CONFLICT (org_id, name) DO NOTHING
+      ON CONFLICT (org_id, name) DO NOTHING -- TEST ONLY: not in migration
       RETURNING id INTO v_group_id;
 
       IF v_group_id IS NULL THEN
@@ -57,7 +64,8 @@ const BACKFILL_SQL = sql`
       SELECT id, v_group_id, priority
       FROM upstream_accounts
       WHERE org_id = v_org_id AND platform = 'anthropic' AND deleted_at IS NULL
-      ON CONFLICT (account_id, group_id) DO NOTHING;
+      ON CONFLICT (account_id, group_id) DO NOTHING -- TEST ONLY: not in migration
+      ;
 
       UPDATE api_keys SET group_id = v_group_id
       WHERE org_id = v_org_id AND group_id IS NULL AND revoked_at IS NULL;
@@ -205,7 +213,7 @@ describe("migration 0008 account_groups + group_id + subscription_tier", () => {
       })
       .returning({ id: upstreamAccounts.id });
 
-    await testDb.db.execute(BACKFILL_SQL);
+    await testDb.db.execute(BACKFILL_SQL_TEST_VARIANT);
 
     const groups = await testDb.db.execute<{
       id: string;
@@ -253,7 +261,7 @@ describe("migration 0008 account_groups + group_id + subscription_tier", () => {
       })
       .returning({ id: apiKeys.id });
 
-    await testDb.db.execute(BACKFILL_SQL);
+    await testDb.db.execute(BACKFILL_SQL_TEST_VARIANT);
 
     const after = await testDb.db.execute<{ group_id: string | null }>(sql`
       SELECT group_id FROM api_keys WHERE id = ${key!.id}
@@ -314,6 +322,39 @@ describe("migration 0008 account_groups + group_id + subscription_tier", () => {
       WHERE group_id = ${grp!.id}
     `);
     expect(after.rows[0]!.count).toBe("0");
+  });
+
+  it("ON DELETE SET NULL nulls api_keys.group_id when its account_groups parent is deleted", async () => {
+    const org = await makeOrg(testDb.db);
+    const user = await makeUser(testDb.db, { orgId: org.id });
+    const [grp] = await testDb.db
+      .insert(accountGroups)
+      .values({
+        orgId: org.id,
+        name: `set-null-${Date.now()}`,
+        platform: "openai",
+      })
+      .returning({ id: accountGroups.id });
+    const [key] = await testDb.db
+      .insert(apiKeys)
+      .values({
+        userId: user.id,
+        orgId: org.id,
+        groupId: grp!.id,
+        keyHash: `set-null-h-${Date.now()}`,
+        keyPrefix: "ak_t",
+        name: `set-null-key-${Date.now()}`,
+      })
+      .returning({ id: apiKeys.id });
+
+    await testDb.db.execute(
+      sql`DELETE FROM account_groups WHERE id = ${grp!.id}`,
+    );
+
+    const after = await testDb.db.execute<{ group_id: string | null }>(sql`
+      SELECT group_id FROM api_keys WHERE id = ${key!.id}
+    `);
+    expect(after.rows[0]!.group_id).toBeNull();
   });
 });
 

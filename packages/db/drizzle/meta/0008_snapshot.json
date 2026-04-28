@@ -1,5 +1,5 @@
 {
-  "id": "ad0a5276-f795-4e6c-b496-27b502322e23",
+  "id": "1ed2d9ba-0515-4714-9a3a-2701859625cc",
   "prevId": "7bc1680c-9411-4bf1-8530-f2fd9f6dba15",
   "version": "7",
   "dialect": "postgresql",
@@ -1350,7 +1350,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "account_group_members_group_priority_idx": {
+          "name": "account_group_members_group_priority_idx",
+          "columns": [
+            {
+              "expression": "group_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "priority",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "account_group_members_account_id_upstream_accounts_id_fk": {
           "name": "account_group_members_account_id_upstream_accounts_id_fk",
@@ -1470,7 +1492,30 @@
           "notNull": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "account_groups_org_platform_idx": {
+          "name": "account_groups_org_platform_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "platform",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"account_groups\".\"deleted_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "account_groups_org_id_organizations_id_fk": {
           "name": "account_groups_org_id_organizations_id_fk",
@@ -1487,7 +1532,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "account_groups_org_name_unique": {
+          "name": "account_groups_org_name_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "org_id",
+            "name"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1795,6 +1849,22 @@
           ],
           "isUnique": false,
           "where": "\"api_keys\".\"reveal_token_hash\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "api_keys_group_idx": {
+          "name": "api_keys_group_idx",
+          "columns": [
+            {
+              "expression": "group_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"api_keys\".\"revoked_at\" IS NULL AND \"api_keys\".\"group_id\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
