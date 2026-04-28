@@ -14,6 +14,14 @@ export interface ModelPricingRow {
   cached5mPerMillionMicros: bigint | null;
   /** Anthropic 1-hour prompt cache. NULL on non-Anthropic platforms. */
   cached1hPerMillionMicros: bigint | null;
+  /**
+   * Anthropic prompt-cache READ rate (~10% of input per Anthropic docs).
+   * Added by migration 0011.  When NULL — either historical rows that
+   * pre-date the migration or platforms that have no cache_read concept
+   * (OpenAI) — `computeCost` falls back to `inputPerMillionMicros` so
+   * cache reads still bill at the regular input rate.
+   */
+  cacheReadPerMillionMicros: bigint | null;
   /** OpenAI cached input. NULL on non-OpenAI platforms. */
   cachedInputPerMillionMicros: bigint | null;
 }
@@ -77,8 +85,15 @@ export function computeCost(
       ? (cache1hTokens * pricing.cached1hPerMillionMicros) / MICROS_PER_MILLION
       : 0n;
 
+  // Cache reads bill at the dedicated cache_read rate when present; fall
+  // back to the input rate for rows that pre-date migration 0011 or
+  // platforms that have no cache_read concept.  The fallback matches
+  // the original Plan 5A §11.2 behaviour (which only knew the input
+  // rate); fixing it for Anthropic was the entire point of 0011.
+  const cacheReadRate =
+    pricing.cacheReadPerMillionMicros ?? pricing.inputPerMillionMicros;
   const cacheReadMicros =
-    (cacheReadTokens * pricing.inputPerMillionMicros) / MICROS_PER_MILLION;
+    (cacheReadTokens * cacheReadRate) / MICROS_PER_MILLION;
 
   const cachedInputMicros =
     pricing.cachedInputPerMillionMicros !== null

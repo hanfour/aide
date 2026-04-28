@@ -40,6 +40,20 @@ export const modelPricing = pgTable(
     cached1hPerMillionMicros: bigint("cached_1h_per_million_micros", {
       mode: "bigint",
     }),
+    /**
+     * Anthropic prompt-cache READ pricing.  Cache reads are billed at a
+     * discounted rate (typically ~10% of `inputPerMillionMicros` per
+     * Anthropic docs).  Plan 5A initially (PR #32) had no separate
+     * column here and `computeCost` billed cache_read at the input rate
+     * — that overbills Anthropic by ~10×.  Migration 0011 adds this
+     * column + backfills the documented rates for the 3 Anthropic seeds.
+     *
+     * Always NULL on OpenAI rows (OpenAI uses `cachedInputPerMillionMicros`
+     * for its cache concept).
+     */
+    cacheReadPerMillionMicros: bigint("cache_read_per_million_micros", {
+      mode: "bigint",
+    }),
     cachedInputPerMillionMicros: bigint("cached_input_per_million_micros", {
       mode: "bigint",
     }),

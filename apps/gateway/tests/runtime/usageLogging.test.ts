@@ -616,9 +616,13 @@ describe("buildUsageLogPayload — Plan 5A two-stage cost", () => {
     cached5mPerMillionMicros: bigint | null;
     cached1hPerMillionMicros: bigint | null;
     cachedInputPerMillionMicros: bigint | null;
+    cacheReadPerMillionMicros?: bigint | null;
   }) {
     return {
-      lookup: vi.fn().mockResolvedValue(row),
+      lookup: vi.fn().mockResolvedValue({
+        cacheReadPerMillionMicros: null,
+        ...row,
+      }),
       invalidate: vi.fn(),
       clearCache: vi.fn(),
     };
@@ -910,12 +914,16 @@ describe("buildUsageLogPayload — Plan 5A two-stage cost", () => {
     //                       cache_creation_input_token_cost; we use it as
     //                       the 5m bucket since legacy maps everything
     //                       there)
-    //   cache read uses input rate ($0.80/M) per Anthropic semantics
+    //   cache_read uses dedicated cacheReadPerMillionMicros (post-0011).
+    //   Match litellm.json's cache_read_input_token_cost ($0.08/M for
+    //   haiku) so this regression test asserts FULL parity between new
+    //   and legacy paths.
     const lookup = fakeLookup({
       inputPerMillionMicros: 800_000n,
       outputPerMillionMicros: 4_000_000n,
       cached5mPerMillionMicros: 1_000_000n,
       cached1hPerMillionMicros: null,
+      cacheReadPerMillionMicros: 80_000n, // $0.08/M — matches legacy
       cachedInputPerMillionMicros: null,
     });
 
@@ -946,40 +954,29 @@ describe("buildUsageLogPayload — Plan 5A two-stage cost", () => {
       accountType: "apikey",
     });
 
-    // The regression target for review #1 is INPUT cost — Anthropic's
-    // input_tokens is uncached-only and the caller must re-aggregate it
-    // before passing into computeCost, otherwise the subtraction inside
-    // computeCost double-discounts the cache portion.  The fix should
-    // make the new and legacy paths agree on input + output + cache
-    // creation.
+    // FULL PARITY (post-migration-0011):
+    //   - input cost: re-aggregation fix from PR #33 review (Anthropic's
+    //     input_tokens is uncached-only; caller adds cache fields back
+    //     before computeCost subtracts them so each token bills once)
+    //   - output / cacheCreation: rate match between paths
+    //   - cacheRead: now bills at the dedicated cacheReadPerMillionMicros
+    //     instead of fallback-to-input — eliminating the ~10× overbill
+    //     that was a KNOWN DIVERGENCE in PR #33.
     expect(newPath.inputCost).toBe(legacyPath.inputCost);
     expect(newPath.outputCost).toBe(legacyPath.outputCost);
     expect(newPath.cacheCreationCost).toBe(legacyPath.cacheCreationCost);
-    // Concrete dollar check (anchors the assertion above).
-    //   input         1000 × $0.80/M = $0.0008  (re-aggregated cache→input then subtracted)
-    //   output         500 × $4/M    = $0.002
-    //   cache_creation 100 × $1/M    = $0.0001  (legacy cache_creation_input_token_cost
-    //                                            == new cached_5m_per_million_micros here)
+    expect(newPath.cacheReadCost).toBe(legacyPath.cacheReadCost);
+    expect(newPath.totalCost).toBe(legacyPath.totalCost);
+    // Concrete dollar check (anchors the assertions above).
+    //   input          1000 × $0.80/M = $0.0008
+    //   output          500 × $4/M    = $0.002
+    //   cache_creation  100 × $1/M    = $0.0001
+    //   cache_read      200 × $0.08/M = $0.000016
+    //   total = $0.002916
     expect(newPath.inputCost).toBe("0.0008000000");
+    expect(newPath.outputCost).toBe("0.0020000000");
     expect(newPath.cacheCreationCost).toBe("0.0001000000");
-
-    // KNOWN DIVERGENCE — cache_read.  The new model_pricing schema (PR #32)
-    // doesn't have a dedicated cache_read column; computeCost (design §11.2)
-    // bills cache_read at `inputPerMillionMicros` ($0.80/M here).  The
-    // legacy litellm.json carries a separate `cache_read_input_token_cost`
-    // (Anthropic's published cache_read rate is roughly 1/10 of input —
-    // $0.08/M for haiku).  So:
-    //
-    //   legacy cache_read = 200 × $0.08/M = $0.000016
-    //   new    cache_read = 200 × $0.80/M = $0.000160
-    //
-    // The new path will OVERBILL Anthropic cache reads ~10× when ENABLED.
-    // Tracked for follow-up: a future migration must add
-    // `cache_read_per_million_micros` to model_pricing and seed the
-    // documented Anthropic cache_read rates.  Until then this PR keeps
-    // the new path dormant (server.ts doesn't inject pricingLookup yet —
-    // Part 9), so production billing is unaffected.
-    expect(legacyPath.cacheReadCost).toBe("0.0000160000");
-    expect(newPath.cacheReadCost).toBe("0.0001600000");
+    expect(newPath.cacheReadCost).toBe("0.0000160000");
+    expect(newPath.totalCost).toBe("0.0029160000");
   });
 });
