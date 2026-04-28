@@ -5,6 +5,109 @@ All notable changes to aide are documented here. Format loosely follows
 releases are tagged `vX.Y.Z`; each tag publishes multi-arch images to
 `ghcr.io/hanfour/aide-{api,web,gateway}`.
 
+## Unreleased — Plan 4C: cost budget + facet enrichment (v0.5.0 candidate)
+
+All Plan 4C code is on `main` but not yet tagged. v0.5.0 will be cut once
+the self-org canary observation period defined in
+[`docs/UPGRADE-v0.5.0.md`](docs/UPGRADE-v0.5.0.md) completes.
+
+Plan 4C extends the Plan 4B evaluator with **per-org LLM cost budgeting**
+(Phase 1) and **LLM facet extraction** (Phase 2). Both phases are gated
+behind separate flags so v0.4.0 behaviour is preserved end-to-end when the
+org is opted out:
+
+- `ENABLE_FACET_EXTRACTION=false` (default) → Phase 2 entirely sleeps.
+- `organizations.llm_facet_enabled=false` (default) → Phase 2 sleeps for
+  that org regardless of the env flag.
+- `organizations.llm_monthly_budget_usd IS NULL` (default) → cost
+  enforcement is unlimited; no behaviour change vs v0.4.0.
+
+### Schema (4 additive migrations, no breaking changes)
+
+- **0004** — `organizations` cost columns (`llm_monthly_budget_usd`,
+  `llm_budget_overage_behavior`, `llm_facet_enabled`, `llm_facet_model`,
+  `llm_halted_until_month_end`) + `llm_usage_events` ledger.
+- **0005** — `request_body_facets` table (one-to-one with `request_bodies`,
+  cascade-delete on body purge).
+- **0006** — `organizations.llm_halted_at timestamptz` for cheap halt-state
+  short-circuiting in `enforceBudget`.
+- **0007** — Platform default rubrics bumped to **v1.1.0** with two
+  facet-based supportThresholds (interaction → `facet_outcome_success`,
+  riskControl → `facet_bugs_caught`). Strictly additive; orgs without
+  facet extraction see no scoring change because gte aggregators return
+  `hit:false` on empty input.
+
+Each migration ships with a hand-written `*_down.sql` for emergency
+rollback (drizzle-kit doesn't generate down migrations).
+
+### Highlights
+
+- **Per-org monthly LLM budget** (`llm_monthly_budget_usd`) with two
+  enforcement modes: `degrade` (skip the over-budget call, continue with
+  rule-based scoring) or `halt` (stop all LLM evaluation until next UTC
+  month). Halt state persists via `llm_halted_at` for cheap short-circuit
+  on subsequent calls; auto-clears on month rollover.
+- **Cost ledger** (`llm_usage_events`) — each call records
+  `{org_id, event_type, model, tokens_input, tokens_output, cost_usd,
+  ref_type, ref_id, created_at}`. Source of truth for monthly spend
+  aggregation + Grafana dashboards.
+- **Cost dashboard** at `/dashboard/organizations/<id>/evaluator/costs`
+  with current-month spend, projected end-of-month, breakdowns by
+  task / model, and a 6-month history bar chart. Compact widget on the
+  evaluator status page links to the full dashboard.
+- **LLM facet extraction** — opt-in second LLM pass over each captured
+  session, classified into structured JSON (`sessionType`, `outcome`,
+  `claudeHelpfulness`, `frictionCount`, `bugsCaughtCount`,
+  `codexErrorsCount`). Per-session row in `request_body_facets`. Cache
+  via `prompt_version` so changing the prompt forces re-extraction without
+  duplicating successful rows.
+- **Six new rubric signal types** wired end-to-end (rubric schema → engine
+  dispatch → gateway data fetch): `facet_claude_helpfulness`,
+  `facet_friction_per_session`, `facet_bugs_caught`, `facet_codex_errors`,
+  `facet_outcome_success_rate`, `facet_session_type_ratio`. Empty-rows
+  fallback is graceful (gte → `hit:false`, lte → `hit:true`) so rubrics
+  referencing facet signals don't break orgs without facet extraction.
+- **Report-page facet drill-down** — when facet rows exist for the
+  evaluation period, the report page shows total / success rate / avg
+  helpfulness + counters + session-type distribution. Hidden silently
+  when no rows exist.
+- **Observability infrastructure** in `ops/`: 3 Grafana dashboards
+  (`evaluator.json`, `body-capture.json`, `gdpr.json`), Prometheus alert
+  rules covering DLQ backlog / purge lag / GDPR SLA / facet failure rate
+  / cost-budget warnings, and an Alertmanager receiver template.
+- **9 runbooks** under `docs/runbooks/` for every alert plus the
+  cron-not-firing emergency.
+- **Post-release smoke workflow** (`.github/workflows/post-release-smoke.yml`)
+  triggered on Release completion: runs `scripts/smoke-evaluator.sh`
+  + a Playwright canary spec, opens a `release-blocker` GitHub issue on
+  failure.
+- **SSE → StreamTranscript integration test** using MSW-mocked Anthropic
+  event sequences (3 scenarios: full text, tool_use chunked across 5
+  deltas, byte-by-byte feed).
+
+### Breaking changes
+
+- **Web Docker image drops `linux/arm64`** (`ghcr.io/hanfour/aide-web` is
+  now amd64-only). The QEMU-based cross-build was unstable. `aide-api`
+  and `aide-gateway` continue to publish both architectures. Self-build
+  the web image for arm64 with
+  `docker buildx build --platform linux/arm64 ./docker/Dockerfile.web`.
+
+### Notes
+
+- **Plan 4C structure**: 18 design parts split into Phase 1 (Parts 1-12,
+  cost budget infra) and Phase 2 (Parts 13-18, facet enrichment), plus
+  6 follow-up commits after Phase 1 + Phase 2 landed. Full design +
+  implementation plans live under `.claude/plans/2026-04-24-*`.
+- **`ref_type` / `event_type` columns** are `text` with runtime Zod
+  validation, not `pgEnum`. Matches the existing project convention
+  (`evaluationReports.triggeredBy`, `.periodType`) and avoids enum
+  migrations when new values land.
+- **Halt-state precision** now uses `llm_halted_at` directly. Pre-0006
+  deployments fell through to a `clearHalt` + re-evaluate path on every
+  halted call (2 UPDATEs per call); post-0006 deployments short-circuit
+  via a single SELECT.
+
 ## v0.4.0 — 2026-04-22 — Plan 4B evaluator shipped
 
 Evaluation subsystem: opt-in content capture, rule-based + LLM scoring, 
