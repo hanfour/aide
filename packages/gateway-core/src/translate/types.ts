@@ -163,7 +163,17 @@ export interface AnthropicMessagesResponse {
       }
   >;
   model: string;
-  stop_reason: "end_turn" | "max_tokens" | "stop_sequence" | "tool_use" | null;
+  // "refusal" is the Anthropic content-filter signal added in 2024; we
+  // surface it so cross-format translators can round-trip Chat
+  // `content_filter` / Responses `content_filter` cleanly via the
+  // `stopReasonMap` reverse projections.
+  stop_reason:
+    | "end_turn"
+    | "max_tokens"
+    | "stop_sequence"
+    | "tool_use"
+    | "refusal"
+    | null;
   stop_sequence: string | null;
   usage: AnthropicUsage;
 }
