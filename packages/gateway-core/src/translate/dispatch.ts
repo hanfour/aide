@@ -167,3 +167,100 @@ export function translateResponse(
   }
   return translator(body, opts);
 }
+
+// ---------------------------------------------------------------------------
+// Plan 5A §10.7 — STREAM translator factory dispatch (Plan 5A Part 6
+// Task 6.11).
+//
+// Direction keys mirror request + response tables: `${client}->${upstream}`.
+// Each entry returns a fresh `StreamTranslator` state machine. Pivots
+// compose two translators internally; same-format directions return a
+// passthrough state machine that simply re-emits whatever it receives
+// (typed as `unknown` since we never inspect upstream events on the
+// passthrough path — the route handler shovels bytes through directly).
+// ---------------------------------------------------------------------------
+
+import type { StreamTranslator } from "./stream/types.js";
+import type { AnthropicSSEEvent } from "../stream/anthropicSseParser.js";
+import type { ChatStreamInput } from "./stream/chatToAnthropicStream.js";
+import type { ChatStreamOutput } from "./stream/responsesToChatStream.js";
+import type { ResponsesSSEEvent } from "./stream/responsesSseTypes.js";
+import { makeAnthropicToChatStream } from "./stream/anthropicToChatStream.js";
+import { makeChatToAnthropicStream } from "./stream/chatToAnthropicStream.js";
+import { makeAnthropicToResponsesStream } from "./stream/anthropicToResponsesStream.js";
+import { makeResponsesToAnthropicStream } from "./stream/responsesToAnthropicStream.js";
+import { makeChatToResponsesStream } from "./stream/chatToResponsesStream.js";
+import { makeResponsesToChatStream } from "./stream/responsesToChatStream.js";
+
+export interface StreamTranslateOptions {
+  /** Inject for deterministic tests (used by Anthropic→Chat/Responses). */
+  now?: () => number;
+}
+
+/** Erased translator type for the dispatch table. */
+export type AnyStreamTranslator = StreamTranslator<unknown, unknown>;
+
+/**
+ * Same-format passthrough — emits whatever it receives. Used by route
+ * handlers that don't need translation (client + upstream agree on
+ * format) but still want a uniform translator interface in the pipe.
+ */
+function makePassthroughStream<T>(): StreamTranslator<T, T> {
+  return {
+    onEvent: (e) => [e],
+    onEnd: () => [],
+    onError: () => [],
+  };
+}
+
+export const streamTranslators: Record<
+  Direction,
+  (opts?: StreamTranslateOptions) => AnyStreamTranslator
+> = {
+  "anthropic->anthropic": () =>
+    makePassthroughStream<AnthropicSSEEvent>() as AnyStreamTranslator,
+  "openai-chat->openai-chat": () =>
+    makePassthroughStream<ChatStreamInput>() as AnyStreamTranslator,
+  "openai-responses->openai-responses": () =>
+    makePassthroughStream<ResponsesSSEEvent>() as AnyStreamTranslator,
+
+  "anthropic->openai-chat": () =>
+    makeChatToAnthropicStream() as unknown as AnyStreamTranslator,
+  "anthropic->openai-responses": () =>
+    makeResponsesToAnthropicStream() as unknown as AnyStreamTranslator,
+
+  "openai-chat->anthropic": (opts) =>
+    makeAnthropicToChatStream(opts) as unknown as AnyStreamTranslator,
+  "openai-chat->openai-responses": (opts) =>
+    makeResponsesToChatStream(opts) as unknown as AnyStreamTranslator,
+
+  "openai-responses->anthropic": (opts) =>
+    makeAnthropicToResponsesStream(opts) as unknown as AnyStreamTranslator,
+  "openai-responses->openai-chat": (opts) =>
+    makeChatToResponsesStream(opts) as unknown as AnyStreamTranslator,
+};
+
+/**
+ * Constructs a fresh `StreamTranslator` state machine for the given
+ * `${client}->${upstream}` direction. Throws on an unknown direction
+ * key — see `translateRequest` for rationale.
+ */
+export function makeStreamTranslator(
+  client: Format,
+  upstream: Format,
+  opts: StreamTranslateOptions = {},
+): AnyStreamTranslator {
+  const direction: Direction = `${client}->${upstream}`;
+  const factory = streamTranslators[direction];
+  if (!factory) {
+    throw new Error(`unknown_translate_direction: ${direction}`);
+  }
+  return factory(opts);
+}
+
+// Re-export for callers that don't want to dig through `stream/*`.
+export type {
+  StreamTranslator,
+  StreamTranslatorFactory,
+} from "./stream/types.js";
+export type { ChatStreamOutput };
