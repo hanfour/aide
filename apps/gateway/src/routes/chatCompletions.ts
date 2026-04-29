@@ -3,6 +3,9 @@ import type { ServerEnv } from "@aide/config";
 import {
   translateOpenAIToAnthropic,
   translateAnthropicToOpenAI,
+  makeAnthropicToChatStream,
+  parseAnthropicSse,
+  type OpenAIStreamChunk,
 } from "@aide/gateway-core";
 import {
   runFailover,
@@ -44,15 +47,6 @@ export async function chatCompletionsRoutes(
         return;
       }
 
-      // TODO(part-6.7): streaming SSE support (translateAnthropicToOpenAIStream)
-      if (body.stream === true) {
-        reply.code(501).send({
-          error: "not_implemented",
-          detail: "streaming arrives in Part 6.7",
-        });
-        return;
-      }
-
       // Early-exit: model must be present before any DB/Redis work.
       if (typeof body.model !== "string" || body.model.length === 0) {
         reply.code(400).send({ error: "missing_model" });
@@ -72,7 +66,27 @@ export async function chatCompletionsRoutes(
       }
 
       const requestId = req.id;
-      const upstreamBodyBuf = Buffer.from(JSON.stringify(anthropicBody));
+      const isStream = body.stream === true;
+      // For the streaming path we need the upstream to also stream — set
+      // `stream: true` on the translated Anthropic body so
+      // `callUpstreamMessages` requests text/event-stream.
+      const upstreamBody = isStream
+        ? { ...anthropicBody, stream: true }
+        : anthropicBody;
+      const upstreamBodyBuf = Buffer.from(JSON.stringify(upstreamBody));
+
+      if (isStream) {
+        await runChatCompletionsStreamingFailover(
+          app,
+          opts,
+          req,
+          reply,
+          upstreamBodyBuf,
+          requestId,
+          body.model,
+        );
+        return;
+      }
 
       // Capture start time BEFORE the failover loop so durationMs includes
       // request translation + credential resolve + slot acquire + failover
@@ -248,4 +262,268 @@ export async function chatCompletionsRoutes(
       }
     },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Streaming path (Plan 5A PR 9a — completes 4A Part 6.7 TODO).
+//
+// Translates `stream: true` OpenAI Chat requests into streaming Anthropic
+// upstream calls, parses the Anthropic SSE event stream, runs each event
+// through `makeAnthropicToChatStream`, and serializes the OpenAI Chat
+// stream chunks back to the client as SSE bytes.
+// ---------------------------------------------------------------------------
+
+async function runChatCompletionsStreamingFailover(
+  app: FastifyInstance,
+  opts: ChatCompletionsRouteOptions,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  upstreamBodyBuf: Buffer,
+  requestId: string,
+  requestedModel: string,
+): Promise<void> {
+  reply.hijack();
+  const startedAtMs = Date.now();
+
+  // Wire AbortSignal from client disconnect so a hung upstream is cancelled.
+  const ac = new AbortController();
+  const onClose = () => ac.abort();
+  req.raw.once("close", onClose);
+
+  try {
+    await runFailover({
+      db: app.db,
+      orgId: req.apiKey!.orgId,
+      teamId: req.apiKey!.teamId,
+      maxSwitches: opts.env.GATEWAY_MAX_ACCOUNT_SWITCHES,
+      scheduler: app.gwScheduler,
+      attempt: async (account) => {
+        const acquired = await acquireSlot(
+          app.redis,
+          "account",
+          account.id,
+          requestId,
+          account.concurrency,
+          SLOT_DURATION_MS,
+        );
+        if (!acquired) {
+          throw { status: 503, message: "account_at_capacity" };
+        }
+
+        try {
+          let credential = await resolveCredential(app.db, account.id, {
+            masterKeyHex: opts.env.CREDENTIAL_ENCRYPTION_KEY!,
+          });
+          if (credential.type === "oauth") {
+            credential = await maybeRefreshOAuth(
+              app.db,
+              app.redis,
+              account.id,
+              credential,
+              {
+                masterKeyHex: opts.env.CREDENTIAL_ENCRYPTION_KEY!,
+                leadMinutes: opts.env.GATEWAY_OAUTH_REFRESH_LEAD_MIN,
+                maxFail: opts.env.GATEWAY_OAUTH_MAX_FAIL,
+              },
+            );
+          }
+
+          const upstream = await callUpstreamMessages({
+            baseUrl: opts.env.UPSTREAM_ANTHROPIC_BASE_URL,
+            body: upstreamBodyBuf,
+            credential,
+            signal: ac.signal,
+          });
+
+          if (upstream.kind !== "stream") {
+            // Upstream may legitimately return a non-streaming error
+            // body for 4xx/5xx — surface as a fatal failure with the
+            // upstream status so the failover loop classifies correctly.
+            throw {
+              status: upstream.status,
+              message:
+                upstream.status >= 400
+                  ? upstream.body.toString("utf8").slice(0, 500)
+                  : "expected_stream",
+            };
+          }
+
+          if (upstream.status < 200 || upstream.status >= 300) {
+            throw {
+              status: upstream.status,
+              message: `upstream_${upstream.status}`,
+            };
+          }
+
+          // Capture the final usage chunk (last chunk that carries
+          // `usage`) so we can emit a usage_log row with real token
+          // counts. The rest of the chunks are written to the client
+          // as soon as they arrive.
+          let lastUsageChunk: OpenAIStreamChunk | null = null;
+          if (!reply.raw.headersSent) {
+            reply.raw.writeHead(200, {
+              "content-type": "text/event-stream",
+              "cache-control": "no-cache",
+              connection: "keep-alive",
+            });
+          }
+
+          const translator = makeAnthropicToChatStream();
+          const flushChunk = (chunk: OpenAIStreamChunk | "[DONE]"): void => {
+            if (chunk === "[DONE]") {
+              reply.raw.write("data: [DONE]\n\n");
+              return;
+            }
+            if (chunk.usage) lastUsageChunk = chunk;
+            reply.raw.write(`data: ${JSON.stringify(chunk)}\n\n`);
+          };
+
+          try {
+            for await (const event of parseAnthropicSse(upstream.body, {
+              strict: false,
+              onError: (err) => {
+                req.log.warn(
+                  { requestId, err: err.message },
+                  "anthropic SSE parse error — skipping event",
+                );
+              },
+            })) {
+              for (const chunk of translator.onEvent(event)) {
+                flushChunk(chunk);
+              }
+            }
+            for (const chunk of translator.onEnd()) flushChunk(chunk);
+          } catch (err) {
+            for (const chunk of translator.onError({
+              kind: err instanceof Error ? err.name : "unknown",
+              message: err instanceof Error ? err.message : String(err),
+            })) {
+              flushChunk(chunk);
+            }
+          }
+
+          reply.raw.end();
+
+          // Emit usage_log + body capture using the captured final chunk.
+          // Convert the OpenAI usage shape back to a synthetic Anthropic
+          // response so emitUsageLog's pricing path works unchanged.
+          const upstreamResponse = lastUsageChunk
+            ? syntheticAnthropicResponse(lastUsageChunk)
+            : null;
+          await emitUsageLog({
+            app,
+            req,
+            requestedModel,
+            accountId: account.id,
+            upstreamResponse,
+            platform: "openai",
+            surface: "chat-completions",
+            statusCode: 200,
+            durationMs: Date.now() - startedAtMs,
+          });
+          await emitBodyCapture({
+            app,
+            req,
+            requestId,
+            requestBodyJson: upstreamBodyBuf.toString("utf8"),
+            responseBody: null,
+            stream: true,
+          });
+          return undefined as never;
+        } finally {
+          await releaseSlot(app.redis, "account", account.id, requestId).catch(
+            () => {
+              // Slot expires on its own.
+            },
+          );
+        }
+      },
+    });
+  } catch (err) {
+    if (
+      err instanceof AllUpstreamsFailed ||
+      err instanceof FatalUpstreamError
+    ) {
+      // Headers already sent (we wrote them on the first chunk attempt) →
+      // append a synthetic SSE error event.  If we never got far enough
+      // to write headers (failover blew up at credential resolution
+      // etc.), fall through to a JSON error response.
+      if (reply.raw.headersSent) {
+        reply.raw.write(
+          `data: ${JSON.stringify({
+            error:
+              err instanceof FatalUpstreamError
+                ? err.reason
+                : "all_upstreams_failed",
+            request_id: requestId,
+          })}\n\n`,
+        );
+        reply.raw.end();
+      } else {
+        reply.raw.writeHead(
+          err instanceof FatalUpstreamError ? err.statusCode : 503,
+          { "content-type": "application/json" },
+        );
+        reply.raw.end(
+          JSON.stringify({
+            error:
+              err instanceof FatalUpstreamError
+                ? err.reason
+                : "all_upstreams_failed",
+            request_id: requestId,
+          }),
+        );
+      }
+      return;
+    }
+    if (!reply.raw.headersSent) {
+      reply.raw.writeHead(500, { "content-type": "application/json" });
+      reply.raw.end(JSON.stringify({ error: "internal_error" }));
+    } else {
+      reply.raw.end();
+    }
+  } finally {
+    req.raw.removeListener("close", onClose);
+  }
+}
+
+/**
+ * Build a minimal Anthropic-shaped response object from the final OpenAI
+ * stream chunk's usage block, so `emitUsageLog`'s pricing path receives
+ * the same shape it would on the non-streaming hot path.  The fields
+ * outside `usage` are best-effort placeholders — pricing only reads
+ * `usage.input_tokens` / `usage.output_tokens` (cache fields default to
+ * 0 since the streaming Anthropic API doesn't surface them in the
+ * intermediate `message_delta` event we have access to here).
+ */
+function syntheticAnthropicResponse(chunk: OpenAIStreamChunk): {
+  id: string;
+  type: "message";
+  role: "assistant";
+  content: [];
+  model: string;
+  stop_reason: null;
+  stop_sequence: null;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens: 0;
+    cache_read_input_tokens: 0;
+  };
+} {
+  return {
+    id: chunk.id,
+    type: "message",
+    role: "assistant",
+    content: [],
+    model: chunk.model,
+    stop_reason: null,
+    stop_sequence: null,
+    usage: {
+      input_tokens: chunk.usage?.prompt_tokens ?? 0,
+      output_tokens: chunk.usage?.completion_tokens ?? 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    },
+  };
 }
