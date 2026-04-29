@@ -21,6 +21,31 @@ import { accountGroups } from "@aide/db";
 import type { Database } from "@aide/db";
 import type { Platform } from "@aide/gateway-core";
 
+// Mirror of the Platform union from `@aide/gateway-core` for runtime
+// validation. The `satisfies` ensures the literal stays in sync if the
+// type ever expands.
+const KNOWN_PLATFORMS = [
+  "anthropic",
+  "openai",
+  "gemini",
+  "antigravity",
+] as const satisfies readonly Platform[];
+
+function isPlatform(value: string): value is Platform {
+  return (KNOWN_PLATFORMS as readonly string[]).includes(value);
+}
+
+/**
+ * `account_groups.rate_multiplier` is a `decimal(10,4)` so drizzle
+ * surfaces it as a string. Defensive parse: any non-finite or non-
+ * positive value falls back to 1.0 so a bad row can't poison
+ * scheduler weighted-score math with NaN.
+ */
+function parseRateMultiplier(raw: string): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 1.0;
+}
+
 export interface GroupContext {
   /** Either an AccountGroups row id, or `legacy:<orgId>` for null group keys. */
   groupId: string;
@@ -69,10 +94,14 @@ export async function resolveGroupContext(
     .then((r) => r[0]);
 
   if (!row) return null;
+  // Reject rows whose `platform` doesn't match a known value — the
+  // column has no CHECK constraint, so a stray value would otherwise
+  // silently steer dispatch into a not-supported route.
+  if (!isPlatform(row.platform)) return null;
   return {
     groupId: row.id,
-    platform: row.platform as Platform,
-    rateMultiplier: Number(row.rateMultiplier),
+    platform: row.platform,
+    rateMultiplier: parseRateMultiplier(row.rateMultiplier),
     isExclusive: row.isExclusive,
     isLegacy: false,
   };

@@ -38,7 +38,15 @@ export interface ApiKeyAuthOptions {
 
 const PUBLIC_PATHS = new Set(["/health", "/metrics"]);
 
-export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(async (fastify, opts) => {
+export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(pluginBody, {
+  name: "apiKeyAuthPlugin",
+  dependencies: ["dbPlugin"],
+});
+
+async function pluginBody(
+  fastify: import("fastify").FastifyInstance,
+  opts: ApiKeyAuthOptions,
+): Promise<void> {
   fastify.decorateRequest("apiKey", null);
   fastify.decorateRequest("gwUser", null);
   fastify.decorateRequest("gwOrg", null);
@@ -132,7 +140,7 @@ export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(async (fastify, opts) => {
       retentionDaysOverride: row.org.retentionDaysOverride ?? null,
     };
   });
-});
+}
 
 function extractKey(headers: Record<string, unknown>): string | null {
   const auth = headers["authorization"];

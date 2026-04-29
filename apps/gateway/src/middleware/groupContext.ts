@@ -19,20 +19,28 @@ declare module "fastify" {
   }
 }
 
-export const groupContextPlugin = fp(async (fastify) => {
-  fastify.decorateRequest("gwGroupContext", null);
+export const groupContextPlugin = fp(
+  async (fastify) => {
+    fastify.decorateRequest("gwGroupContext", null);
 
-  fastify.addHook("preHandler", async (req, reply) => {
-    if (!req.apiKey) return; // public path or already-failed auth
+    fastify.addHook("preHandler", async (req, reply) => {
+      if (!req.apiKey) return; // public path or already-failed auth
 
-    const ctx = await resolveGroupContext(fastify.db, {
-      orgId: req.apiKey.orgId,
-      groupId: req.apiKey.groupId,
+      const ctx = await resolveGroupContext(fastify.db, {
+        orgId: req.apiKey.orgId,
+        groupId: req.apiKey.groupId,
+      });
+      if (!ctx) {
+        reply.code(403).send({ error: "group_not_found_or_disabled" });
+        return reply;
+      }
+      req.gwGroupContext = ctx;
     });
-    if (!ctx) {
-      reply.code(403).send({ error: "group_not_found_or_disabled" });
-      return reply;
-    }
-    req.gwGroupContext = ctx;
-  });
-});
+  },
+  {
+    name: "groupContextPlugin",
+    // Reads `fastify.db` + `req.apiKey`; reorder breaks loud here
+    // instead of silently producing wrong-state requests.
+    dependencies: ["dbPlugin", "apiKeyAuthPlugin"],
+  },
+);

@@ -61,7 +61,11 @@ declare module "fastify" {
   }
 }
 
-export const metricsPlugin = fp(async (fastify) => {
+export const metricsPlugin = fp(metricsPluginBody, { name: "metricsPlugin" });
+
+async function metricsPluginBody(
+  fastify: import("fastify").FastifyInstance,
+): Promise<void> {
   await fastify.register(fastifyMetrics, {
     endpoint: "/metrics",
     // Owns the prom-client default singleton; no other process module should register against it.
@@ -427,4 +431,4 @@ export const metricsPlugin = fp(async (fastify) => {
     gwSchedulerLoadSkew,
     gwSchedulerRuntimeAccountCount,
   });
-});
+}

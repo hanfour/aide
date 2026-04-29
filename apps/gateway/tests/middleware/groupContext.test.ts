@@ -32,16 +32,30 @@ function makeMockDb(rows: unknown[]) {
   return chain;
 }
 
+/** Stand-in for `dbPlugin` so groupContextPlugin's deps resolve. */
+function fakeDbPlugin(mockDb: unknown) {
+  return fp(
+    async (fastify) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      fastify.decorate("db", mockDb as any);
+    },
+    { name: "dbPlugin" },
+  );
+}
+
 /** Fake apiKeyAuth plugin so groupContext has something to read. */
 function fakeApiKeyAuth(apiKey: FixtureKey | null) {
-  return fp(async (fastify) => {
-    fastify.decorateRequest("apiKey", null);
-    fastify.addHook("preHandler", async (req) => {
-      // Mutating decorated request properties through `as never` keeps
-      // the TS types simple — production middleware does the same.
-      (req as unknown as { apiKey: FixtureKey | null }).apiKey = apiKey;
-    });
-  });
+  return fp(
+    async (fastify) => {
+      fastify.decorateRequest("apiKey", null);
+      fastify.addHook("preHandler", async (req) => {
+        // Mutating decorated request properties through `as never` keeps
+        // the TS types simple — production middleware does the same.
+        (req as unknown as { apiKey: FixtureKey | null }).apiKey = apiKey;
+      });
+    },
+    { name: "apiKeyAuthPlugin", dependencies: ["dbPlugin"] },
+  );
 }
 
 async function buildApp(opts: {
@@ -50,16 +64,13 @@ async function buildApp(opts: {
 }) {
   const app = Fastify({ logger: false });
   const mockDb = makeMockDb(opts.groupRows);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  app.decorate("db", mockDb as any);
 
+  await app.register(fakeDbPlugin(mockDb));
   await app.register(fakeApiKeyAuth(opts.apiKey));
   await app.register(groupContextPlugin);
 
   app.get("/echo", async (req) => {
-    const ctx = (
-      req as unknown as { gwGroupContext: unknown }
-    ).gwGroupContext;
+    const ctx = (req as unknown as { gwGroupContext: unknown }).gwGroupContext;
     return { ctx };
   });
 
