@@ -13,6 +13,9 @@ declare module "fastify" {
       orgId: string;
       userId: string;
       teamId: string | null;
+      // Plan 5A migration 0008. NULL = legacy 4A api key (no group binding);
+      // groupContext middleware synthesises a virtual group in that case.
+      groupId: string | null;
       quotaUsd: string;
       quotaUsedUsd: string;
     } | null;
@@ -117,6 +120,7 @@ export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(async (fastify, opts) => {
       orgId: row.apiKey.orgId,
       userId: row.apiKey.userId,
       teamId: row.apiKey.teamId,
+      groupId: row.apiKey.groupId,
       quotaUsd: row.apiKey.quotaUsd,
       quotaUsedUsd: row.apiKey.quotaUsedUsd,
     };
