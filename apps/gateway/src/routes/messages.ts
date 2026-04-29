@@ -163,6 +163,7 @@ async function runNonStreamFailover(
     orgId: req.apiKey!.orgId,
     teamId: req.apiKey!.teamId,
     maxSwitches: opts.env.GATEWAY_MAX_ACCOUNT_SWITCHES,
+    scheduler: app.gwScheduler,
     attempt: async (account: SelectedAccount) => {
       const acquired = await acquireSlot(
         app.redis,

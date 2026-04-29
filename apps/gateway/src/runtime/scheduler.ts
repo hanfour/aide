@@ -7,12 +7,13 @@
 //   Layer 2 — `session_hash` sticky        (Claude Code conversations)
 //   Layer 3 — load_balance with EWMA       (cold path / new sessions)
 //
-// Sticky layers require both a `groupId` (introduced in Plan 5A migration
-// 0008) and Redis. When either is absent — e.g. legacy api-keys without
-// `group_id`, or unit tests with no Redis client — we fall through to
-// Layer 3 directly. This preserves all 4A behaviour for callers that
-// haven't been migrated to group context yet (Part 8 wires `groupId` into
-// the routes).
+// Plus a "forced" path used when callers already know which account to
+// hit (e.g. probeAccount). Sticky layers require both a `groupId`
+// (introduced in Plan 5A migration 0008) and Redis. When either is
+// absent — e.g. legacy api-keys without `group_id`, or unit tests with
+// no Redis client — we fall through to Layer 3 directly. This preserves
+// all 4A behaviour for callers that haven't been migrated to group
+// context yet (Part 8 wires `groupId` into the routes).
 //
 // Concurrency-slot acquisition stays in the caller's `attempt` callback
 // for now (matches 4A); Part 8 will move it into the scheduler once the
@@ -34,7 +35,8 @@ import {
 export type ScheduleLayer =
   | "previous_response_id"
   | "session_hash"
-  | "load_balance";
+  | "load_balance"
+  | "forced";
 
 export interface ScheduleRequest {
   /** Org scope is always required for tenant isolation. */
@@ -54,12 +56,11 @@ export interface ScheduleRequest {
   /** Layer 2 sticky key (Claude Code / content hash). */
   sessionHash?: string;
   /**
-   * Forces a specific account when set; bypasses all 3 layers. Used by
-   * forward-deps that already know which account to hit (e.g. probeAccount).
+   * Forces a specific account when set; bypasses all 3 layers and
+   * surfaces as `layer: "forced"`. Used by callers that already know
+   * which account to hit (e.g. probeAccount).
    */
   stickyAccountId?: string;
-  /** Best-effort model gate; pricingLookup will reject mismatches downstream. */
-  requestedModel?: string;
   /** Accounts to filter out (failover already tried them). */
   excludedAccountIds?: ReadonlySet<string>;
 }
@@ -70,6 +71,8 @@ export interface ScheduleDecision {
   candidateCount: number;
   selectedAccountId: string;
   selectedAccountType: string;
+  /** Platform label for metric slicing (e.g. "anthropic", "openai"). */
+  platform: string;
   loadSkew: number;
   latencyMs: number;
 }
@@ -94,7 +97,7 @@ export interface SchedulerMetrics {
   recordSwitch(platform: string): void;
   recordLatency(platform: string, ms: number): void;
   recordLoadSkew(platform: string, skew: number): void;
-  recordRuntimeAccountCount(platform: string, count: number): void;
+  recordRuntimeAccountCount(count: number): void;
 }
 
 export class NoSchedulableAccountsError extends Error {
@@ -133,7 +136,7 @@ export interface CreateSchedulerOptions {
   redis?: Redis;
   /** Inject for tests so we can seed stats deterministically. */
   stats?: AccountRuntimeStats;
-  /** Optional metric sink — `plugins/metrics.ts` wires the production one. */
+  /** Optional metric sink — `plugins/scheduler.ts` wires the production one. */
   metrics?: SchedulerMetrics;
   /** Top-K candidates to weighted-random over in Layer 3. */
   topK?: number;
@@ -141,6 +144,11 @@ export interface CreateSchedulerOptions {
   now?: () => number;
   /** Inject for tests so weighted-random is deterministic. */
   random?: () => number;
+  /**
+   * Logger for sticky-read failures so a flaky Redis can't 500 the
+   * request — we fall through to Layer 3 instead. Defaults to silent.
+   */
+  onStickyError?: (err: unknown, layer: "resp" | "session") => void;
 }
 
 export function createScheduler(
@@ -151,6 +159,7 @@ export function createScheduler(
   const topK = opts.topK ?? DEFAULT_TOP_K;
   const now = opts.now ?? (() => Date.now());
   const random = opts.random ?? Math.random;
+  const onStickyError = opts.onStickyError ?? (() => {});
 
   return {
     async select(req: ScheduleRequest): Promise<ScheduleResult> {
@@ -160,8 +169,8 @@ export function createScheduler(
         redis: opts.redis,
         stats,
         topK,
-        now,
         random,
+        onStickyError,
         req,
       });
       const latencyMs = now() - t0;
@@ -169,12 +178,10 @@ export function createScheduler(
         ...result.decision,
         latencyMs,
       };
-      const platformLabel =
-        req.groupPlatform ?? result.account.platform ?? DEFAULT_PLATFORM_LABEL;
       metrics?.recordSelect(decision);
-      metrics?.recordLatency(platformLabel, latencyMs);
-      metrics?.recordLoadSkew(platformLabel, decision.loadSkew);
-      metrics?.recordRuntimeAccountCount(platformLabel, stats.size());
+      metrics?.recordLatency(decision.platform, latencyMs);
+      metrics?.recordLoadSkew(decision.platform, decision.loadSkew);
+      metrics?.recordRuntimeAccountCount(stats.size());
       return {
         account: result.account,
         decision,
@@ -198,8 +205,8 @@ interface InternalLayerInput {
   redis?: Redis;
   stats: AccountRuntimeStats;
   topK: number;
-  now: () => number;
   random: () => number;
+  onStickyError: (err: unknown, layer: "resp" | "session") => void;
   req: ScheduleRequest;
 }
 
@@ -209,24 +216,72 @@ interface InternalLayerResult {
   release: () => Promise<void>;
 }
 
+function platformOf(req: ScheduleRequest, account: ScheduledAccount): string {
+  return req.groupPlatform ?? account.platform ?? DEFAULT_PLATFORM_LABEL;
+}
+
+async function tryRespStickyRead(
+  redis: Redis,
+  groupId: string,
+  previousResponseId: string,
+  onErr: (err: unknown, layer: "resp" | "session") => void,
+): Promise<string | null> {
+  try {
+    return await getRespSticky(redis, groupId, previousResponseId);
+  } catch (err) {
+    onErr(err, "resp");
+    return null;
+  }
+}
+
+async function trySessionStickyRead(
+  redis: Redis,
+  groupId: string,
+  sessionHash: string,
+  onErr: (err: unknown, layer: "resp" | "session") => void,
+): Promise<string | null> {
+  try {
+    return await getSessionSticky(redis, groupId, sessionHash);
+  } catch (err) {
+    onErr(err, "session");
+    return null;
+  }
+}
+
+async function bindStickyKeys(
+  redis: Redis | undefined,
+  req: ScheduleRequest,
+  accountId: string,
+): Promise<void> {
+  if (!redis || !req.groupId) return;
+  if (req.previousResponseId) {
+    await setRespSticky(redis, req.groupId, req.previousResponseId, accountId);
+  }
+  if (req.sessionHash) {
+    await setSessionSticky(redis, req.groupId, req.sessionHash, accountId);
+  }
+}
+
 async function runLayers(
   input: InternalLayerInput,
 ): Promise<InternalLayerResult> {
-  const { db, redis, stats, topK, random, req } = input;
+  const { db, redis, stats, topK, random, onStickyError, req } = input;
   const excluded = req.excludedAccountIds ?? new Set<string>();
 
-  // Forced override (probeAccount, etc.). Bypasses all 3 layers.
+  // Forced override (probeAccount, etc.). Bypasses all 3 layers and is
+  // surfaced as its own layer so it doesn't pollute sticky-hit metrics.
   if (req.stickyAccountId && !excluded.has(req.stickyAccountId)) {
     const account = await loadSchedulableAccount(db, req.stickyAccountId, req);
     if (account) {
       return {
         account,
         decision: {
-          layer: "previous_response_id",
-          stickyHit: true,
+          layer: "forced",
+          stickyHit: false,
           candidateCount: 1,
           selectedAccountId: account.id,
           selectedAccountType: account.type,
+          platform: platformOf(req, account),
           loadSkew: 0,
         },
         release: noopRelease,
@@ -236,10 +291,11 @@ async function runLayers(
 
   // Layer 1 — previous_response_id sticky (groupId + redis required)
   if (redis && req.groupId && req.previousResponseId) {
-    const cachedAccountId = await getRespSticky(
+    const cachedAccountId = await tryRespStickyRead(
       redis,
       req.groupId,
       req.previousResponseId,
+      onStickyError,
     );
     if (cachedAccountId && !excluded.has(cachedAccountId)) {
       const account = await loadSchedulableAccount(db, cachedAccountId, {
@@ -247,13 +303,10 @@ async function runLayers(
         groupId: req.groupId,
       });
       if (account) {
-        // Refresh TTL on hit so an active conversation keeps its binding alive.
-        await setRespSticky(
-          redis,
-          req.groupId,
-          req.previousResponseId,
-          account.id,
-        );
+        // Refresh both keys on hit so a request stream that occasionally
+        // drops `previous_response_id` still lands on the same account
+        // via Layer 2 next time round.
+        await bindStickyKeys(redis, req, account.id);
         return {
           account,
           decision: {
@@ -262,6 +315,7 @@ async function runLayers(
             candidateCount: 1,
             selectedAccountId: account.id,
             selectedAccountType: account.type,
+            platform: platformOf(req, account),
             loadSkew: 0,
           },
           release: noopRelease,
@@ -272,10 +326,11 @@ async function runLayers(
 
   // Layer 2 — session_hash sticky (groupId + redis required)
   if (redis && req.groupId && req.sessionHash) {
-    const cachedAccountId = await getSessionSticky(
+    const cachedAccountId = await trySessionStickyRead(
       redis,
       req.groupId,
       req.sessionHash,
+      onStickyError,
     );
     if (cachedAccountId && !excluded.has(cachedAccountId)) {
       const account = await loadSchedulableAccount(db, cachedAccountId, {
@@ -283,7 +338,7 @@ async function runLayers(
         groupId: req.groupId,
       });
       if (account) {
-        await setSessionSticky(redis, req.groupId, req.sessionHash, account.id);
+        await bindStickyKeys(redis, req, account.id);
         return {
           account,
           decision: {
@@ -292,6 +347,7 @@ async function runLayers(
             candidateCount: 1,
             selectedAccountId: account.id,
             selectedAccountType: account.type,
+            platform: platformOf(req, account),
             loadSkew: 0,
           },
           release: noopRelease,
@@ -324,7 +380,7 @@ async function runLayers(
     const totalWeight = top.reduce((sum, s) => sum + s.weight, 0);
     selectedAccount = top[0]!.account;
     if (totalWeight > 0) {
-      const r = random() * totalWeight;
+      const r = Math.max(0, random()) * totalWeight;
       let acc = 0;
       for (const s of top) {
         acc += s.weight;
@@ -341,35 +397,27 @@ async function runLayers(
     selectedAccount = candidates[0]!;
   }
 
-  // Bind sticky on first miss so subsequent requests with the same hash land
-  // on the same account (Layer 2 contract).
-  if (redis && req.groupId && req.sessionHash) {
-    await setSessionSticky(
-      redis,
-      req.groupId,
-      req.sessionHash,
-      selectedAccount.id,
-    );
-  }
-  if (redis && req.groupId && req.previousResponseId) {
-    await setRespSticky(
-      redis,
-      req.groupId,
-      req.previousResponseId,
-      selectedAccount.id,
-    );
-  }
+  await bindStickyKeys(redis, req, selectedAccount.id);
 
   const loadSkew = computeLoadSkew(scored.map((s) => s.weight));
+  const account: ScheduledAccount = {
+    id: selectedAccount.id,
+    concurrency: selectedAccount.concurrency,
+    platform: selectedAccount.platform,
+    type: selectedAccount.type,
+    priority: selectedAccount.priority,
+    groupId: selectedAccount.groupId,
+  };
 
   return {
-    account: selectedAccount,
+    account,
     decision: {
       layer: "load_balance",
       stickyHit: false,
       candidateCount: candidates.length,
-      selectedAccountId: selectedAccount.id,
-      selectedAccountType: selectedAccount.type,
+      selectedAccountId: account.id,
+      selectedAccountType: account.type,
+      platform: platformOf(req, account),
       loadSkew,
     },
     release: noopRelease,
@@ -380,9 +428,15 @@ const noopRelease = async () => {};
 
 function computeLoadSkew(weights: readonly number[]): number {
   if (weights.length === 0) return 0;
-  const max = Math.max(...weights);
-  const min = Math.min(...weights);
-  const mean = weights.reduce((a, b) => a + b, 0) / weights.length;
+  let max = -Infinity;
+  let min = Infinity;
+  let sum = 0;
+  for (const w of weights) {
+    if (w > max) max = w;
+    if (w < min) min = w;
+    sum += w;
+  }
+  const mean = sum / weights.length;
   if (mean === 0) return 0;
   return (max - min) / mean;
 }
@@ -396,14 +450,13 @@ interface CandidateRow {
   groupId: string | null;
 }
 
-async function listSchedulableCandidates(
-  db: Database,
-  req: ScheduleRequest,
-  excluded: ReadonlySet<string>,
-): Promise<CandidateRow[]> {
-  const nowDate = new Date();
-  const baseConditions = [
-    eq(upstreamAccounts.orgId, req.orgId),
+/**
+ * Predicates shared by `listSchedulableCandidates` + `loadSchedulableAccount`.
+ * Encapsulates the "schedulable now" definition (active, not deleted, not
+ * rate-limited / overloaded / temp-unschedulable).
+ */
+function buildSchedulablePredicates(nowDate: Date) {
+  return [
     isNull(upstreamAccounts.deletedAt),
     eq(upstreamAccounts.schedulable, true),
     eq(upstreamAccounts.status, "active"),
@@ -419,15 +472,35 @@ async function listSchedulableCandidates(
       isNull(upstreamAccounts.tempUnschedulableUntil),
       lt(upstreamAccounts.tempUnschedulableUntil, nowDate),
     ),
-  ] as Parameters<typeof and>;
+  ] as const;
+}
 
+function teamPredicateFor(teamId: string | null) {
+  return teamId
+    ? or(
+        eq(upstreamAccounts.teamId, teamId),
+        isNull(upstreamAccounts.teamId),
+      )
+    : isNull(upstreamAccounts.teamId);
+}
+
+async function listSchedulableCandidates(
+  db: Database,
+  req: ScheduleRequest,
+  excluded: ReadonlySet<string>,
+): Promise<CandidateRow[]> {
+  const nowDate = new Date();
+  const baseConditions = [
+    eq(upstreamAccounts.orgId, req.orgId),
+    ...buildSchedulablePredicates(nowDate),
+  ];
   if (excluded.size > 0) {
     baseConditions.push(notInArray(upstreamAccounts.id, [...excluded]));
   }
 
   if (req.groupId) {
-    // Group-based selection: join via account_group_members; the account's
-    // priority within the group overrides the row-level priority.
+    // Group-based selection: join via account_group_members; the group's
+    // priority within the membership row overrides the row-level priority.
     const rows = await db
       .select({
         id: upstreamAccounts.id,
@@ -437,9 +510,6 @@ async function listSchedulableCandidates(
         rowPriority: upstreamAccounts.priority,
         groupId: accountGroupMembers.groupId,
         groupPriority: accountGroupMembers.priority,
-        groupPlatform: accountGroups.platform,
-        groupStatus: accountGroups.status,
-        groupDeletedAt: accountGroups.deletedAt,
       })
       .from(upstreamAccounts)
       .innerJoin(
@@ -455,7 +525,7 @@ async function listSchedulableCandidates(
           eq(accountGroupMembers.groupId, req.groupId),
           eq(accountGroups.status, "active"),
           isNull(accountGroups.deletedAt),
-          ...(baseConditions as unknown as Parameters<typeof and>),
+          ...baseConditions,
         ),
       );
 
@@ -473,13 +543,6 @@ async function listSchedulableCandidates(
 
   // Legacy org/team selection (no group). Mirrors selectAccount.ts shape so
   // existing failoverLoop callsites keep their semantics.
-  const teamPredicate = req.teamId
-    ? or(
-        eq(upstreamAccounts.teamId, req.teamId),
-        isNull(upstreamAccounts.teamId),
-      )
-    : isNull(upstreamAccounts.teamId);
-
   const rows = await db
     .select({
       id: upstreamAccounts.id,
@@ -489,12 +552,7 @@ async function listSchedulableCandidates(
       priority: upstreamAccounts.priority,
     })
     .from(upstreamAccounts)
-    .where(
-      and(
-        teamPredicate,
-        ...(baseConditions as unknown as Parameters<typeof and>),
-      ),
-    )
+    .where(and(teamPredicateFor(req.teamId), ...baseConditions))
     .orderBy(
       // Mirror selectAccount.ts: team-scoped (teamId IS NOT NULL) before
       // org-level, then priority asc, then NULLS-FIRST lastUsedAt.
@@ -522,22 +580,8 @@ async function loadSchedulableAccount(
   const conditions = [
     eq(upstreamAccounts.id, accountId),
     eq(upstreamAccounts.orgId, req.orgId),
-    isNull(upstreamAccounts.deletedAt),
-    eq(upstreamAccounts.schedulable, true),
-    eq(upstreamAccounts.status, "active"),
-    or(
-      isNull(upstreamAccounts.rateLimitedAt),
-      lt(upstreamAccounts.rateLimitResetAt, nowDate),
-    ),
-    or(
-      isNull(upstreamAccounts.overloadUntil),
-      lt(upstreamAccounts.overloadUntil, nowDate),
-    ),
-    or(
-      isNull(upstreamAccounts.tempUnschedulableUntil),
-      lt(upstreamAccounts.tempUnschedulableUntil, nowDate),
-    ),
-  ] as Parameters<typeof and>;
+    ...buildSchedulablePredicates(nowDate),
+  ];
 
   if (req.groupId) {
     // Validate membership in the requested group.
@@ -555,12 +599,7 @@ async function loadSchedulableAccount(
         accountGroupMembers,
         eq(accountGroupMembers.accountId, upstreamAccounts.id),
       )
-      .where(
-        and(
-          eq(accountGroupMembers.groupId, req.groupId),
-          ...(conditions as unknown as Parameters<typeof and>),
-        ),
-      )
+      .where(and(eq(accountGroupMembers.groupId, req.groupId), ...conditions))
       .limit(1);
     const row = rows[0];
     if (!row) return null;
@@ -574,6 +613,8 @@ async function loadSchedulableAccount(
     };
   }
 
+  // Legacy single-account lookup must respect teamPredicate so a forced
+  // override can't bypass team isolation.
   const rows = await db
     .select({
       id: upstreamAccounts.id,
@@ -583,7 +624,7 @@ async function loadSchedulableAccount(
       priority: upstreamAccounts.priority,
     })
     .from(upstreamAccounts)
-    .where(and(...(conditions as unknown as Parameters<typeof and>)))
+    .where(and(teamPredicateFor(req.teamId), ...conditions))
     .limit(1);
   const row = rows[0];
   if (!row) return null;

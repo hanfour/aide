@@ -52,7 +52,7 @@ export interface GatewayMetrics {
   gwSchedulerAccountSwitchTotal: Counter<"platform">;
   gwSchedulerLatencyMs: Histogram<"platform">;
   gwSchedulerLoadSkew: Gauge<"platform">;
-  gwSchedulerRuntimeAccountCount: Gauge<"platform">;
+  gwSchedulerRuntimeAccountCount: Gauge<string>;
 }
 
 declare module "fastify" {
@@ -359,10 +359,10 @@ export const metricsPlugin = fp(async (fastify) => {
 
   const gwSchedulerRuntimeAccountCount = new Gauge({
     name: "gw_scheduler_runtime_account_count",
-    help: "Accounts currently tracked in the scheduler EWMA stats",
-    labelNames: ["platform"] as const,
+    help: "Accounts currently tracked in the scheduler EWMA stats (global)",
     registers: [register],
   });
+  gwSchedulerRuntimeAccountCount.set(0);
 
   // Materialize zero values so unlabeled metrics appear in scrape output
   waitQueueDepth.set(0);

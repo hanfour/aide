@@ -113,6 +113,19 @@ export async function runFailover<T>(input: RunFailoverInput<T>): Promise<T> {
     const { account, release } = scheduled;
     let exhaustedSameAccount = false;
 
+    // Common bookkeeping for "give up on this account": record the EWMA
+    // failure, log the switch, push the id onto the failed list, free
+    // the slot. Used by switch_account, exhausted-retries, and fatal.
+    const giveUp = async (markSwitch: boolean): Promise<void> => {
+      scheduler.reportResult(account.id, false);
+      if (markSwitch) {
+        scheduler.reportSwitch(account.platform);
+        failed.push(account.id);
+        failedSet.add(account.id);
+      }
+      await release();
+    };
+
     for (let retry = 0; retry <= MAX_SAME_ACCOUNT_RETRIES; retry++) {
       try {
         const result = await input.attempt({
@@ -134,8 +147,7 @@ export async function runFailover<T>(input: RunFailoverInput<T>): Promise<T> {
               action.stateUpdate,
             );
           }
-          scheduler.reportResult(account.id, false);
-          await release();
+          await giveUp(false);
           throw new FatalUpstreamError(
             action.statusCode,
             action.reason,
@@ -160,22 +172,14 @@ export async function runFailover<T>(input: RunFailoverInput<T>): Promise<T> {
             action.stateUpdate,
           );
         }
-        scheduler.reportResult(account.id, false);
-        scheduler.reportSwitch(account.platform);
-        failed.push(account.id);
-        failedSet.add(account.id);
-        await release();
+        await giveUp(true);
         break;
       }
     }
 
     if (exhaustedSameAccount) {
       // 3 retries on connection/timeout exhausted — try a different account.
-      scheduler.reportResult(account.id, false);
-      scheduler.reportSwitch(account.platform);
-      failed.push(account.id);
-      failedSet.add(account.id);
-      await release();
+      await giveUp(true);
     }
   }
 

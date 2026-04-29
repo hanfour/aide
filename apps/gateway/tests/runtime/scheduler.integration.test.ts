@@ -1,17 +1,11 @@
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  beforeEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
 } from "@testcontainers/postgresql";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { eq } from "drizzle-orm";
 import pg from "pg";
 import RedisMock from "ioredis-mock";
 import type { Redis } from "ioredis";
@@ -99,9 +93,7 @@ async function attachToGroup(
   groupId: string,
   priority = 50,
 ) {
-  await db
-    .insert(accountGroupMembers)
-    .values({ accountId, groupId, priority });
+  await db.insert(accountGroupMembers).values({ accountId, groupId, priority });
 }
 
 function newRedis(): Redis {
@@ -109,7 +101,11 @@ function newRedis(): Redis {
 }
 
 function buildScheduler(
-  opts: { redis?: Redis; random?: () => number; stats?: AccountRuntimeStats } = {},
+  opts: {
+    redis?: Redis;
+    random?: () => number;
+    stats?: AccountRuntimeStats;
+  } = {},
 ): AccountScheduler {
   return createScheduler({
     db: db as never,
@@ -384,6 +380,147 @@ describe("scheduler.select — legacy (no groupId) behaviour", () => {
     expect(r1.account.id).toBe(acctA.id);
     expect(r2.account.id).toBe(acctA.id);
     expect(r1.decision.layer).toBe("load_balance");
+  });
+});
+
+describe("scheduler.select — review gap coverage", () => {
+  it("falls through to Layer 3 when Layer 1 cache points at a deleted account", async () => {
+    const redis = newRedis();
+    const group = await seedGroup();
+    const acctStale = await seedAccount({ name: "stale", priority: 10 });
+    const acctLive = await seedAccount({ name: "live", priority: 10 });
+    await attachToGroup(acctStale.id, group.id, 10);
+    await attachToGroup(acctLive.id, group.id, 10);
+    await redis.set(
+      `sticky:resp:${group.id}:resp-stale`,
+      acctStale.id,
+      "EX",
+      3600,
+    );
+
+    // Tombstone the cached account after the sticky was written.
+    await db
+      .update(upstreamAccounts)
+      .set({ deletedAt: new Date() })
+      .where(eq(upstreamAccounts.id, acctStale.id));
+
+    const scheduler = buildScheduler({ redis });
+    const result = await scheduler.select({
+      orgId,
+      teamId: null,
+      groupId: group.id,
+      previousResponseId: "resp-stale",
+    });
+
+    expect(result.decision.layer).toBe("load_balance");
+    expect(result.account.id).toBe(acctLive.id);
+  });
+
+  it("stickyAccountId override surfaces as layer='forced' and bypasses sticky lookup", async () => {
+    const redis = newRedis();
+    const group = await seedGroup();
+    const acctOverride = await seedAccount({ name: "forced", priority: 10 });
+    const acctOther = await seedAccount({ name: "other", priority: 1 });
+    await attachToGroup(acctOverride.id, group.id, 10);
+    await attachToGroup(acctOther.id, group.id, 1);
+    // Even with a sticky pointing somewhere else, the override wins.
+    await redis.set(
+      `sticky:resp:${group.id}:any-resp`,
+      acctOther.id,
+      "EX",
+      3600,
+    );
+
+    const scheduler = buildScheduler({ redis });
+    const result = await scheduler.select({
+      orgId,
+      teamId: null,
+      groupId: group.id,
+      previousResponseId: "any-resp",
+      stickyAccountId: acctOverride.id,
+    });
+
+    expect(result.decision.layer).toBe("forced");
+    expect(result.decision.stickyHit).toBe(false);
+    expect(result.account.id).toBe(acctOverride.id);
+  });
+
+  it("loadSchedulableAccount rejects cross-org accounts even when the cache hits", async () => {
+    // Two orgs in the same DB; the cache could in theory be poisoned with
+    // an account belonging to the wrong tenant.
+    const [otherOrg] = await db
+      .insert(organizations)
+      .values({ slug: `cross-${Date.now()}`, name: "Cross Org" })
+      .returning();
+
+    const redis = newRedis();
+    const group = await seedGroup();
+    const fallback = await seedAccount({ name: "fallback", priority: 10 });
+    await attachToGroup(fallback.id, group.id, 10);
+
+    // An account belonging to a different org.
+    const [foreign] = await db
+      .insert(upstreamAccounts)
+      .values({
+        ...baseAccount,
+        orgId: otherOrg!.id,
+        name: "foreign",
+        priority: 1,
+      })
+      .returning();
+    await redis.set(
+      `sticky:resp:${group.id}:cross-tenant`,
+      foreign!.id,
+      "EX",
+      3600,
+    );
+
+    const scheduler = buildScheduler({ redis });
+    const result = await scheduler.select({
+      orgId, // request scoped to the original org
+      teamId: null,
+      groupId: group.id,
+      previousResponseId: "cross-tenant",
+    });
+
+    // Foreign account is filtered out by the orgId predicate; falls
+    // through to Layer 3 + picks the in-org account.
+    expect(result.account.id).toBe(fallback.id);
+    expect(result.decision.layer).toBe("load_balance");
+  });
+
+  it("falls through gracefully when the sticky read throws (Redis flake)", async () => {
+    const group = await seedGroup();
+    const acct = await seedAccount({ name: "live", priority: 10 });
+    await attachToGroup(acct.id, group.id, 10);
+
+    const flakyRedis = newRedis();
+    // Force `get` to reject so getRespSticky / getSessionSticky throw.
+    (flakyRedis as unknown as { get: () => Promise<string | null> }).get = () =>
+      Promise.reject(new Error("redis is on fire"));
+
+    const stickyErrors: Array<{ layer: string }> = [];
+    const scheduler = createScheduler({
+      db: db as never,
+      redis: flakyRedis,
+      onStickyError: (_err, layer) => stickyErrors.push({ layer }),
+    });
+
+    const result = await scheduler.select({
+      orgId,
+      teamId: null,
+      groupId: group.id,
+      previousResponseId: "any",
+      sessionHash: "any",
+    });
+
+    expect(result.decision.layer).toBe("load_balance");
+    expect(result.account.id).toBe(acct.id);
+    // Both sticky reads failed and surfaced via the error hook.
+    expect(stickyErrors.map((e) => e.layer).sort()).toEqual([
+      "resp",
+      "session",
+    ]);
   });
 });
 
