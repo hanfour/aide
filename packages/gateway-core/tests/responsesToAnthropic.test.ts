@@ -279,13 +279,9 @@ describe("translateResponsesToAnthropic — tools + tool_choice", () => {
     ]);
   });
 
-  it("tool_choice 'auto'/'none' → {type:auto}; 'required' → {type:any}; function:name → {type:tool, name}", () => {
+  it("tool_choice 'auto' → {type:auto}; 'required' → {type:any}; function:name → {type:tool, name}", () => {
     expect(
       translateResponsesToAnthropic(baseReq({ tool_choice: "auto" }))
-        .tool_choice,
-    ).toEqual({ type: "auto" });
-    expect(
-      translateResponsesToAnthropic(baseReq({ tool_choice: "none" }))
         .tool_choice,
     ).toEqual({ type: "auto" });
     expect(
@@ -297,6 +293,26 @@ describe("translateResponsesToAnthropic — tools + tool_choice", () => {
         baseReq({ tool_choice: { type: "function", name: "weather" } }),
       ).tool_choice,
     ).toEqual({ type: "tool", name: "weather" });
+  });
+
+  it("tool_choice 'none' DROPS the `tools` field entirely (Anthropic has no 'none'; honour OpenAI semantics by removing the tools advertisement)", () => {
+    const out = translateResponsesToAnthropic(
+      baseReq({
+        tools: [
+          {
+            type: "function",
+            name: "weather",
+            parameters: { type: "object" },
+          },
+        ],
+        tool_choice: "none",
+      }),
+    );
+    // `tools` is removed AND tool_choice is not set.  The model receives
+    // a request with no tool capability — the only honest mapping of
+    // OpenAI's "none" semantics into Anthropic's API.
+    expect(out.tools).toBeUndefined();
+    expect(out.tool_choice).toBeUndefined();
   });
 });
 

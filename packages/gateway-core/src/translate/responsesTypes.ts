@@ -87,24 +87,28 @@ export const ResponsesToolChoiceSchema = z.union([
 
 // ── Request ──────────────────────────────────────────────────────────────────
 
-export const ResponsesRequestSchema = z.object({
-  model: z.string().min(1),
-  input: z.union([z.string(), z.array(ResponsesInputItemSchema)]),
-  instructions: z.string().optional(),
-  max_output_tokens: z.number().int().positive().optional(),
-  temperature: z.number().min(0).max(2).optional(),
-  top_p: z.number().min(0).max(1).optional(),
-  tools: z.array(ResponsesToolSchema).optional(),
-  tool_choice: ResponsesToolChoiceSchema.optional(),
-  stream: z.boolean().optional(),
-  /**
-   * Per design A6 — client-supplied `previous_response_id` is allowed
-   * (the gateway uses it for sticky scheduling in Part 7) but `store`
-   * is rejected (we don't persist responses upstream-side; everything
-   * lives in usage_logs).
-   */
-  previous_response_id: z.string().optional(),
-});
+export const ResponsesRequestSchema = z
+  .object({
+    model: z.string().min(1),
+    input: z.union([z.string(), z.array(ResponsesInputItemSchema)]),
+    instructions: z.string().optional(),
+    max_output_tokens: z.number().int().positive().optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    top_p: z.number().min(0).max(1).optional(),
+    tools: z.array(ResponsesToolSchema).optional(),
+    tool_choice: ResponsesToolChoiceSchema.optional(),
+    stream: z.boolean().optional(),
+    /**
+     * Per design A6 — client-supplied `previous_response_id` is allowed
+     * (the gateway uses it for sticky scheduling in Part 7) but `store`
+     * is rejected by `.strict()` below: any unknown key (including
+     * `store`, `parallel_tool_calls`, `reasoning`, etc.) raises a zod
+     * error so the route handler can return HTTP 400
+     * `unsupported_feature` rather than silently dropping fields.
+     */
+    previous_response_id: z.string().optional(),
+  })
+  .strict();
 
 export type ResponsesRequest = z.infer<typeof ResponsesRequestSchema>;
 export type ResponsesInputItem = z.infer<typeof ResponsesInputItemSchema>;

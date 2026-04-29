@@ -1,5 +1,4 @@
 import type {
-  AnthropicContentBlock,
   AnthropicMessage,
   AnthropicMessagesRequest,
   AnthropicToolChoice,
@@ -176,7 +175,3 @@ function translateToolChoice(choice: AnthropicToolChoice): OpenAIToolChoice {
       return { type: "function", function: { name: choice.name } };
   }
 }
-
-// We intentionally use AnthropicContentBlock from the import set so the
-// switch exhaustiveness check in translateMessage compiles cleanly.
-type _UseAll = AnthropicContentBlock;

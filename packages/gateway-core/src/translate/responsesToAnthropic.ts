@@ -30,7 +30,13 @@ import type {
 //                              tool_use block on assistant; `function_call_output`
 //                              becomes a tool_result block on user)
 //   - `tools`                → `tools`
-//   - `tool_choice` 'required' → `{ type: 'any' }`; 'function:name' → `{ type:'tool', name }`
+//   - `tool_choice`:
+//       'auto'      → { type: 'auto' }
+//       'none'      → tools field DROPPED (Anthropic has no 'none'; the
+//                     only way to honour 'don't call any tool' is to not
+//                     advertise any)
+//       'required'  → { type: 'any' }
+//       function:N  → { type: 'tool', name: N }
 //   - `max_output_tokens`    → `max_tokens`
 //   - `temperature`/`top_p`/`stream` → carry through
 //
@@ -39,9 +45,23 @@ import type {
 //     uses it) but the field has no Anthropic counterpart and is dropped
 //     here.  The route handler is the layer that observes it for the
 //     scheduler before invoking translation.
-//   - `store=true` (we don't observe it; gateway never persists upstream)
+//   - `store=true` is now rejected by `ResponsesRequestSchema.strict()`
+//     at the schema layer, so the translator never sees it.
 
 const DEFAULT_MAX_TOKENS = 4096;
+
+const ALLOWED_IMAGE_MEDIA_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+] as const);
+
+type AllowedImageMediaType =
+  | "image/jpeg"
+  | "image/png"
+  | "image/gif"
+  | "image/webp";
 
 export function translateResponsesToAnthropic(
   body: ResponsesRequest,
@@ -60,7 +80,15 @@ export function translateResponsesToAnthropic(
     out.tools = body.tools.map(translateTool);
   }
   if (body.tool_choice !== undefined) {
-    out.tool_choice = translateToolChoice(body.tool_choice);
+    const tc = translateToolChoice(body.tool_choice);
+    if (tc.dropTools) {
+      // 'none' semantics: don't advertise any tool to the model.  Drop
+      // both the tools array and any tool_choice — Anthropic with no
+      // tools and no tool_choice can't invoke tools.
+      delete out.tools;
+    } else if (tc.tool_choice) {
+      out.tool_choice = tc.tool_choice;
+    }
   }
 
   return out;
@@ -90,73 +118,128 @@ function translateInputToMessages(
     openBlocks = [];
   };
 
+  const ctx: MessageItemContext = {
+    getOpenRole: () => openRole,
+    flush,
+    setOpenRole: (r) => {
+      openRole = r;
+    },
+    appendBlocks: (b) => openBlocks.push(...b),
+  };
+
   for (const item of input) {
-    if ("type" in item && item.type === "function_call") {
-      // Assistant turn — emit alongside any pending assistant text.
-      const block: AnthropicContentBlock = {
-        type: "tool_use",
-        id: item.call_id,
-        name: item.name,
-        input: parseFunctionArguments(item.arguments),
-      };
-      if (openRole !== "assistant") flush();
-      openRole = "assistant";
-      openBlocks.push(block);
+    // Older clients sometimes omit the `type` discriminator on plain
+    // message items (the schema declares it `optional()`); treat both
+    // `undefined` and the explicit "message" tag as message items.
+    // After this guard, item narrows to function_call | function_call_output
+    // and the switch's `never` exhaustiveness check fires on any new
+    // input-item variant added to the schema.
+    if (item.type === undefined || item.type === "message") {
+      handleMessageItem(item, ctx);
       continue;
     }
 
-    if ("type" in item && item.type === "function_call_output") {
-      // User turn — submitting a tool result back to the model.
-      const block: AnthropicContentBlock = {
-        type: "tool_result",
-        tool_use_id: item.call_id,
-        content: item.output,
-      };
-      if (openRole !== "user") flush();
-      openRole = "user";
-      openBlocks.push(block);
-      continue;
+    // The message branch is peeled off above.  Cast to the remaining
+    // union members so TS can narrow inside the switch — the optional
+    // discriminator on the message variant prevents normal narrowing
+    // across the early-return.
+    const fnItem = item as Exclude<ResponsesInputItem, ResponsesInputMessage>;
+    switch (fnItem.type) {
+      case "function_call": {
+        const block: AnthropicContentBlock = {
+          type: "tool_use",
+          id: fnItem.call_id,
+          name: fnItem.name,
+          input: parseFunctionArguments(fnItem.arguments),
+        };
+        if (openRole !== "assistant") flush();
+        openRole = "assistant";
+        openBlocks.push(block);
+        break;
+      }
+      case "function_call_output": {
+        const block: AnthropicContentBlock = {
+          type: "tool_result",
+          tool_use_id: fnItem.call_id,
+          content: fnItem.output,
+        };
+        if (openRole !== "user") flush();
+        openRole = "user";
+        openBlocks.push(block);
+        break;
+      }
+      default: {
+        // Exhaustiveness — adding a new non-message ResponsesInputItem
+        // variant breaks compilation here until handled.
+        const _exhaust: never = fnItem;
+        throw new BodyTranslationError(
+          "responses_unknown_input_item_type",
+          `unknown input item type: ${(_exhaust as { type?: string }).type ?? "<missing>"}`,
+        );
+      }
     }
-
-    // Otherwise it's a `message` (the discriminator may be implicit on
-    // older clients — fall through to treat as message).
-    const msg = item as ResponsesInputMessage;
-    if (msg.role === "system") {
-      // Per design — Responses-format `system`-role input items at the
-      // top of `input` are an alternative to `instructions`.  Anthropic's
-      // shape doesn't support per-message system; we lift to `system`
-      // (or merge into existing) at the request level instead.
-      throw new BodyTranslationError(
-        "responses_input_system_role_unsupported",
-        "system-role messages in `input` are not supported; pass `instructions` at the request level instead",
-      );
-    }
-
-    const role: AnthropicMessage["role"] = msg.role;
-    if (openRole !== role) flush();
-    openRole = role;
-    appendMessageContent(openBlocks, msg.content);
   }
 
   flush();
   return messages;
 }
 
-function appendMessageContent(
-  blocks: AnthropicContentBlock[],
-  content: string | ResponsesInputContent[],
+interface MessageItemContext {
+  getOpenRole: () => AnthropicMessage["role"] | null;
+  flush: () => void;
+  setOpenRole: (r: AnthropicMessage["role"]) => void;
+  appendBlocks: (b: AnthropicContentBlock[]) => void;
+}
+
+function handleMessageItem(
+  msg: ResponsesInputMessage,
+  ctx: MessageItemContext,
 ): void {
-  if (typeof content === "string") {
-    blocks.push({ type: "text", text: content });
-    return;
+  if (msg.role === "system") {
+    throw new BodyTranslationError(
+      "responses_input_system_role_unsupported",
+      "system-role messages in `input` are not supported; pass `instructions` at the request level instead",
+    );
   }
+
+  const role: AnthropicMessage["role"] = msg.role;
+  if (ctx.getOpenRole() !== role) ctx.flush();
+  ctx.setOpenRole(role);
+  ctx.appendBlocks(translateMessageContent(msg.content));
+}
+
+function translateMessageContent(
+  content: string | ResponsesInputContent[],
+): AnthropicContentBlock[] {
+  if (typeof content === "string") {
+    return [{ type: "text", text: content } satisfies AnthropicTextBlock];
+  }
+
+  const blocks: AnthropicContentBlock[] = [];
   for (const part of content) {
-    if (part.type === "input_text" || part.type === "output_text") {
-      blocks.push({ type: "text", text: part.text } satisfies AnthropicTextBlock);
-    } else if (part.type === "input_image") {
-      blocks.push(translateImageURLToAnthropic(part.image_url));
+    switch (part.type) {
+      case "input_text":
+      case "output_text":
+        blocks.push({
+          type: "text",
+          text: part.text,
+        } satisfies AnthropicTextBlock);
+        break;
+      case "input_image":
+        blocks.push(translateImageURLToAnthropic(part.image_url));
+        break;
+      default: {
+        // Exhaustiveness — a new ResponsesInputContent variant breaks
+        // compilation here until added.
+        const _exhaust: never = part;
+        throw new BodyTranslationError(
+          "responses_unknown_content_type",
+          `unknown input content type: ${(_exhaust as { type?: string }).type ?? "<missing>"}`,
+        );
+      }
     }
   }
+  return blocks;
 }
 
 function translateImageURLToAnthropic(url: string): AnthropicImageBlock {
@@ -169,14 +252,20 @@ function translateImageURLToAnthropic(url: string): AnthropicImageBlock {
         `image_url is not a recognised base64 data URI`,
       );
     }
-    const mediaType = match[1] as
-      | "image/jpeg"
-      | "image/png"
-      | "image/gif"
-      | "image/webp";
+    const mediaType = match[1]!;
+    if (!ALLOWED_IMAGE_MEDIA_TYPES.has(mediaType as AllowedImageMediaType)) {
+      throw new BodyTranslationError(
+        "responses_image_media_type_unsupported",
+        `image media_type "${mediaType}" is not in the Anthropic-supported set (jpeg/png/gif/webp)`,
+      );
+    }
     return {
       type: "image",
-      source: { type: "base64", media_type: mediaType, data: match[2]! },
+      source: {
+        type: "base64",
+        media_type: mediaType as AllowedImageMediaType,
+        data: match[2]!,
+      },
     };
   }
   return { type: "image", source: { type: "url", url } };
@@ -210,16 +299,21 @@ function translateTool(tool: ResponsesTool): AnthropicToolDef {
   };
 }
 
+interface TranslatedToolChoice {
+  tool_choice?: AnthropicToolChoice;
+  /** When true, the caller must drop the `tools` field entirely so
+   *  Anthropic can't invoke any tool — the only honest way to express
+   *  Responses-API `tool_choice="none"` since Anthropic has no equivalent. */
+  dropTools?: boolean;
+}
+
 function translateToolChoice(
   choice: ResponsesToolChoice,
-): AnthropicToolChoice {
-  if (choice === "auto" || choice === "none") {
-    // Anthropic doesn't have an explicit 'none' — use 'auto' and the
-    // request will simply not invoke a tool unless the model decides to.
-    return { type: "auto" };
-  }
-  if (choice === "required") {
-    return { type: "any" };
-  }
-  return { type: "tool", name: choice.name };
+): TranslatedToolChoice {
+  if (choice === "none") return { dropTools: true };
+  if (choice === "auto") return { tool_choice: { type: "auto" } };
+  if (choice === "required") return { tool_choice: { type: "any" } };
+  return {
+    tool_choice: { type: "tool", name: choice.name },
+  };
 }

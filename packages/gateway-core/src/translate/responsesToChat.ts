@@ -5,9 +5,9 @@ import type { OpenAIChatRequest } from "./types.js";
 
 // Plan 5A §10.6 — pivot composition.  Responses → Anthropic → Chat.
 // Used when a Responses-format client (Codex CLI) is routed to a
-// chat-format upstream account.  Both legs are pure functions; the pivot
-// adds < 1ms and keeps the translator surface smaller (4 modules
-// instead of 8).
+// chat-format upstream account.  Both legs are pure functions; the
+// pivot adds < 1ms and keeps the translator surface to 5 modules
+// instead of 8.
 
 export function translateResponsesToChat(
   body: ResponsesRequest,
