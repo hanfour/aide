@@ -54,18 +54,28 @@ interface TranslatorState {
   /** Anthropic block index → OpenAI tool_calls array index */
   toolCallIndexByBlock: Map<number, number>;
   nextToolCallIndex: number;
-  stopReason: "end_turn" | "max_tokens" | "stop_sequence" | "tool_use" | null;
+  stopReason:
+    | "end_turn"
+    | "max_tokens"
+    | "stop_sequence"
+    | "tool_use"
+    | "refusal"
+    | null;
 }
 
 // ---------------------------------------------------------------------------
 // Finish reason mapping
 // ---------------------------------------------------------------------------
 
-const FINISH_REASON_MAP: Record<string, "stop" | "length" | "tool_calls"> = {
+const FINISH_REASON_MAP: Record<
+  string,
+  "stop" | "length" | "tool_calls" | "content_filter"
+> = {
   end_turn: "stop",
   stop_sequence: "stop",
   max_tokens: "length",
   tool_use: "tool_calls",
+  refusal: "content_filter",
 };
 
 // ---------------------------------------------------------------------------
