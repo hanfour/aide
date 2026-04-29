@@ -13,6 +13,9 @@ declare module "fastify" {
       orgId: string;
       userId: string;
       teamId: string | null;
+      // Plan 5A migration 0008. NULL = legacy 4A api key (no group binding);
+      // groupContext middleware synthesises a virtual group in that case.
+      groupId: string | null;
       quotaUsd: string;
       quotaUsedUsd: string;
     } | null;
@@ -35,7 +38,15 @@ export interface ApiKeyAuthOptions {
 
 const PUBLIC_PATHS = new Set(["/health", "/metrics"]);
 
-export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(async (fastify, opts) => {
+export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(pluginBody, {
+  name: "apiKeyAuthPlugin",
+  dependencies: ["dbPlugin"],
+});
+
+async function pluginBody(
+  fastify: import("fastify").FastifyInstance,
+  opts: ApiKeyAuthOptions,
+): Promise<void> {
   fastify.decorateRequest("apiKey", null);
   fastify.decorateRequest("gwUser", null);
   fastify.decorateRequest("gwOrg", null);
@@ -117,6 +128,7 @@ export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(async (fastify, opts) => {
       orgId: row.apiKey.orgId,
       userId: row.apiKey.userId,
       teamId: row.apiKey.teamId,
+      groupId: row.apiKey.groupId,
       quotaUsd: row.apiKey.quotaUsd,
       quotaUsedUsd: row.apiKey.quotaUsedUsd,
     };
@@ -128,7 +140,7 @@ export const apiKeyAuthPlugin = fp<ApiKeyAuthOptions>(async (fastify, opts) => {
       retentionDaysOverride: row.org.retentionDaysOverride ?? null,
     };
   });
-});
+}
 
 function extractKey(headers: Record<string, unknown>): string | null {
   const auth = headers["authorization"];

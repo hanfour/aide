@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import Fastify from "fastify";
+import fp from "fastify-plugin";
 import { hashApiKey } from "@aide/gateway-core";
 import { apiKeyAuthPlugin } from "../../src/middleware/apiKeyAuth.js";
 
@@ -39,11 +40,21 @@ function makeMockDb(rows: unknown[]) {
   return chain;
 }
 
+/** Stand-in for `dbPlugin` so apiKeyAuthPlugin's `dependencies` resolve. */
+function fakeDbPlugin(mockDb: unknown) {
+  return fp(
+    async (fastify) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      fastify.decorate("db", mockDb as any);
+    },
+    { name: "dbPlugin" },
+  );
+}
+
 async function buildTestApp(rows: unknown[]) {
   const app = Fastify({ logger: false });
   const mockDb = makeMockDb(rows);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  app.decorate("db", mockDb as any);
+  await app.register(fakeDbPlugin(mockDb));
 
   await app.register(apiKeyAuthPlugin, {
     env: { API_KEY_HASH_PEPPER: PEPPER } as never,
@@ -62,7 +73,7 @@ async function buildTestApp(rows: unknown[]) {
 describe("apiKeyAuth middleware", () => {
   it("1. valid key → 200 + context attached", async () => {
     const app = await buildTestApp([BASE_FIXTURE]);
-    const mockDb = (app as never as { db: Record<string, unknown> }).db;
+    const mockDb = app.db as unknown as Record<string, unknown>;
     const res = await app.inject({
       method: "GET",
       url: "/echo",
@@ -219,8 +230,7 @@ describe("apiKeyAuth middleware", () => {
         throw new Error("DB should not be called for /health");
       }),
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    app.decorate("db", crashingDb as any);
+    await app.register(fakeDbPlugin(crashingDb));
 
     await app.register(apiKeyAuthPlugin, {
       env: { API_KEY_HASH_PEPPER: PEPPER } as never,
@@ -242,8 +252,7 @@ describe("apiKeyAuth middleware", () => {
         throw new Error("DB should not be called for /metrics");
       }),
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    app.decorate("db", crashingDb as any);
+    await app.register(fakeDbPlugin(crashingDb));
 
     await app.register(apiKeyAuthPlugin, {
       env: { API_KEY_HASH_PEPPER: PEPPER } as never,
@@ -277,8 +286,7 @@ describe("apiKeyAuth middleware", () => {
         throw new Error("DB should not be called for /health?probe=1");
       }),
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    app.decorate("db", crashingDb as any);
+    await app.register(fakeDbPlugin(crashingDb));
 
     await app.register(apiKeyAuthPlugin, {
       env: { API_KEY_HASH_PEPPER: PEPPER } as never,

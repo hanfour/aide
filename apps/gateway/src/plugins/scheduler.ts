@@ -21,17 +21,24 @@ declare module "fastify" {
   }
 }
 
-export const schedulerPlugin = fp(async (fastify) => {
-  const scheduler = createScheduler({
-    db: fastify.db,
-    redis: fastify.redis,
-    metrics: createSchedulerMetricsAdapter(fastify.gwMetrics),
-    onStickyError: (err, layer) => {
-      fastify.log.warn(
-        { err: err instanceof Error ? err.message : String(err), layer },
-        "scheduler sticky read failed — falling through to Layer 3",
-      );
-    },
-  });
-  fastify.decorate("gwScheduler", scheduler);
-});
+export const schedulerPlugin = fp(
+  async (fastify) => {
+    const scheduler = createScheduler({
+      db: fastify.db,
+      redis: fastify.redis,
+      metrics: createSchedulerMetricsAdapter(fastify.gwMetrics),
+      onStickyError: (err, layer) => {
+        fastify.log.warn(
+          { err: err instanceof Error ? err.message : String(err), layer },
+          "scheduler sticky read failed — falling through to Layer 3",
+        );
+      },
+    });
+    fastify.decorate("gwScheduler", scheduler);
+  },
+  {
+    name: "schedulerPlugin",
+    // Reads `fastify.db`, `fastify.redis`, and `fastify.gwMetrics`.
+    dependencies: ["dbPlugin", "redisPlugin", "metricsPlugin"],
+  },
+);
