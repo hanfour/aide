@@ -1,12 +1,40 @@
+// Thin wrapper preserved from 4A so existing routes (`messages.ts`,
+// `chatCompletions.ts`) keep their signature while the actual selection
+// logic lives in the new 3-layer scheduler (Plan 5A Part 7, Task 7.6).
+//
+// Behaviour preserved:
+//   * Same input shape (`db`, `orgId`, `teamId`, `maxSwitches`, `attempt`,
+//     optional `sleep`).
+//   * Same retry policy: up to MAX_SAME_ACCOUNT_RETRIES on connection /
+//     timeout errors (driven by `classifyUpstreamError`), with the same
+//     exponential-ish backoff supplied by the classifier.
+//   * Same DB state mutation on switch: rateLimitedAt / overloadUntil /
+//     tempUnschedulableUntil / status changes mirror 4A.
+//   * Same exceptions: `AllUpstreamsFailed`, `FatalUpstreamError`.
+//
+// What's new: the candidate-selection step now goes through
+// `scheduler.select()`. For these legacy callsites no group / sticky
+// metadata is supplied so the scheduler short-circuits to Layer 3
+// (load_balance), which still uses the org/team scope. EWMA stats are
+// fed via `reportResult` after each attempt so subsequent decisions
+// benefit from observed reliability.
+
 import { eq } from "drizzle-orm";
 import { upstreamAccounts } from "@aide/db";
 import type { Database } from "@aide/db";
+import type { Redis } from "ioredis";
 import {
   classifyUpstreamError,
   type AccountStateUpdate,
   type UpstreamError,
 } from "@aide/gateway-core";
-import { selectAccounts, type SelectedAccount } from "./selectAccount.js";
+import {
+  createScheduler,
+  NoSchedulableAccountsError,
+  type AccountScheduler,
+  type SchedulerMetrics,
+} from "./scheduler.js";
+import type { SelectedAccount } from "./selectAccount.js";
 
 const MAX_SAME_ACCOUNT_RETRIES = 3;
 
@@ -36,6 +64,20 @@ export interface RunFailoverInput<T> {
   attempt: (account: SelectedAccount) => Promise<T>;
   /** Inject for tests so we can fast-forward backoffs. Defaults to setTimeout. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Optional Redis client. Not used by the legacy path (no sticky
+   * metadata is supplied here) but reserved so future callsites that
+   * pass `groupId` / `previousResponseId` can opt in.
+   */
+  redis?: Redis;
+  /**
+   * Optional pre-built scheduler. When omitted a fresh one is created
+   * each call — fine for low-frequency unit tests, the production
+   * gateway will inject a long-lived instance via fastify decoration.
+   */
+  scheduler?: AccountScheduler;
+  /** Metric sink — only consumed when an internal scheduler is created. */
+  metrics?: SchedulerMetrics;
 }
 
 const defaultSleep = (ms: number) =>
@@ -44,25 +86,42 @@ const defaultSleep = (ms: number) =>
 export async function runFailover<T>(input: RunFailoverInput<T>): Promise<T> {
   const sleep = input.sleep ?? defaultSleep;
   const failed: string[] = [];
-
-  for (let switchCount = 0; switchCount < input.maxSwitches; switchCount++) {
-    const candidates = await selectAccounts(input.db, {
-      orgId: input.orgId,
-      teamId: input.teamId,
-      excludeIds: failed,
-      limit: 1,
+  const failedSet = new Set<string>();
+  const scheduler =
+    input.scheduler ??
+    createScheduler({
+      db: input.db,
+      redis: input.redis,
+      metrics: input.metrics,
     });
 
-    if (candidates.length === 0) {
-      throw new AllUpstreamsFailed(failed);
+  for (let switchCount = 0; switchCount < input.maxSwitches; switchCount++) {
+    let scheduled;
+    try {
+      scheduled = await scheduler.select({
+        orgId: input.orgId,
+        teamId: input.teamId,
+        excludedAccountIds: failedSet,
+      });
+    } catch (err) {
+      if (err instanceof NoSchedulableAccountsError) {
+        throw new AllUpstreamsFailed(failed);
+      }
+      throw err;
     }
 
-    const account = candidates[0]!;
+    const { account, release } = scheduled;
     let exhaustedSameAccount = false;
 
     for (let retry = 0; retry <= MAX_SAME_ACCOUNT_RETRIES; retry++) {
       try {
-        return await input.attempt(account);
+        const result = await input.attempt({
+          id: account.id,
+          concurrency: account.concurrency,
+        });
+        scheduler.reportResult(account.id, true);
+        await release();
+        return result;
       } catch (rawErr) {
         const upstreamErr = toUpstreamError(rawErr);
         const action = classifyUpstreamError(upstreamErr);
@@ -75,6 +134,8 @@ export async function runFailover<T>(input: RunFailoverInput<T>): Promise<T> {
               action.stateUpdate,
             );
           }
+          scheduler.reportResult(account.id, false);
+          await release();
           throw new FatalUpstreamError(
             action.statusCode,
             action.reason,
@@ -99,14 +160,22 @@ export async function runFailover<T>(input: RunFailoverInput<T>): Promise<T> {
             action.stateUpdate,
           );
         }
+        scheduler.reportResult(account.id, false);
+        scheduler.reportSwitch(account.platform);
         failed.push(account.id);
+        failedSet.add(account.id);
+        await release();
         break;
       }
     }
 
     if (exhaustedSameAccount) {
-      // 3 retries on connection/timeout exhausted — try a different account
+      // 3 retries on connection/timeout exhausted — try a different account.
+      scheduler.reportResult(account.id, false);
+      scheduler.reportSwitch(account.platform);
       failed.push(account.id);
+      failedSet.add(account.id);
+      await release();
     }
   }
 
@@ -119,11 +188,16 @@ export async function applyAccountStateUpdate(
   update: AccountStateUpdate,
 ): Promise<void> {
   const set: Record<string, unknown> = {};
-  if (update.rateLimitedAt !== undefined) set.rateLimitedAt = update.rateLimitedAt;
-  if (update.rateLimitResetAt !== undefined) set.rateLimitResetAt = update.rateLimitResetAt;
-  if (update.overloadUntil !== undefined) set.overloadUntil = update.overloadUntil;
-  if (update.tempUnschedulableUntil !== undefined) set.tempUnschedulableUntil = update.tempUnschedulableUntil;
-  if (update.tempUnschedulableReason !== undefined) set.tempUnschedulableReason = update.tempUnschedulableReason;
+  if (update.rateLimitedAt !== undefined)
+    set.rateLimitedAt = update.rateLimitedAt;
+  if (update.rateLimitResetAt !== undefined)
+    set.rateLimitResetAt = update.rateLimitResetAt;
+  if (update.overloadUntil !== undefined)
+    set.overloadUntil = update.overloadUntil;
+  if (update.tempUnschedulableUntil !== undefined)
+    set.tempUnschedulableUntil = update.tempUnschedulableUntil;
+  if (update.tempUnschedulableReason !== undefined)
+    set.tempUnschedulableReason = update.tempUnschedulableReason;
   if (update.status !== undefined) set.status = update.status;
   if (update.errorMessage !== undefined) set.errorMessage = update.errorMessage;
   if (Object.keys(set).length === 0) return;

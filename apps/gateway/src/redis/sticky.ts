@@ -28,3 +28,52 @@ export async function deleteSticky(
 ): Promise<void> {
   await redis.del(keys.sticky(orgId, sessionId));
 }
+
+// Plan 5A §8.2 Layer 1 — previous_response_id sticky.
+// TTL matches sub2api (1 hour); each lookup refreshes the TTL via SET EX.
+export async function getRespSticky(
+  redis: Redis,
+  groupId: string,
+  previousResponseId: string,
+): Promise<string | null> {
+  return await redis.get(keys.stickyResp(groupId, previousResponseId));
+}
+
+export async function setRespSticky(
+  redis: Redis,
+  groupId: string,
+  previousResponseId: string,
+  accountId: string,
+  ttlSec = 60 * 60,
+): Promise<void> {
+  await redis.set(
+    keys.stickyResp(groupId, previousResponseId),
+    accountId,
+    "EX",
+    ttlSec,
+  );
+}
+
+// Plan 5A §8.2 Layer 2 — session_hash sticky (TTL 30 min).
+export async function getSessionSticky(
+  redis: Redis,
+  groupId: string,
+  sessionHash: string,
+): Promise<string | null> {
+  return await redis.get(keys.stickySession(groupId, sessionHash));
+}
+
+export async function setSessionSticky(
+  redis: Redis,
+  groupId: string,
+  sessionHash: string,
+  accountId: string,
+  ttlSec = 30 * 60,
+): Promise<void> {
+  await redis.set(
+    keys.stickySession(groupId, sessionHash),
+    accountId,
+    "EX",
+    ttlSec,
+  );
+}
