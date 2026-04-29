@@ -56,6 +56,13 @@ let nextUpstreamResponse: {
   status: number;
   body: string;
   closeSocket?: boolean;
+  /**
+   * When set, the server writes SSE chunks (`data: {…}\n\n`) instead
+   * of a single JSON body, with `content-type: text/event-stream`.
+   * Each entry is one chunk written verbatim — caller can simulate
+   * Anthropic's `event: message_start\ndata: {…}\n\n` frames.
+   */
+  sseChunks?: string[];
 };
 let lastUpstreamRequest: {
   url: string | undefined;
@@ -89,6 +96,14 @@ beforeAll(async () => {
       lastUpstreamRequest = { url: req.url, method: req.method, body };
       if (nextUpstreamResponse.closeSocket) {
         req.socket.destroy();
+        return;
+      }
+      if (nextUpstreamResponse.sseChunks) {
+        res.statusCode = nextUpstreamResponse.status;
+        res.setHeader("content-type", "text/event-stream");
+        res.setHeader("cache-control", "no-cache");
+        for (const c of nextUpstreamResponse.sseChunks) res.write(c);
+        res.end();
         return;
       }
       res.statusCode = nextUpstreamResponse.status;
@@ -275,7 +290,7 @@ describe("POST /v1/chat/completions", () => {
     await app.close();
   });
 
-  it("2. stream=true → 501 not_implemented", async () => {
+  it("2. stream=true → SSE bytes translated to OpenAI Chat chunks + [DONE]", async () => {
     const orgId = await seedOrg();
     const userId = await seedUser(orgId);
     const rawKey = `ak_oai_stream_${Math.random().toString(36).slice(2)}`;
@@ -284,6 +299,47 @@ describe("POST /v1/chat/completions", () => {
       orgId,
       JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
     );
+
+    // Synthesize a minimal Anthropic SSE stream — message_start, one
+    // text delta, content_block_stop, message_delta, message_stop.
+    nextUpstreamResponse = {
+      status: 200,
+      body: "",
+      sseChunks: [
+        `event: message_start\ndata: ${JSON.stringify({
+          type: "message_start",
+          message: {
+            id: "msg_stream_1",
+            model: "claude-3-haiku-20240307",
+            role: "assistant",
+            content: [],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 5, output_tokens: 0 },
+          },
+        })}\n\n`,
+        `event: content_block_start\ndata: ${JSON.stringify({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "text", text: "" },
+        })}\n\n`,
+        `event: content_block_delta\ndata: ${JSON.stringify({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "Hi" },
+        })}\n\n`,
+        `event: content_block_stop\ndata: ${JSON.stringify({
+          type: "content_block_stop",
+          index: 0,
+        })}\n\n`,
+        `event: message_delta\ndata: ${JSON.stringify({
+          type: "message_delta",
+          delta: { stop_reason: "end_turn", stop_sequence: null },
+          usage: { output_tokens: 1 },
+        })}\n\n`,
+        `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`,
+      ],
+    };
 
     const redis = makeRedisMock();
     const app = await makeApp(redis, container.getConnectionUri());
@@ -295,8 +351,25 @@ describe("POST /v1/chat/completions", () => {
       payload: { ...openaiPayload, stream: true },
     });
 
-    expect(res.statusCode).toBe(501);
-    expect(res.json()).toMatchObject({ error: "not_implemented" });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/event-stream/);
+    const body = res.body;
+    // Output contains the synthetic id from message_start.
+    expect(body).toContain("msg_stream_1");
+    // Output contains the translated text delta.
+    expect(body).toContain('"content":"Hi"');
+    // Output ends with the [DONE] sentinel.
+    expect(body.trimEnd().endsWith("data: [DONE]")).toBe(true);
+    // The terminal chunk carries finish_reason stop + usage.
+    expect(body).toContain('"finish_reason":"stop"');
+    expect(body).toContain('"prompt_tokens":5');
+    expect(body).toContain('"completion_tokens":1');
+
+    // Verify the upstream request was sent with stream=true on the
+    // translated Anthropic body.
+    expect(lastUpstreamRequest).not.toBeNull();
+    const upstreamBody = JSON.parse(lastUpstreamRequest!.body!);
+    expect(upstreamBody.stream).toBe(true);
     await app.close();
   });
 
