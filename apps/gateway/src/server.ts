@@ -4,6 +4,7 @@ import type { Database } from "@aide/db";
 import { Redis } from "ioredis";
 import type { Queue } from "bullmq";
 import { metricsPlugin } from "./plugins/metrics.js";
+import { schedulerPlugin } from "./plugins/scheduler.js";
 import { dbPlugin } from "./plugins/db.js";
 import { redisPlugin } from "./redis/client.js";
 import { apiKeyAuthPlugin } from "./middleware/apiKeyAuth.js";
@@ -104,6 +105,7 @@ export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
   }
   await app.register(dbPlugin, { env: opts.env, db: opts.db });
   await app.register(redisPlugin, { env: opts.env, client: opts.redis });
+  await app.register(schedulerPlugin);
   await app.register(apiKeyAuthPlugin, { env: opts.env });
   await app.register(messagesRoutes, { env: opts.env });
   await app.register(chatCompletionsRoutes, { env: opts.env });

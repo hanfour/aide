@@ -89,6 +89,7 @@ export async function chatCompletionsRoutes(
           orgId: req.apiKey.orgId,
           teamId: req.apiKey.teamId,
           maxSwitches: opts.env.GATEWAY_MAX_ACCOUNT_SWITCHES,
+          scheduler: app.gwScheduler,
           attempt: async (account) => {
             // Per-account concurrency slot via Redis ZSET.
             const acquired = await acquireSlot(

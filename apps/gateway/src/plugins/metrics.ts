@@ -45,6 +45,14 @@ export interface GatewayMetrics {
   gwFacetExtractTotal: Counter<"org_id" | "result">;
   gwFacetExtractDurationMs: Histogram<"org_id">;
   gwFacetCacheHitTotal: Counter<"org_id">;
+
+  // Plan 5A Part 7 — 3-layer account scheduler
+  gwSchedulerSelectTotal: Counter<"platform" | "layer">;
+  gwSchedulerStickyHitRatio: Gauge<"platform">;
+  gwSchedulerAccountSwitchTotal: Counter<"platform">;
+  gwSchedulerLatencyMs: Histogram<"platform">;
+  gwSchedulerLoadSkew: Gauge<"platform">;
+  gwSchedulerRuntimeAccountCount: Gauge<string>;
 }
 
 declare module "fastify" {
@@ -310,6 +318,52 @@ export const metricsPlugin = fp(async (fastify) => {
     registers: [register],
   });
 
+  // Plan 5A Part 7 — 3-layer scheduler metrics. `layer` distinguishes
+  // sticky (Layer 1 / 2) from cold-path (Layer 3 load_balance) decisions.
+  const gwSchedulerSelectTotal = new Counter({
+    name: "gw_scheduler_select_total",
+    help: "Account scheduler decisions, broken down by layer",
+    labelNames: ["platform", "layer"] as const,
+    registers: [register],
+  });
+
+  const gwSchedulerStickyHitRatio = new Gauge({
+    name: "gw_scheduler_sticky_hit_ratio",
+    help: "EWMA of sticky-layer hits / total decisions per platform",
+    labelNames: ["platform"] as const,
+    registers: [register],
+  });
+
+  const gwSchedulerAccountSwitchTotal = new Counter({
+    name: "gw_scheduler_account_switch_total",
+    help: "Failover events where the scheduler had to switch accounts",
+    labelNames: ["platform"] as const,
+    registers: [register],
+  });
+
+  // Decision latency in milliseconds — from select() entry to candidate return.
+  const gwSchedulerLatencyMs = new Histogram({
+    name: "gw_scheduler_latency_ms",
+    help: "Account scheduler decision latency in milliseconds",
+    labelNames: ["platform"] as const,
+    buckets: [0.1, 0.5, 1, 2, 5, 10, 25, 50, 100, 250, 500],
+    registers: [register],
+  });
+
+  const gwSchedulerLoadSkew = new Gauge({
+    name: "gw_scheduler_load_skew",
+    help: "Last-decision load skew = (max - min) / mean of candidate weights",
+    labelNames: ["platform"] as const,
+    registers: [register],
+  });
+
+  const gwSchedulerRuntimeAccountCount = new Gauge({
+    name: "gw_scheduler_runtime_account_count",
+    help: "Accounts currently tracked in the scheduler EWMA stats (global)",
+    registers: [register],
+  });
+  gwSchedulerRuntimeAccountCount.set(0);
+
   // Materialize zero values so unlabeled metrics appear in scrape output
   waitQueueDepth.set(0);
   idempotencyHitTotal.inc(0);
@@ -366,5 +420,11 @@ export const metricsPlugin = fp(async (fastify) => {
     gwFacetExtractTotal,
     gwFacetExtractDurationMs,
     gwFacetCacheHitTotal,
+    gwSchedulerSelectTotal,
+    gwSchedulerStickyHitRatio,
+    gwSchedulerAccountSwitchTotal,
+    gwSchedulerLatencyMs,
+    gwSchedulerLoadSkew,
+    gwSchedulerRuntimeAccountCount,
   });
 });
