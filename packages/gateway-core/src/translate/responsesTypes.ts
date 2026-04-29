@@ -122,3 +122,80 @@ export type ResponsesInputFunctionCallOutput = z.infer<
 export type ResponsesInputContent = z.infer<typeof ResponsesInputContentSchema>;
 export type ResponsesTool = z.infer<typeof ResponsesToolSchema>;
 export type ResponsesToolChoice = z.infer<typeof ResponsesToolChoiceSchema>;
+
+// ---------------------------------------------------------------------------
+// Plan 5A §10 — OpenAI Responses API response shape (non-stream).
+//
+// These are upstream-shape types — used by response translators only —
+// and not validated against client input, so we don't define Zod
+// schemas for them. The shapes follow the public OpenAI Responses API
+// contract (`POST /v1/responses` non-stream return). See
+// https://platform.openai.com/docs/api-reference/responses/object
+//
+// Subset gated by design A6: text + function-calling only. Other output
+// item types (file_search_call, web_search_call, code_interpreter_call,
+// etc.) are out of scope and will be ignored by translators.
+// ---------------------------------------------------------------------------
+
+export interface ResponsesOutputTextContent {
+  type: "output_text";
+  text: string;
+  /** Echoed annotations array; we don't translate these. */
+  annotations?: unknown[];
+}
+
+export interface ResponsesOutputMessageItem {
+  type: "message";
+  id: string;
+  role: "assistant";
+  status: "completed" | "incomplete" | "in_progress";
+  content: ResponsesOutputTextContent[];
+}
+
+export interface ResponsesOutputFunctionCallItem {
+  type: "function_call";
+  id: string;
+  call_id: string;
+  name: string;
+  /** JSON string — matches Anthropic tool_use input shape after parse. */
+  arguments: string;
+  status?: "completed" | "incomplete" | "in_progress";
+}
+
+export type ResponsesOutputItem =
+  | ResponsesOutputMessageItem
+  | ResponsesOutputFunctionCallItem;
+
+export interface ResponsesUsage {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  /** OpenAI surfaces cached-input details here when present. */
+  input_tokens_details?: { cached_tokens?: number };
+  output_tokens_details?: { reasoning_tokens?: number };
+}
+
+export interface ResponsesResponse {
+  id: string;
+  object: "response";
+  created_at: number;
+  model: string;
+  status: "completed" | "incomplete" | "failed" | "in_progress";
+  output: ResponsesOutputItem[];
+  usage?: ResponsesUsage;
+  /**
+   * Set when status is "incomplete" — drives the stop-reason translation.
+   * The `(string & {})` branding keeps the literals visible to autocomplete
+   * while still permitting unknown future values from upstream (e.g. when
+   * OpenAI introduces a new reason that isn't in our translator yet).
+   * Without the branding TypeScript widens the union to plain `string`,
+   * silently erasing the documented values.
+   */
+  incomplete_details?: {
+    reason:
+      | "max_output_tokens"
+      | "content_filter"
+      // eslint-disable-next-line @typescript-eslint/ban-types
+      | (string & {});
+  } | null;
+}
