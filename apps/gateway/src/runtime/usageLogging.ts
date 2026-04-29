@@ -166,8 +166,13 @@ export interface BuildUsageLogPayloadInput {
   upstreamResponse: unknown;
   /** "anthropic" for /v1/messages, "openai" for /v1/chat/completions. */
   platform: "anthropic" | "openai";
-  /** "messages" for /v1/messages, "chat-completions" for /v1/chat/completions. */
-  surface: "messages" | "chat-completions";
+  /**
+   * Client URL space:
+   *   "messages" — /v1/messages (Anthropic format)
+   *   "chat-completions" — /v1/chat/completions (OpenAI Chat format)
+   *   "responses" — /v1/responses (OpenAI Responses format; Plan 5A)
+   */
+  surface: "messages" | "chat-completions" | "responses";
   /** HTTP status code sent downstream to the client. */
   statusCode: number;
   /** Wall-clock ms since the request started (route handler entry). */
@@ -459,7 +464,7 @@ export interface EmitUsageLogInput {
   accountId: string;
   upstreamResponse: unknown;
   platform: "anthropic" | "openai";
-  surface: "messages" | "chat-completions";
+  surface: "messages" | "chat-completions" | "responses";
   statusCode: number;
   durationMs: number;
   /**

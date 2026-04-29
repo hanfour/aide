@@ -1,0 +1,302 @@
+// `/v1/responses` route handler — Plan 5A Part 9 Task 9.3 (Anthropic
+// upstream slice).
+//
+// Accepts OpenAI Responses-format request bodies, validates against the
+// `ResponsesRequestSchema` Zod schema (gated by design A6 — text +
+// function-calling subset only), and dispatches based on the resolved
+// group platform:
+//
+//   * `group.platform === "anthropic"`: translates the body to
+//     Anthropic Messages, runs the same failover loop the existing
+//     `/v1/messages` and `/v1/chat/completions` routes use, then
+//     translates the upstream Anthropic response back to Responses
+//     shape.
+//   * `group.platform === "openai"`: 503 with a clear "not yet wired"
+//     error.  Will be replaced when the OpenAI handlers ship in PR 9c.
+//
+// Streaming (`stream: true`) is rejected with 501 in this PR; the
+// streaming path lands in PR 9c when the openai handlers go in
+// alongside `makeAnthropicToResponsesStream` wired into the route.
+//
+// Per design §A6 the schema explicitly accepts `previous_response_id`
+// (we use it for sticky scheduling — Layer 1 in the scheduler) but
+// rejects everything else not enumerated by the schema via `.strict()`.
+
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import type { ServerEnv } from "@aide/config";
+import {
+  ResponsesRequestSchema,
+  translateResponsesToAnthropic,
+  translateAnthropicResponseToResponses,
+} from "@aide/gateway-core";
+import {
+  runFailover,
+  AllUpstreamsFailed,
+  FatalUpstreamError,
+} from "../runtime/failoverLoop.js";
+import { resolveCredential } from "../runtime/resolveCredential.js";
+import { maybeRefreshOAuth } from "../runtime/oauthRefresh.js";
+import { callUpstreamMessages } from "../runtime/upstreamCall.js";
+import { acquireSlot, releaseSlot } from "../redis/slots.js";
+import { emitUsageLog } from "../runtime/usageLogging.js";
+import { emitBodyCapture } from "../runtime/bodyCapture.js";
+
+export interface ResponsesRouteOptions {
+  env: ServerEnv;
+}
+
+/** Safety-net expiry: slot key expires in Redis even if release is missed. */
+const SLOT_DURATION_MS = 60_000;
+
+/**
+ * Per design §9.4 — the schema's `.strict()` already rejects unknown
+ * keys at the Zod layer, but a few tools (and curl one-liners) supply
+ * features that map cleanly to other Zod errors (e.g. `parameters` on
+ * a non-function tool). We list the explicit out-of-scope flags here
+ * so error messages name them, instead of "unrecognized_keys".
+ */
+const EXPLICIT_UNSUPPORTED_FIELDS = [
+  "store",
+  "parallel_tool_calls",
+  "reasoning",
+  "file_search",
+  "code_interpreter",
+  "computer_use",
+] as const;
+
+export async function responsesRoutes(
+  app: FastifyInstance,
+  opts: ResponsesRouteOptions,
+): Promise<void> {
+  app.post(
+    "/v1/responses",
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      if (!req.apiKey || !req.gwUser || !req.gwOrg) {
+        reply.code(401).send({ error: "missing_api_key" });
+        return;
+      }
+
+      const ctx = req.gwGroupContext;
+      if (!ctx) {
+        // groupContextPlugin should have either set ctx or 403'd before
+        // this handler runs — defense-in-depth.
+        reply.code(403).send({ error: "group_required" });
+        return;
+      }
+
+      const rawBody = req.body as Record<string, unknown> | undefined;
+      if (!rawBody || typeof rawBody !== "object") {
+        reply.code(400).send({ error: "invalid_body" });
+        return;
+      }
+
+      // Surface the design-A6 reject list with clear field names before
+      // Zod's "unrecognized_keys" — friendlier for curl users.
+      for (const key of EXPLICIT_UNSUPPORTED_FIELDS) {
+        if (rawBody[key] !== undefined) {
+          reply.code(400).send({
+            error: "unsupported_feature",
+            field: key,
+          });
+          return;
+        }
+      }
+
+      const parsed = ResponsesRequestSchema.safeParse(rawBody);
+      if (!parsed.success) {
+        reply.code(400).send({
+          error: "invalid_request",
+          issues: parsed.error.issues.map((i) => ({
+            path: i.path.join("."),
+            message: i.message,
+            code: i.code,
+          })),
+        });
+        return;
+      }
+      const body = parsed.data;
+
+      if (body.stream === true) {
+        // Streaming responses path is wired in PR 9c (alongside
+        // `makeAnthropicToResponsesStream`).
+        reply.code(501).send({
+          error: "not_implemented",
+          detail: "responses streaming arrives in PR 9c",
+        });
+        return;
+      }
+
+      if (ctx.platform !== "anthropic") {
+        // PR 9c will wire the openai branch (Tasks 9.1 + 9.2 handlers).
+        reply.code(503).send({
+          error: "openai_upstream_not_yet_wired",
+          platform: ctx.platform,
+        });
+        return;
+      }
+
+      // Translate Responses request → Anthropic shape.
+      let anthropicBody;
+      try {
+        anthropicBody = translateResponsesToAnthropic(body);
+      } catch (err) {
+        reply.code(400).send({
+          error: "invalid_request",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
+
+      const requestId = req.id;
+      const upstreamBodyBuf = Buffer.from(JSON.stringify(anthropicBody));
+      const startedAtMs = Date.now();
+      const requestedModel = body.model;
+
+      try {
+        const responsesResp = await runFailover({
+          db: app.db,
+          orgId: req.apiKey.orgId,
+          teamId: req.apiKey.teamId,
+          maxSwitches: opts.env.GATEWAY_MAX_ACCOUNT_SWITCHES,
+          scheduler: app.gwScheduler,
+          attempt: async (account) => {
+            const acquired = await acquireSlot(
+              app.redis,
+              "account",
+              account.id,
+              requestId,
+              account.concurrency,
+              SLOT_DURATION_MS,
+            );
+            if (!acquired) {
+              throw { status: 503, message: "account_at_capacity" };
+            }
+            try {
+              let credential = await resolveCredential(app.db, account.id, {
+                masterKeyHex: opts.env.CREDENTIAL_ENCRYPTION_KEY!,
+              });
+              if (credential.type === "oauth") {
+                credential = await maybeRefreshOAuth(
+                  app.db,
+                  app.redis,
+                  account.id,
+                  credential,
+                  {
+                    masterKeyHex: opts.env.CREDENTIAL_ENCRYPTION_KEY!,
+                    leadMinutes: opts.env.GATEWAY_OAUTH_REFRESH_LEAD_MIN,
+                    maxFail: opts.env.GATEWAY_OAUTH_MAX_FAIL,
+                  },
+                );
+              }
+
+              const upstream = await callUpstreamMessages({
+                baseUrl: opts.env.UPSTREAM_ANTHROPIC_BASE_URL,
+                body: upstreamBodyBuf,
+                credential,
+              });
+
+              if (upstream.kind === "stream") {
+                throw { status: 502, message: "unexpected_stream" };
+              }
+
+              if (upstream.status < 200 || upstream.status >= 300) {
+                const text = upstream.body.toString("utf8");
+                const retryAfterRaw = upstream.headers["retry-after"];
+                const retryAfter =
+                  typeof retryAfterRaw === "string"
+                    ? parseInt(retryAfterRaw, 10)
+                    : Array.isArray(retryAfterRaw)
+                      ? parseInt(retryAfterRaw[0]!, 10)
+                      : undefined;
+                throw {
+                  status: upstream.status,
+                  retryAfter: Number.isNaN(retryAfter) ? undefined : retryAfter,
+                  message: text.slice(0, 500),
+                };
+              }
+
+              // Mirror chatCompletions.ts: parse defensively, emit a
+              // forensic zero-usage log on parse failure, then surface
+              // 502 to the client so they see honest "upstream malformed".
+              let anthropicResp: unknown = null;
+              let parseErr: unknown = null;
+              try {
+                anthropicResp = JSON.parse(upstream.body.toString("utf8"));
+              } catch (err) {
+                parseErr = err;
+                req.log.warn(
+                  {
+                    requestId,
+                    err: err instanceof Error ? err.message : String(err),
+                  },
+                  "upstream 2xx body was not valid JSON; emitting zero-usage log then failing",
+                );
+              }
+
+              await emitUsageLog({
+                app,
+                req,
+                requestedModel,
+                accountId: account.id,
+                upstreamResponse: anthropicResp,
+                platform: "openai",
+                surface: "responses",
+                statusCode: 200,
+                durationMs: Date.now() - startedAtMs,
+              });
+              await emitBodyCapture({
+                app,
+                req,
+                requestId,
+                requestBodyJson: upstreamBodyBuf.toString("utf8"),
+                responseBody: anthropicResp,
+                stream: false,
+              });
+
+              if (parseErr !== null) {
+                throw { status: 502, message: "upstream_malformed_json" };
+              }
+
+              return translateAnthropicResponseToResponses(
+                anthropicResp as Parameters<
+                  typeof translateAnthropicResponseToResponses
+                >[0],
+              );
+            } finally {
+              await releaseSlot(
+                app.redis,
+                "account",
+                account.id,
+                requestId,
+              ).catch(() => {
+                // Slot expires on its own.
+              });
+            }
+          },
+        });
+
+        reply
+          .code(200)
+          .header("content-type", "application/json")
+          .send(responsesResp);
+      } catch (err) {
+        if (err instanceof AllUpstreamsFailed) {
+          reply.code(503).send({
+            error: "all_upstreams_failed",
+            attempted_count: err.attemptedIds.length,
+            request_id: requestId,
+          });
+          return;
+        }
+        if (err instanceof FatalUpstreamError) {
+          reply.code(err.statusCode).send({
+            error: err.reason,
+            request_id: requestId,
+          });
+          return;
+        }
+        throw err;
+      }
+    },
+  );
+}
