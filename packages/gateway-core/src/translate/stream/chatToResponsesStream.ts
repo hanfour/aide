@@ -7,9 +7,7 @@
 // anthropicToResponses. End-of-stream drain mirrors the chain.
 
 import type { StreamTranslator } from "./types.js";
-import type {
-  ChatStreamInput,
-} from "./chatToAnthropicStream.js";
+import type { ChatStreamInput } from "./chatToAnthropicStream.js";
 import { makeChatToAnthropicStream } from "./chatToAnthropicStream.js";
 import { makeAnthropicToResponsesStream } from "./anthropicToResponsesStream.js";
 import type { ResponsesSSEEvent } from "./responsesSseTypes.js";
@@ -45,11 +43,21 @@ export function makeChatToResponsesStream(
       return out;
     },
     onError(err) {
-      // Surface the error to BOTH stages so they can flush their tails;
-      // collect from the second stage only (the first stage's drain is
-      // empty since it'll go straight to message_delta + message_stop).
-      ca.onError(err);
-      return ar.onError(err);
+      // Mirror onEnd's flat-map pattern: stage 1's onError tail flows
+      // through stage 2's onEvent, then stage 2's own onError drains
+      // its tail.  Without this the consumer sees a different
+      // terminator on errors than on clean end-of-stream (stage 1's
+      // message_delta + message_stop would be silently dropped).
+      const out: ResponsesSSEEvent[] = [];
+      for (const a of ca.onError(err)) {
+        for (const r of ar.onEvent(a)) {
+          out.push(r);
+        }
+      }
+      for (const r of ar.onError(err)) {
+        out.push(r);
+      }
+      return out;
     },
   };
 }

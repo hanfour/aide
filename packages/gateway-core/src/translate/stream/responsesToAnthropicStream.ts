@@ -37,10 +37,14 @@ interface State {
   model: string;
   /** Output_index → Anthropic block index. */
   outputToBlock: Map<number, number>;
-  /** Output_index → kind. */
+  /** Output_index → kind. Used to decide stop_reason on completion. */
   outputKind: Map<number, "text" | "tool_use">;
-  /** Output_index → tool name + id (for emitting content_block_start). */
-  pendingToolCall: Map<number, { id: string; name: string }>;
+  /**
+   * Block indices that have a `content_block_start` but not yet a
+   * `content_block_stop`. Drained on early termination so the
+   * Anthropic SDK consumer never sees an unclosed block.
+   */
+  openBlockIndices: Set<number>;
   nextBlockIndex: number;
   messageStarted: boolean;
   inputTokens: number;
@@ -69,13 +73,42 @@ export function makeResponsesToAnthropicStream(): StreamTranslator<
     model: "",
     outputToBlock: new Map(),
     outputKind: new Map(),
-    pendingToolCall: new Map(),
+    openBlockIndices: new Set(),
     nextBlockIndex: 0,
     messageStarted: false,
     inputTokens: 0,
     outputTokens: 0,
     cacheReadInputTokens: 0,
     finished: false,
+  };
+
+  /**
+   * Emit `content_block_stop` for every still-open block, then a
+   * `message_delta` + `message_stop` terminator.  Callers wrap this
+   * with the `finished` guard.
+   */
+  const finalize = (
+    stopReason: MessageDeltaEvent["delta"]["stop_reason"] = "end_turn",
+  ): AnthropicSSEEvent[] => {
+    const out: AnthropicSSEEvent[] = [];
+    for (const blockIndex of state.openBlockIndices) {
+      const stopEv: ContentBlockStopEvent = {
+        type: "content_block_stop",
+        index: blockIndex,
+      };
+      out.push(stopEv);
+    }
+    state.openBlockIndices.clear();
+    if (state.messageStarted) {
+      const messageDelta: MessageDeltaEvent = {
+        type: "message_delta",
+        delta: { stop_reason: stopReason, stop_sequence: null },
+        usage: { output_tokens: state.outputTokens },
+      };
+      const messageStop: MessageStopEvent = { type: "message_stop" };
+      out.push(messageDelta, messageStop);
+    }
+    return out;
   };
 
   const ensureMessageStart = (): AnthropicSSEEvent[] => {
@@ -111,6 +144,7 @@ export function makeResponsesToAnthropicStream(): StreamTranslator<
             const blockIndex = state.nextBlockIndex++;
             state.outputToBlock.set(event.output_index, blockIndex);
             state.outputKind.set(event.output_index, "tool_use");
+            state.openBlockIndices.add(blockIndex);
             const startEv: ContentBlockStartEvent = {
               type: "content_block_start",
               index: blockIndex,
@@ -122,12 +156,10 @@ export function makeResponsesToAnthropicStream(): StreamTranslator<
               },
             };
             out.push(startEv);
-          } else {
-            // Defer text block until content_part.added arrives —
-            // some Responses producers emit metadata-only message
-            // items that never receive output_text.
-            state.pendingToolCall; // noop access for IDE happiness
           }
+          // Message items defer block opening until `content_part.added`
+          // arrives — some Responses producers emit metadata-only
+          // message items that never receive output_text.
           return out;
         }
         case "response.content_part.added": {
@@ -135,6 +167,7 @@ export function makeResponsesToAnthropicStream(): StreamTranslator<
           const blockIndex = state.nextBlockIndex++;
           state.outputToBlock.set(event.output_index, blockIndex);
           state.outputKind.set(event.output_index, "text");
+          state.openBlockIndices.add(blockIndex);
           const startEv: ContentBlockStartEvent = {
             type: "content_block_start",
             index: blockIndex,
@@ -165,6 +198,7 @@ export function makeResponsesToAnthropicStream(): StreamTranslator<
         case "response.output_item.done": {
           const blockIndex = state.outputToBlock.get(event.output_index);
           if (blockIndex === undefined) return [];
+          state.openBlockIndices.delete(blockIndex);
           const stopEv: ContentBlockStopEvent = {
             type: "content_block_stop",
             index: blockIndex,
@@ -199,13 +233,9 @@ export function makeResponsesToAnthropicStream(): StreamTranslator<
             );
             stopReason = sawToolUse ? "tool_use" : "end_turn";
           }
-          const messageDelta: MessageDeltaEvent = {
-            type: "message_delta",
-            delta: { stop_reason: stopReason, stop_sequence: null },
-            usage: { output_tokens: state.outputTokens },
-          };
-          const messageStop: MessageStopEvent = { type: "message_stop" };
-          return [messageDelta, messageStop];
+          // `finalize` drains any remaining open blocks (e.g. when
+          // upstream skips output_item.done) before emitting message_*.
+          return finalize(stopReason);
         }
         case "error":
           return this.onError({
@@ -217,24 +247,12 @@ export function makeResponsesToAnthropicStream(): StreamTranslator<
     onEnd() {
       if (state.finished) return [];
       state.finished = true;
-      const messageDelta: MessageDeltaEvent = {
-        type: "message_delta",
-        delta: { stop_reason: "end_turn", stop_sequence: null },
-        usage: { output_tokens: state.outputTokens },
-      };
-      const messageStop: MessageStopEvent = { type: "message_stop" };
-      return [messageDelta, messageStop];
+      return finalize();
     },
     onError(_err) {
       if (state.finished) return [];
       state.finished = true;
-      const messageDelta: MessageDeltaEvent = {
-        type: "message_delta",
-        delta: { stop_reason: "end_turn", stop_sequence: null },
-        usage: { output_tokens: state.outputTokens },
-      };
-      const messageStop: MessageStopEvent = { type: "message_stop" };
-      return [messageDelta, messageStop];
+      return finalize();
     },
   };
 }

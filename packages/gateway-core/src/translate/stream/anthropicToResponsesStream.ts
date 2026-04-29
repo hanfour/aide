@@ -50,7 +50,12 @@ interface State {
     | null;
   /** Anthropic block index → Responses output_index. */
   blockToOutput: Map<number, number>;
-  blockKind: Map<number, "text" | "tool_use">;
+  /**
+   * Output_indices that have an `output_item.added` but not yet a
+   * matching `output_item.done`. Drained on early termination so the
+   * Responses SDK consumer never sees an unclosed item.
+   */
+  openOutputIndices: Set<number>;
   nextOutputIndex: number;
   finished: boolean;
 }
@@ -69,9 +74,21 @@ export function makeAnthropicToResponsesStream(
     outputTokens: 0,
     stopReason: null,
     blockToOutput: new Map(),
-    blockKind: new Map(),
+    openOutputIndices: new Set(),
     nextOutputIndex: 0,
     finished: false,
+  };
+
+  const drainOpenOutputs = (): ResponsesSSEEvent[] => {
+    const out: ResponsesSSEEvent[] = [];
+    for (const outputIndex of state.openOutputIndices) {
+      out.push({
+        type: "response.output_item.done",
+        output_index: outputIndex,
+      });
+    }
+    state.openOutputIndices.clear();
+    return out;
   };
 
   const buildCompleted = (): ResponsesEventCompleted => {
@@ -134,8 +151,8 @@ export function makeAnthropicToResponsesStream(
         case "content_block_start": {
           const outputIndex = state.nextOutputIndex++;
           state.blockToOutput.set(event.index, outputIndex);
+          state.openOutputIndices.add(outputIndex);
           if (event.content_block.type === "text") {
-            state.blockKind.set(event.index, "text");
             return [
               {
                 type: "response.output_item.added",
@@ -154,7 +171,6 @@ export function makeAnthropicToResponsesStream(
               },
             ];
           }
-          state.blockKind.set(event.index, "tool_use");
           return [
             {
               type: "response.output_item.added",
@@ -196,6 +212,7 @@ export function makeAnthropicToResponsesStream(
         case "content_block_stop": {
           const outputIndex = state.blockToOutput.get(event.index);
           if (outputIndex === undefined) return [];
+          state.openOutputIndices.delete(outputIndex);
           return [
             {
               type: "response.output_item.done",
@@ -209,7 +226,9 @@ export function makeAnthropicToResponsesStream(
           return [];
         case "message_stop":
           state.finished = true;
-          return [buildCompleted()];
+          // Drain any blocks the upstream forgot to close before
+          // emitting the terminal completed event.
+          return [...drainOpenOutputs(), buildCompleted()];
         case "ping":
           return [];
         case "error":
@@ -222,12 +241,13 @@ export function makeAnthropicToResponsesStream(
     onEnd() {
       if (state.finished) return [];
       state.finished = true;
-      return [buildCompleted()];
+      return [...drainOpenOutputs(), buildCompleted()];
     },
     onError(err) {
       if (state.finished) return [];
       state.finished = true;
       return [
+        ...drainOpenOutputs(),
         {
           type: "error",
           error: { kind: err.kind, message: err.message },

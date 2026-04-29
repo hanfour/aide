@@ -170,4 +170,55 @@ describe("makeAnthropicToResponsesStream", () => {
     const tail = t.onEnd();
     expect(tail.at(-1)).toMatchObject({ type: "response.completed" });
   });
+
+  it("onEnd drains open output_items before completed (M2)", () => {
+    // Open a text block but skip content_block_stop — onEnd must
+    // emit response.output_item.done for the open output_index.
+    const t = makeAnthropicToResponsesStream({ now: NOW });
+    t.onEvent(start());
+    t.onEvent({
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "text", text: "" },
+    });
+    t.onEvent({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text: "abrupt" },
+    });
+    const tail = t.onEnd();
+    const doneEv = tail.find((e) => e.type === "response.output_item.done");
+    expect(doneEv).toMatchObject({
+      type: "response.output_item.done",
+      output_index: 0,
+    });
+    // The drain runs before response.completed.
+    const completedIdx = tail.findIndex((e) => e.type === "response.completed");
+    const doneIdx = tail.findIndex(
+      (e) => e.type === "response.output_item.done",
+    );
+    expect(doneIdx).toBeLessThan(completedIdx);
+  });
+
+  it("onError drains open output_items before the error event", () => {
+    const t = makeAnthropicToResponsesStream({ now: NOW });
+    t.onEvent(start());
+    t.onEvent({
+      type: "content_block_start",
+      index: 0,
+      content_block: {
+        type: "tool_use",
+        id: "tu",
+        name: "f",
+        input: {},
+      },
+    });
+    const tail = t.onError({ kind: "TimeoutError", message: "took too long" });
+    const doneIdx = tail.findIndex(
+      (e) => e.type === "response.output_item.done",
+    );
+    const errorIdx = tail.findIndex((e) => e.type === "error");
+    expect(doneIdx).toBeGreaterThanOrEqual(0);
+    expect(doneIdx).toBeLessThan(errorIdx);
+  });
 });

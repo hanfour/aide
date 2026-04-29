@@ -40,8 +40,18 @@ export function makeResponsesToChatStream(
       return out;
     },
     onError(err) {
-      ra.onError(err);
-      return ac.onError(err);
+      // Mirror onEnd's flat-map pattern (see chatToResponsesStream
+      // for rationale).
+      const out: ChatStreamOutput[] = [];
+      for (const a of ra.onError(err)) {
+        for (const c of ac.onEvent(a)) {
+          out.push(c);
+        }
+      }
+      for (const c of ac.onError(err)) {
+        out.push(c);
+      }
+      return out;
     },
   };
 }

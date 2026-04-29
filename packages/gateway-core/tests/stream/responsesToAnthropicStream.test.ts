@@ -123,6 +123,41 @@ describe("makeResponsesToAnthropicStream", () => {
     });
   });
 
+  it("onEnd drains open content_blocks before message_delta + message_stop (M2)", () => {
+    const t = makeResponsesToAnthropicStream();
+    // Open a text block but never emit output_item.done.
+    t.onEvent({
+      type: "response.created",
+      response: { id: "resp_x", model: "gpt-4o", created_at: 1 },
+    });
+    t.onEvent({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { type: "message", id: "m", role: "assistant" },
+    });
+    t.onEvent({
+      type: "response.content_part.added",
+      output_index: 0,
+      content_index: 0,
+      part: { type: "output_text", text: "" },
+    });
+    t.onEvent({
+      type: "response.output_text.delta",
+      output_index: 0,
+      content_index: 0,
+      delta: "abrupt",
+    });
+    // No output_item.done — upstream truncated. onEnd must drain.
+    const tail = t.onEnd();
+    const indices = tail
+      .filter((e) => e.type === "content_block_stop")
+      .map((e) => (e.type === "content_block_stop" ? e.index : -1));
+    expect(indices).toEqual([0]);
+    // After the drain, the message terminators follow.
+    expect(tail.find((e) => e.type === "message_delta")).toBeDefined();
+    expect(tail.find((e) => e.type === "message_stop")).toBeDefined();
+  });
+
   it("cached_tokens subtracts from input_tokens (kept on message_start usage neutrally)", () => {
     // The translator captures usage on response.completed only to drive
     // message_delta.usage.output_tokens; the input-token math lives in
