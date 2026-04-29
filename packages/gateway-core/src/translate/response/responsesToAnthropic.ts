@@ -18,10 +18,7 @@
 //     accounting.
 
 import type { AnthropicMessagesResponse, AnthropicUsage } from "../types.js";
-import type {
-  ResponsesResponse,
-  ResponsesUsage,
-} from "../responsesTypes.js";
+import type { ResponsesResponse, ResponsesUsage } from "../responsesTypes.js";
 import {
   responsesFinishReasonToAnthropic,
   type ResponsesFinishReason,
@@ -48,6 +45,11 @@ export function translateResponsesResponseToAnthropic(
 function buildContent(
   resp: ResponsesResponse,
 ): AnthropicMessagesResponse["content"] {
+  // We preserve the upstream `output[]` order rather than re-sorting
+  // text-before-tool_use to match Anthropic's emission convention. The
+  // SDK accepts either ordering on the response side, and preserving
+  // upstream order keeps the round-trip lossless when an upstream
+  // emits text after tool_use (rare but legal).
   const blocks: AnthropicMessagesResponse["content"] = [];
   for (const item of resp.output) {
     if (item.type === "message") {
@@ -59,21 +61,11 @@ function buildContent(
         blocks.push({ type: "text", text });
       }
     } else if (item.type === "function_call") {
-      let parsedArgs: Record<string, unknown>;
-      try {
-        const parsed = JSON.parse(item.arguments);
-        parsedArgs =
-          parsed && typeof parsed === "object" && !Array.isArray(parsed)
-            ? (parsed as Record<string, unknown>)
-            : { _raw: parsed };
-      } catch {
-        parsedArgs = { _raw: item.arguments };
-      }
       blocks.push({
         type: "tool_use",
         id: item.id,
         name: item.name,
-        input: parsedArgs,
+        input: parseToolArguments(item.arguments),
       });
     }
   }
@@ -101,13 +93,33 @@ function mapStopReason(
   return "end_turn";
 }
 
-function isResponsesFinishReason(value: string): value is ResponsesFinishReason {
+function isResponsesFinishReason(
+  value: string,
+): value is ResponsesFinishReason {
   return (
     value === "stop" ||
     value === "max_output_tokens" ||
     value === "tool_calls" ||
     value === "content_filter"
   );
+}
+
+/**
+ * Parse function_call arguments JSON, surfacing malformed payloads
+ * with a `_malformed: true` discriminator so downstream tool handlers
+ * can pattern-match on the wrapper instead of guessing whether `_raw`
+ * meant "couldn't parse" or "wasn't an object".
+ */
+function parseToolArguments(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return { _malformed: true, _raw: parsed };
+  } catch {
+    return { _malformed: true, _raw: raw };
+  }
 }
 
 function buildUsage(usage?: ResponsesUsage): AnthropicUsage {

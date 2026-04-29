@@ -139,7 +139,7 @@ describe("translateChatResponseToAnthropic", () => {
     expect(result.stop_reason).toBeNull();
   });
 
-  it("malformed tool arguments JSON falls back to _raw wrapper", () => {
+  it("malformed tool arguments JSON surfaces { _malformed, _raw } wrapper", () => {
     const result = translateChatResponseToAnthropic(
       makeChat({
         choices: [
@@ -166,7 +166,7 @@ describe("translateChatResponseToAnthropic", () => {
         type: "tool_use",
         id: "c1",
         name: "f",
-        input: { _raw: "{not json" },
+        input: { _malformed: true, _raw: "{not json" },
       },
     ]);
   });
@@ -194,8 +194,47 @@ describe("translateChatResponseToAnthropic", () => {
 
   it("usage maps prompt/completion → input/output tokens", () => {
     const result = translateChatResponseToAnthropic(
-      makeChat({ usage: { prompt_tokens: 99, completion_tokens: 7, total_tokens: 106 } }),
+      makeChat({
+        usage: { prompt_tokens: 99, completion_tokens: 7, total_tokens: 106 },
+      }),
     );
     expect(result.usage).toEqual({ input_tokens: 99, output_tokens: 7 });
+  });
+
+  it("missing usage block (live error responses) → zero tokens, no NPE", () => {
+    // Cast around the type — live OpenAI error paths sometimes omit the
+    // usage object entirely; the translator must not NPE.
+    const result = translateChatResponseToAnthropic(
+      makeChat({
+        choices: [],
+        usage: undefined as unknown as OpenAIChatCompletionResponse["usage"],
+      }),
+    );
+    expect(result.usage).toEqual({ input_tokens: 0, output_tokens: 0 });
+  });
+});
+
+describe("Anthropic → Chat → Anthropic round-trip (4A coupling)", () => {
+  it("preserves text + stop_reason through translateAnthropicToOpenAI + translateChatResponseToAnthropic", async () => {
+    const { translateAnthropicToOpenAI } =
+      await import("../../src/translate/anthropicToOpenai.js");
+    const original = {
+      id: "msg_rt",
+      type: "message" as const,
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text: "round-trip" }],
+      model: "claude-3-5-sonnet-20241022",
+      stop_reason: "end_turn" as const,
+      stop_sequence: null,
+      usage: { input_tokens: 10, output_tokens: 3 },
+    };
+    const chat = translateAnthropicToOpenAI(original);
+    const back = translateChatResponseToAnthropic(chat);
+    // Text content survives both hops.
+    expect(back.content).toEqual([{ type: "text", text: "round-trip" }]);
+    // Stop reason round-trips via the lossy projection (end_turn → stop → end_turn).
+    expect(back.stop_reason).toBe("end_turn");
+    // Usage is preserved.
+    expect(back.usage).toEqual({ input_tokens: 10, output_tokens: 3 });
   });
 });

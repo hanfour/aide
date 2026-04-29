@@ -183,8 +183,19 @@ export interface ResponsesResponse {
   status: "completed" | "incomplete" | "failed" | "in_progress";
   output: ResponsesOutputItem[];
   usage?: ResponsesUsage;
-  /** Set when status is "incomplete" — drives the stop-reason translation. */
+  /**
+   * Set when status is "incomplete" — drives the stop-reason translation.
+   * The `(string & {})` branding keeps the literals visible to autocomplete
+   * while still permitting unknown future values from upstream (e.g. when
+   * OpenAI introduces a new reason that isn't in our translator yet).
+   * Without the branding TypeScript widens the union to plain `string`,
+   * silently erasing the documented values.
+   */
   incomplete_details?: {
-    reason: "max_output_tokens" | "content_filter" | string;
+    reason:
+      | "max_output_tokens"
+      | "content_filter"
+      // eslint-disable-next-line @typescript-eslint/ban-types
+      | (string & {});
   } | null;
 }

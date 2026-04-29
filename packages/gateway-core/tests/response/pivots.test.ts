@@ -184,4 +184,31 @@ describe("pivot round-trip semantics", () => {
     expect(back.choices[0]!.message.content).toBe("round-trip text");
     expect(back.choices[0]!.finish_reason).toBe("stop");
   });
+
+  // M2 — pivot Responses→Chat composes 4A's `translateAnthropicToOpenAI`
+  // for the final hop.  Locks in the content_filter handling so a 4A
+  // regression on the new "refusal" stop_reason fails this pivot test
+  // loudly instead of silently breaking the dispatch path.
+  it("Responses content_filter incomplete → Chat finish_reason content_filter (4A coupling)", () => {
+    const resp: ResponsesResponse = {
+      id: "resp_cf",
+      object: "response",
+      created_at: 1700000000,
+      model: "gpt-4o",
+      status: "incomplete",
+      output: [
+        {
+          type: "message",
+          id: "m",
+          role: "assistant",
+          status: "incomplete",
+          content: [{ type: "output_text", text: "blocked", annotations: [] }],
+        },
+      ],
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      incomplete_details: { reason: "content_filter" },
+    };
+    const result = translateResponsesResponseToChat(resp, { now: NOW });
+    expect(result.choices[0]!.finish_reason).toBe("content_filter");
+  });
 });

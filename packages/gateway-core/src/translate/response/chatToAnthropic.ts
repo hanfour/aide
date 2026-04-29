@@ -68,34 +68,40 @@ function buildContent(
     blocks.push({ type: "text", text: message.content });
   }
   for (const call of message.tool_calls ?? []) {
-    let parsedArgs: Record<string, unknown>;
-    try {
-      const parsed = JSON.parse(call.function.arguments);
-      parsedArgs =
-        parsed && typeof parsed === "object" && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>)
-          : { _raw: parsed };
-    } catch {
-      // Upstream rarely emits malformed JSON, but if it does we keep
-      // the raw string so the downstream tool handler can decide how
-      // to react rather than us swallowing the call entirely.
-      parsedArgs = { _raw: call.function.arguments };
-    }
     blocks.push({
       type: "tool_use",
       id: call.id,
       name: call.function.name,
-      input: parsedArgs,
+      input: parseToolArguments(call.function.arguments),
     });
   }
   return blocks;
 }
 
 function buildUsage(
-  usage: OpenAIChatCompletionResponse["usage"],
+  usage: OpenAIChatCompletionResponse["usage"] | undefined,
 ): AnthropicUsage {
+  if (!usage) return { input_tokens: 0, output_tokens: 0 };
   return {
     input_tokens: usage.prompt_tokens,
     output_tokens: usage.completion_tokens,
   };
+}
+
+/**
+ * Parse tool-call function arguments JSON, surfacing malformed payloads
+ * with a `_malformed: true` discriminator so downstream tool handlers can
+ * decide whether to skip / retry / surface the error rather than treat
+ * the wrapper as a legitimate call.
+ */
+function parseToolArguments(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return { _malformed: true, _raw: parsed };
+  } catch {
+    return { _malformed: true, _raw: raw };
+  }
 }

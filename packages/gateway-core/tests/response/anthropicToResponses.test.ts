@@ -135,4 +135,24 @@ describe("translateAnthropicResponseToResponses", () => {
     const result = translateAnthropicResponseToResponses(makeAnthropic());
     expect(result.created_at).toBeGreaterThan(1700000000);
   });
+
+  it("tool_use stop_reason → status='completed' (not incomplete)", () => {
+    // Confirms only max_output_tokens / content_filter map to incomplete;
+    // tool_use is a clean run-completion in the Responses model.
+    const result = translateAnthropicResponseToResponses(
+      makeAnthropic({
+        stop_reason: "tool_use",
+        content: [
+          {
+            type: "tool_use",
+            id: "tu_1",
+            name: "f",
+            input: {},
+          },
+        ],
+      }),
+    );
+    expect(result.status).toBe("completed");
+    expect(result.incomplete_details).toBeNull();
+  });
 });

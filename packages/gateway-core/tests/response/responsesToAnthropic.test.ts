@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import { translateResponsesResponseToAnthropic } from "../../src/translate/response/responsesToAnthropic.js";
 import type { ResponsesResponse } from "../../src/translate/responsesTypes.js";
 
-function makeResp(overrides: Partial<ResponsesResponse> = {}): ResponsesResponse {
+function makeResp(
+  overrides: Partial<ResponsesResponse> = {},
+): ResponsesResponse {
   return {
     id: "resp_abc",
     object: "response",
@@ -129,7 +131,7 @@ describe("translateResponsesResponseToAnthropic", () => {
     expect(result.usage).toEqual({ input_tokens: 0, output_tokens: 0 });
   });
 
-  it("malformed function_call arguments fall back to _raw wrapper", () => {
+  it("malformed function_call arguments surface { _malformed, _raw } wrapper", () => {
     const result = translateResponsesResponseToAnthropic(
       makeResp({
         output: [
@@ -149,7 +151,7 @@ describe("translateResponsesResponseToAnthropic", () => {
         type: "tool_use",
         id: "fc_2",
         name: "f",
-        input: { _raw: "not json" },
+        input: { _malformed: true, _raw: "not json" },
       },
     ]);
   });
@@ -181,5 +183,33 @@ describe("translateResponsesResponseToAnthropic", () => {
       { type: "text", text: "calling" },
       { type: "tool_use", id: "fc_x", name: "f", input: {} },
     ]);
+  });
+
+  it("output_text annotations are dropped (no Anthropic equivalent)", () => {
+    // Annotations carry citations/file IDs etc. that have no Anthropic
+    // analogue.  We deliberately drop them rather than smuggle them in
+    // a non-standard field — the test documents this contract.
+    const result = translateResponsesResponseToAnthropic(
+      makeResp({
+        output: [
+          {
+            type: "message",
+            id: "m_anno",
+            role: "assistant",
+            status: "completed",
+            content: [
+              {
+                type: "output_text",
+                text: "see citation",
+                annotations: [
+                  { type: "url_citation", url: "https://example.com" },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(result.content).toEqual([{ type: "text", text: "see citation" }]);
   });
 });

@@ -78,7 +78,9 @@ describe("response dispatch table — coverage", () => {
       sampleChat,
     );
     expect(
-      responseTranslators["openai-responses->openai-responses"](sampleResponses),
+      responseTranslators["openai-responses->openai-responses"](
+        sampleResponses,
+      ),
     ).toBe(sampleResponses);
   });
 });
@@ -95,12 +97,9 @@ describe("translateResponse", () => {
   });
 
   it("dispatches openai-chat->anthropic (upstream Anthropic → client Chat)", () => {
-    const out = translateResponse(
-      "openai-chat",
-      "anthropic",
-      sampleAnthropic,
-      { now: NOW },
-    ) as OpenAIChatCompletionResponse;
+    const out = translateResponse("openai-chat", "anthropic", sampleAnthropic, {
+      now: NOW,
+    }) as OpenAIChatCompletionResponse;
     expect(out.object).toBe("chat.completion");
     expect(out.choices[0]!.message.content).toBe("hi");
   });
@@ -147,11 +146,20 @@ describe("translateResponse", () => {
   });
 
   it("passthrough anthropic->anthropic returns body identity", () => {
-    const out = translateResponse(
-      "anthropic",
-      "anthropic",
-      sampleAnthropic,
-    );
+    const out = translateResponse("anthropic", "anthropic", sampleAnthropic);
     expect(out).toBe(sampleAnthropic);
+  });
+
+  it("throws unknown_translate_direction for an invalid direction key", () => {
+    // Cast around the type so we can simulate a route handler that
+    // composed a malformed direction.  Mirrors the request-side
+    // dispatch contract — programming error, not client-input error.
+    expect(() =>
+      translateResponse(
+        "bogus" as unknown as Format,
+        "anthropic",
+        sampleAnthropic,
+      ),
+    ).toThrow(/unknown_translate_direction/);
   });
 });
