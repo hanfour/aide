@@ -30,6 +30,8 @@ import {
   translateAnthropicResponseToResponses,
   makeAnthropicToResponsesStream,
   parseAnthropicSse,
+  extractResponsesUsage,
+  type ResponsesRequest,
   type ResponsesSSEEvent,
 } from "@aide/gateway-core";
 import {
@@ -37,20 +39,55 @@ import {
   AllUpstreamsFailed,
   FatalUpstreamError,
 } from "../runtime/failoverLoop.js";
-import { resolveCredential } from "../runtime/resolveCredential.js";
-import { maybeRefreshOAuth } from "../runtime/oauthRefresh.js";
 import { callUpstreamMessages } from "../runtime/upstreamCall.js";
-import { acquireSlot, releaseSlot } from "../redis/slots.js";
+import { callUpstreamResponses } from "../runtime/upstreamCallOpenai.js";
 import { emitUsageLog } from "../runtime/usageLogging.js";
 import { emitBodyCapture } from "../runtime/bodyCapture.js";
 import { buildSyntheticAnthropicUsage } from "../runtime/syntheticUsageShapes.js";
+import { withSlotAndCredential } from "../runtime/withSlotAndCredential.js";
+import type {
+  NonStreamUpstreamResult,
+  UpstreamResult,
+} from "../runtime/upstreamCall.js";
+
+/**
+ * Convert a non-2xx upstream HTTP response into the throwable shape
+ * the failover-loop classifier expects (status + retryAfter +
+ * truncated message).  Handles both string and string-array
+ * `retry-after` headers.
+ */
+function upstreamErrorThrow(upstream: NonStreamUpstreamResult): {
+  status: number;
+  retryAfter?: number;
+  message: string;
+} {
+  const text = upstream.body.toString("utf8");
+  const retryAfterRaw = upstream.headers["retry-after"];
+  const retryAfter =
+    typeof retryAfterRaw === "string"
+      ? parseInt(retryAfterRaw, 10)
+      : Array.isArray(retryAfterRaw)
+        ? parseInt(retryAfterRaw[0]!, 10)
+        : undefined;
+  return {
+    status: upstream.status,
+    retryAfter: Number.isNaN(retryAfter) ? undefined : retryAfter,
+    message: text.slice(0, 500),
+  };
+}
+
+// Type-narrowing helper used by the streaming attempt callback when
+// the upstream call surprisingly returns non-stream (e.g. on 4xx).
+function expectNonStream(upstream: UpstreamResult): NonStreamUpstreamResult {
+  if (upstream.kind === "stream") {
+    throw { status: 502, message: "unexpected_stream" };
+  }
+  return upstream;
+}
 
 export interface ResponsesRouteOptions {
   env: ServerEnv;
 }
-
-/** Safety-net expiry: slot key expires in Redis even if release is missed. */
-const SLOT_DURATION_MS = 60_000;
 
 /**
  * Per design §9.4 — the schema's `.strict()` already rejects unknown
@@ -120,10 +157,33 @@ export async function responsesRoutes(
       }
       const body = parsed.data;
 
+      if (ctx.platform === "openai") {
+        // OpenAI upstream is the same format as the inbound — body
+        // passthrough. Streaming defers to PR 9e (parses OpenAI
+        // Responses SSE upstream); non-stream goes here.
+        if (body.stream === true) {
+          reply.code(501).send({
+            error: "not_implemented",
+            detail: "openai-upstream streaming arrives in PR 9e",
+          });
+          return;
+        }
+        await runOpenaiResponsesPassthroughFailover(
+          app,
+          opts,
+          req,
+          reply,
+          body,
+          req.id,
+          body.model,
+        );
+        return;
+      }
+
       if (ctx.platform !== "anthropic") {
-        // PR 9c will wire the openai branch (Tasks 9.1 + 9.2 handlers).
+        // gemini / antigravity not in 5A scope; clear deferral signal.
         reply.code(503).send({
-          error: "openai_upstream_not_yet_wired",
+          error: "platform_not_yet_wired",
           platform: ctx.platform,
         });
         return;
@@ -180,120 +240,75 @@ export async function responsesRoutes(
           teamId: req.apiKey.teamId,
           maxSwitches: opts.env.GATEWAY_MAX_ACCOUNT_SWITCHES,
           scheduler: app.gwScheduler,
-          attempt: async (account) => {
-            const acquired = await acquireSlot(
-              app.redis,
-              "account",
-              account.id,
+          attempt: async (account) =>
+            withSlotAndCredential(
+              app,
+              opts,
+              account,
               requestId,
-              account.concurrency,
-              SLOT_DURATION_MS,
-            );
-            if (!acquired) {
-              throw { status: 503, message: "account_at_capacity" };
-            }
-            try {
-              let credential = await resolveCredential(app.db, account.id, {
-                masterKeyHex: opts.env.CREDENTIAL_ENCRYPTION_KEY!,
-              });
-              if (credential.type === "oauth") {
-                credential = await maybeRefreshOAuth(
-                  app.db,
-                  app.redis,
-                  account.id,
+              async (credential) => {
+                const upstream = await callUpstreamMessages({
+                  baseUrl: opts.env.UPSTREAM_ANTHROPIC_BASE_URL,
+                  body: upstreamBodyBuf,
                   credential,
-                  {
-                    masterKeyHex: opts.env.CREDENTIAL_ENCRYPTION_KEY!,
-                    leadMinutes: opts.env.GATEWAY_OAUTH_REFRESH_LEAD_MIN,
-                    maxFail: opts.env.GATEWAY_OAUTH_MAX_FAIL,
-                  },
+                });
+
+                if (upstream.kind === "stream") {
+                  throw { status: 502, message: "unexpected_stream" };
+                }
+
+                if (upstream.status < 200 || upstream.status >= 300) {
+                  throw upstreamErrorThrow(upstream);
+                }
+
+                // Parse defensively — emit a forensic zero-usage log on
+                // parse failure, then 502 the client.
+                let anthropicResp: unknown = null;
+                let parseErr: unknown = null;
+                try {
+                  anthropicResp = JSON.parse(upstream.body.toString("utf8"));
+                } catch (err) {
+                  parseErr = err;
+                  req.log.warn(
+                    {
+                      requestId,
+                      err: err instanceof Error ? err.message : String(err),
+                    },
+                    "upstream 2xx body was not valid JSON; emitting zero-usage log then failing",
+                  );
+                }
+
+                await emitUsageLog({
+                  app,
+                  req,
+                  requestedModel,
+                  accountId: account.id,
+                  upstreamResponse: anthropicResp,
+                  platform: "openai",
+                  surface: "responses",
+                  statusCode: 200,
+                  durationMs: Date.now() - startedAtMs,
+                });
+                await emitBodyCapture({
+                  app,
+                  req,
+                  requestId,
+                  requestBodyJson: upstreamBodyBuf.toString("utf8"),
+                  responseBody: anthropicResp,
+                  stream: false,
+                });
+
+                if (parseErr !== null) {
+                  throw { status: 502, message: "upstream_malformed_json" };
+                }
+
+                return translateAnthropicResponseToResponses(
+                  anthropicResp as Parameters<
+                    typeof translateAnthropicResponseToResponses
+                  >[0],
                 );
-              }
-
-              const upstream = await callUpstreamMessages({
-                baseUrl: opts.env.UPSTREAM_ANTHROPIC_BASE_URL,
-                body: upstreamBodyBuf,
-                credential,
-              });
-
-              if (upstream.kind === "stream") {
-                throw { status: 502, message: "unexpected_stream" };
-              }
-
-              if (upstream.status < 200 || upstream.status >= 300) {
-                const text = upstream.body.toString("utf8");
-                const retryAfterRaw = upstream.headers["retry-after"];
-                const retryAfter =
-                  typeof retryAfterRaw === "string"
-                    ? parseInt(retryAfterRaw, 10)
-                    : Array.isArray(retryAfterRaw)
-                      ? parseInt(retryAfterRaw[0]!, 10)
-                      : undefined;
-                throw {
-                  status: upstream.status,
-                  retryAfter: Number.isNaN(retryAfter) ? undefined : retryAfter,
-                  message: text.slice(0, 500),
-                };
-              }
-
-              // Mirror chatCompletions.ts: parse defensively, emit a
-              // forensic zero-usage log on parse failure, then surface
-              // 502 to the client so they see honest "upstream malformed".
-              let anthropicResp: unknown = null;
-              let parseErr: unknown = null;
-              try {
-                anthropicResp = JSON.parse(upstream.body.toString("utf8"));
-              } catch (err) {
-                parseErr = err;
-                req.log.warn(
-                  {
-                    requestId,
-                    err: err instanceof Error ? err.message : String(err),
-                  },
-                  "upstream 2xx body was not valid JSON; emitting zero-usage log then failing",
-                );
-              }
-
-              await emitUsageLog({
-                app,
-                req,
-                requestedModel,
-                accountId: account.id,
-                upstreamResponse: anthropicResp,
-                platform: "openai",
-                surface: "responses",
-                statusCode: 200,
-                durationMs: Date.now() - startedAtMs,
-              });
-              await emitBodyCapture({
-                app,
-                req,
-                requestId,
-                requestBodyJson: upstreamBodyBuf.toString("utf8"),
-                responseBody: anthropicResp,
-                stream: false,
-              });
-
-              if (parseErr !== null) {
-                throw { status: 502, message: "upstream_malformed_json" };
-              }
-
-              return translateAnthropicResponseToResponses(
-                anthropicResp as Parameters<
-                  typeof translateAnthropicResponseToResponses
-                >[0],
-              );
-            } finally {
-              await releaseSlot(
-                app.redis,
-                "account",
-                account.id,
-                requestId,
-              ).catch(() => {
-                // Slot expires on its own.
-              });
-            }
-          },
+              },
+            ),
         });
 
         reply
@@ -360,159 +375,129 @@ async function runResponsesStreamingFailover(
       teamId: req.apiKey!.teamId,
       maxSwitches: opts.env.GATEWAY_MAX_ACCOUNT_SWITCHES,
       scheduler: app.gwScheduler,
-      attempt: async (account) => {
-        const acquired = await acquireSlot(
-          app.redis,
-          "account",
-          account.id,
+      attempt: async (account) =>
+        withSlotAndCredential(
+          app,
+          opts,
+          account,
           requestId,
-          account.concurrency,
-          SLOT_DURATION_MS,
-        );
-        if (!acquired) {
-          throw { status: 503, message: "account_at_capacity" };
-        }
-
-        try {
-          let credential = await resolveCredential(app.db, account.id, {
-            masterKeyHex: opts.env.CREDENTIAL_ENCRYPTION_KEY!,
-          });
-          if (credential.type === "oauth") {
-            credential = await maybeRefreshOAuth(
-              app.db,
-              app.redis,
-              account.id,
+          async (credential) => {
+            const upstream = await callUpstreamMessages({
+              baseUrl: opts.env.UPSTREAM_ANTHROPIC_BASE_URL,
+              body: upstreamBodyBuf,
               credential,
-              {
-                masterKeyHex: opts.env.CREDENTIAL_ENCRYPTION_KEY!,
-                leadMinutes: opts.env.GATEWAY_OAUTH_REFRESH_LEAD_MIN,
-                maxFail: opts.env.GATEWAY_OAUTH_MAX_FAIL,
-              },
-            );
-          }
-
-          const upstream = await callUpstreamMessages({
-            baseUrl: opts.env.UPSTREAM_ANTHROPIC_BASE_URL,
-            body: upstreamBodyBuf,
-            credential,
-            signal: ac.signal,
-          });
-
-          if (upstream.kind !== "stream") {
-            throw {
-              status: upstream.status,
-              message:
-                upstream.status >= 400
-                  ? upstream.body.toString("utf8").slice(0, 500)
-                  : "expected_stream",
-            };
-          }
-
-          if (upstream.status < 200 || upstream.status >= 300) {
-            throw {
-              status: upstream.status,
-              message: `upstream_${upstream.status}`,
-            };
-          }
-
-          // Capture the terminal `response.completed` event's usage so
-          // the pricing path can run after the stream closes. Stream
-          // events are flushed to the client as soon as they arrive.
-          let completedUsage: {
-            input_tokens: number;
-            output_tokens: number;
-            cached_tokens: number;
-          } | null = null;
-
-          if (!reply.raw.headersSent) {
-            reply.raw.writeHead(200, {
-              "content-type": "text/event-stream",
-              "cache-control": "no-cache",
-              connection: "keep-alive",
+              signal: ac.signal,
             });
-          }
 
-          const translator = makeAnthropicToResponsesStream();
-          const flushEvent = (ev: ResponsesSSEEvent): void => {
-            if (ev.type === "response.completed" && ev.response.usage) {
-              completedUsage = {
-                input_tokens: ev.response.usage.input_tokens,
-                output_tokens: ev.response.usage.output_tokens,
-                cached_tokens:
-                  ev.response.usage.input_tokens_details?.cached_tokens ?? 0,
+            if (upstream.kind !== "stream") {
+              throw {
+                status: upstream.status,
+                message:
+                  upstream.status >= 400
+                    ? upstream.body.toString("utf8").slice(0, 500)
+                    : "expected_stream",
               };
             }
-            // Responses SSE uses named events — `event: <type>\ndata: …`.
-            reply.raw.write(
-              `event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`,
-            );
-          };
 
-          try {
-            for await (const event of parseAnthropicSse(upstream.body, {
-              strict: false,
-              onError: (err) => {
-                req.log.warn(
-                  { requestId, err: err.message },
-                  "anthropic SSE parse error — skipping event",
-                );
-              },
-            })) {
-              for (const ev of translator.onEvent(event)) flushEvent(ev);
+            if (upstream.status < 200 || upstream.status >= 300) {
+              throw {
+                status: upstream.status,
+                message: `upstream_${upstream.status}`,
+              };
             }
-            for (const ev of translator.onEnd()) flushEvent(ev);
-          } catch (err) {
-            for (const ev of translator.onError({
-              kind: err instanceof Error ? err.name : "unknown",
-              message: err instanceof Error ? err.message : String(err),
-            })) {
-              flushEvent(ev);
+
+            // Capture the terminal `response.completed` event's usage so
+            // the pricing path can run after the stream closes. Stream
+            // events are flushed to the client as soon as they arrive.
+            let completedUsage: {
+              input_tokens: number;
+              output_tokens: number;
+              cached_tokens: number;
+            } | null = null;
+
+            if (!reply.raw.headersSent) {
+              reply.raw.writeHead(200, {
+                "content-type": "text/event-stream",
+                "cache-control": "no-cache",
+                connection: "keep-alive",
+              });
             }
-          }
 
-          reply.raw.end();
+            const translator = makeAnthropicToResponsesStream();
+            const flushEvent = (ev: ResponsesSSEEvent): void => {
+              if (ev.type === "response.completed" && ev.response.usage) {
+                completedUsage = {
+                  input_tokens: ev.response.usage.input_tokens,
+                  output_tokens: ev.response.usage.output_tokens,
+                  cached_tokens:
+                    ev.response.usage.input_tokens_details?.cached_tokens ?? 0,
+                };
+              }
+              // Responses SSE uses named events — `event: <type>\ndata: …`.
+              reply.raw.write(
+                `event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`,
+              );
+            };
 
-          // Translate the captured Responses-shape usage back to a
-          // synthetic Anthropic response so emitUsageLog's pricing path
-          // runs unchanged. Cache fields default to zero — the streaming
-          // Anthropic API surfaces `cache_read_input_tokens` only on
-          // message_start, which `makeAnthropicToResponsesStream` already
-          // folded into `input_tokens_details.cached_tokens`.
-          const upstreamResponse = completedUsage
-            ? syntheticAnthropicFromResponsesUsage(
-                completedUsage,
-                requestedModel,
-                requestId,
-              )
-            : null;
-          await emitUsageLog({
-            app,
-            req,
-            requestedModel,
-            accountId: account.id,
-            upstreamResponse,
-            platform: "openai",
-            surface: "responses",
-            statusCode: 200,
-            durationMs: Date.now() - startedAtMs,
-          });
-          await emitBodyCapture({
-            app,
-            req,
-            requestId,
-            requestBodyJson: upstreamBodyBuf.toString("utf8"),
-            responseBody: null,
-            stream: true,
-          });
-          return undefined as never;
-        } finally {
-          await releaseSlot(app.redis, "account", account.id, requestId).catch(
-            () => {
-              // Slot expires on its own.
-            },
-          );
-        }
-      },
+            try {
+              for await (const event of parseAnthropicSse(upstream.body, {
+                strict: false,
+                onError: (err) => {
+                  req.log.warn(
+                    { requestId, err: err.message },
+                    "anthropic SSE parse error — skipping event",
+                  );
+                },
+              })) {
+                for (const ev of translator.onEvent(event)) flushEvent(ev);
+              }
+              for (const ev of translator.onEnd()) flushEvent(ev);
+            } catch (err) {
+              for (const ev of translator.onError({
+                kind: err instanceof Error ? err.name : "unknown",
+                message: err instanceof Error ? err.message : String(err),
+              })) {
+                flushEvent(ev);
+              }
+            }
+
+            reply.raw.end();
+
+            // Translate the captured Responses-shape usage back to a
+            // synthetic Anthropic response so emitUsageLog's pricing path
+            // runs unchanged. Cache fields default to zero — the streaming
+            // Anthropic API surfaces `cache_read_input_tokens` only on
+            // message_start, which `makeAnthropicToResponsesStream` already
+            // folded into `input_tokens_details.cached_tokens`.
+            const upstreamResponse = completedUsage
+              ? syntheticAnthropicFromResponsesUsage(
+                  completedUsage,
+                  requestedModel,
+                  requestId,
+                )
+              : null;
+            await emitUsageLog({
+              app,
+              req,
+              requestedModel,
+              accountId: account.id,
+              upstreamResponse,
+              platform: "openai",
+              surface: "responses",
+              statusCode: 200,
+              durationMs: Date.now() - startedAtMs,
+            });
+            await emitBodyCapture({
+              app,
+              req,
+              requestId,
+              requestBodyJson: upstreamBodyBuf.toString("utf8"),
+              responseBody: null,
+              stream: true,
+            });
+            return undefined as never;
+          },
+        ),
     });
   } catch (err) {
     if (
@@ -581,10 +566,150 @@ function syntheticAnthropicFromResponsesUsage(
   requestId: string,
 ): ReturnType<typeof buildSyntheticAnthropicUsage> {
   return buildSyntheticAnthropicUsage({
-    id: `synthetic-stream:${requestId}`,
+    id: `synthetic:anthropic-stream:${requestId}`,
     model,
     inputTokens: Math.max(0, usage.input_tokens - usage.cached_tokens),
     outputTokens: usage.output_tokens,
     cacheReadInputTokens: usage.cached_tokens,
   });
+}
+
+// ---------------------------------------------------------------------------
+// OpenAI-upstream passthrough path (Plan 5A PR 9d).
+//
+// When `group.platform === "openai"` and the inbound route is also
+// `/v1/responses`, the client and upstream speak the same format —
+// body passthrough.  Auth headers + endpoint URL differ from the
+// Anthropic helper (Bearer token, `/v1/responses` on api.openai.com),
+// so we use `callUpstreamResponses`.  Reuses the same failover loop /
+// scheduler / slot semantics.
+//
+// Streaming is deferred to PR 9e (parses OpenAI Responses SSE upstream
+// and re-emits it; current PR returns 501 for stream=true).
+//
+// Usage extraction: OpenAI's Responses non-stream response shape
+// surfaces `usage.input_tokens` + `output_tokens` (+ optional
+// `input_tokens_details.cached_tokens`).  We translate that to the
+// shared synthetic Anthropic shape so emitUsageLog's pricing path runs
+// unchanged.
+// ---------------------------------------------------------------------------
+
+async function runOpenaiResponsesPassthroughFailover(
+  app: FastifyInstance,
+  opts: ResponsesRouteOptions,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  body: ResponsesRequest,
+  requestId: string,
+  requestedModel: string,
+): Promise<void> {
+  const startedAtMs = Date.now();
+  const upstreamBodyBuf = Buffer.from(JSON.stringify(body));
+
+  try {
+    const responsesResp = await runFailover({
+      db: app.db,
+      orgId: req.apiKey!.orgId,
+      teamId: req.apiKey!.teamId,
+      maxSwitches: opts.env.GATEWAY_MAX_ACCOUNT_SWITCHES,
+      scheduler: app.gwScheduler,
+      attempt: async (account) =>
+        withSlotAndCredential(
+          app,
+          opts,
+          account,
+          requestId,
+          async (credential) => {
+            const upstream = expectNonStream(
+              await callUpstreamResponses({
+                baseUrl: opts.env.UPSTREAM_OPENAI_BASE_URL,
+                body: upstreamBodyBuf,
+                credential,
+              }),
+            );
+
+            if (upstream.status < 200 || upstream.status >= 300) {
+              throw upstreamErrorThrow(upstream);
+            }
+
+            let openaiResp: unknown = null;
+            let parseErr: unknown = null;
+            try {
+              openaiResp = JSON.parse(upstream.body.toString("utf8"));
+            } catch (err) {
+              parseErr = err;
+              req.log.warn(
+                {
+                  requestId,
+                  err: err instanceof Error ? err.message : String(err),
+                },
+                "openai upstream 2xx body was not valid JSON",
+              );
+            }
+
+            // Translate OpenAI usage → synthetic Anthropic shape so
+            // emitUsageLog's pricing path runs unchanged.
+            const usage = extractResponsesUsage(openaiResp);
+            const cached = usage?.input_tokens_details?.cached_tokens ?? 0;
+            const upstreamForLog = usage
+              ? buildSyntheticAnthropicUsage({
+                  id: `synthetic:openai-passthrough:${requestId}`,
+                  model: requestedModel,
+                  inputTokens: Math.max(0, usage.input_tokens - cached),
+                  outputTokens: usage.output_tokens,
+                  cacheReadInputTokens: cached,
+                })
+              : null;
+
+            await emitUsageLog({
+              app,
+              req,
+              requestedModel,
+              accountId: account.id,
+              upstreamResponse: upstreamForLog,
+              platform: "openai",
+              surface: "responses",
+              statusCode: 200,
+              durationMs: Date.now() - startedAtMs,
+            });
+            await emitBodyCapture({
+              app,
+              req,
+              requestId,
+              requestBodyJson: upstreamBodyBuf.toString("utf8"),
+              responseBody: openaiResp,
+              stream: false,
+            });
+
+            if (parseErr !== null) {
+              throw { status: 502, message: "upstream_malformed_json" };
+            }
+
+            return openaiResp;
+          },
+        ),
+    });
+
+    reply
+      .code(200)
+      .header("content-type", "application/json")
+      .send(responsesResp);
+  } catch (err) {
+    if (err instanceof AllUpstreamsFailed) {
+      reply.code(503).send({
+        error: "all_upstreams_failed",
+        attempted_count: err.attemptedIds.length,
+        request_id: requestId,
+      });
+      return;
+    }
+    if (err instanceof FatalUpstreamError) {
+      reply.code(err.statusCode).send({
+        error: err.reason,
+        request_id: requestId,
+      });
+      return;
+    }
+    throw err;
+  }
 }
