@@ -49,7 +49,16 @@ afterAll(async () => {
 
 let fakeServer: Server;
 let fakeBaseUrl: string;
-let nextUpstreamResponse: { status: number; body: string };
+let nextUpstreamResponse: {
+  status: number;
+  body: string;
+  /**
+   * When set, the server writes SSE chunks (`event:…\ndata:…\n\n`)
+   * instead of a JSON body, with `content-type: text/event-stream`.
+   * Used by the streaming test to simulate Anthropic SSE upstream.
+   */
+  sseChunks?: string[];
+};
 let lastUpstreamRequest: {
   url: string | undefined;
   method: string | undefined;
@@ -80,6 +89,14 @@ beforeAll(async () => {
     });
     req.on("end", () => {
       lastUpstreamRequest = { url: req.url, method: req.method, body };
+      if (nextUpstreamResponse.sseChunks) {
+        res.statusCode = nextUpstreamResponse.status;
+        res.setHeader("content-type", "text/event-stream");
+        res.setHeader("cache-control", "no-cache");
+        for (const c of nextUpstreamResponse.sseChunks) res.write(c);
+        res.end();
+        return;
+      }
       res.statusCode = nextUpstreamResponse.status;
       res.setHeader("content-type", "application/json");
       res.end(nextUpstreamResponse.body);
@@ -415,7 +432,7 @@ describe("/v1/responses", () => {
     await app.close();
   });
 
-  it("6. stream=true → 501 (deferred to PR 9c)", async () => {
+  it("6. stream=true → SSE bytes translated to Responses events + completed", async () => {
     const orgId = await seedOrg();
     const userId = await seedUser();
     const rawKey = `ak_resp_strm_${Math.random().toString(36).slice(2)}`;
@@ -424,6 +441,47 @@ describe("/v1/responses", () => {
       orgId,
       JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
     );
+
+    // Synthesize a minimal Anthropic SSE stream — message_start, one
+    // text delta, content_block_stop, message_delta, message_stop.
+    nextUpstreamResponse = {
+      status: 200,
+      body: "",
+      sseChunks: [
+        `event: message_start\ndata: ${JSON.stringify({
+          type: "message_start",
+          message: {
+            id: "msg_resp_stream_1",
+            model: "claude-3-haiku-20240307",
+            role: "assistant",
+            content: [],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 7, output_tokens: 0 },
+          },
+        })}\n\n`,
+        `event: content_block_start\ndata: ${JSON.stringify({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "text", text: "" },
+        })}\n\n`,
+        `event: content_block_delta\ndata: ${JSON.stringify({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "Hello" },
+        })}\n\n`,
+        `event: content_block_stop\ndata: ${JSON.stringify({
+          type: "content_block_stop",
+          index: 0,
+        })}\n\n`,
+        `event: message_delta\ndata: ${JSON.stringify({
+          type: "message_delta",
+          delta: { stop_reason: "end_turn", stop_sequence: null },
+          usage: { output_tokens: 1 },
+        })}\n\n`,
+        `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`,
+      ],
+    };
 
     const redis = makeRedisMock();
     const app = await makeApp(redis, container.getConnectionUri());
@@ -434,8 +492,28 @@ describe("/v1/responses", () => {
       headers: { authorization: `Bearer ${rawKey}` },
       payload: { ...validResponsesPayload, stream: true },
     });
-    expect(res.statusCode).toBe(501);
-    expect(res.json().error).toBe("not_implemented");
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/event-stream/);
+    const body = res.body;
+    // Responses SSE uses named events.
+    expect(body).toContain("event: response.created");
+    expect(body).toContain("event: response.output_item.added");
+    expect(body).toContain("event: response.content_part.added");
+    expect(body).toContain("event: response.output_text.delta");
+    expect(body).toContain("event: response.output_item.done");
+    expect(body).toContain("event: response.completed");
+    // The translated text delta survives the round-trip.
+    expect(body).toContain('"delta":"Hello"');
+    // Synthetic id from message_start surfaces in the response.created.
+    expect(body).toContain("msg_resp_stream_1");
+    // Terminal completed event has status=completed + usage.
+    expect(body).toContain('"status":"completed"');
+
+    // Verify the upstream request was sent with stream=true.
+    expect(lastUpstreamRequest).not.toBeNull();
+    const upstreamBody = JSON.parse(lastUpstreamRequest!.body!);
+    expect(upstreamBody.stream).toBe(true);
     await app.close();
   });
 
