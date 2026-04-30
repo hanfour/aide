@@ -731,7 +731,7 @@ describe("/v1/responses", () => {
     await app.close();
   });
 
-  it("7c. openai-platform group + stream=true → 501 (deferred to PR 9e)", async () => {
+  it("7c. openai-platform group + stream=true → SSE bytes parsed and re-emitted", async () => {
     const orgId = await seedOrg();
     const userId = await seedUser();
     const groupId = await seedGroup(orgId, "openai");
@@ -743,6 +743,48 @@ describe("/v1/responses", () => {
       "openai",
     );
 
+    // Synthesize a 6-event OpenAI Responses SSE stream.
+    nextUpstreamResponse = {
+      status: 200,
+      body: "",
+      sseChunks: [
+        `event: response.created\ndata: ${JSON.stringify({
+          type: "response.created",
+          response: { id: "resp_oai_stream_1", model: "gpt-4o", created_at: 1 },
+        })}\n\n`,
+        `event: response.output_item.added\ndata: ${JSON.stringify({
+          type: "response.output_item.added",
+          output_index: 0,
+          item: { type: "message", id: "msg_oai_1", role: "assistant" },
+        })}\n\n`,
+        `event: response.content_part.added\ndata: ${JSON.stringify({
+          type: "response.content_part.added",
+          output_index: 0,
+          content_index: 0,
+          part: { type: "output_text", text: "" },
+        })}\n\n`,
+        `event: response.output_text.delta\ndata: ${JSON.stringify({
+          type: "response.output_text.delta",
+          output_index: 0,
+          content_index: 0,
+          delta: "Hello world",
+        })}\n\n`,
+        `event: response.output_item.done\ndata: ${JSON.stringify({
+          type: "response.output_item.done",
+          output_index: 0,
+        })}\n\n`,
+        `event: response.completed\ndata: ${JSON.stringify({
+          type: "response.completed",
+          response: {
+            id: "resp_oai_stream_1",
+            status: "completed",
+            incomplete_details: null,
+            usage: { input_tokens: 9, output_tokens: 2, total_tokens: 11 },
+          },
+        })}\n\n`,
+      ],
+    };
+
     const redis = makeRedisMock();
     const app = await makeApp(redis, container.getConnectionUri());
 
@@ -752,11 +794,141 @@ describe("/v1/responses", () => {
       headers: { authorization: `Bearer ${rawKey}` },
       payload: { ...validResponsesPayload, stream: true },
     });
-    expect(res.statusCode).toBe(501);
-    expect(res.json()).toMatchObject({
-      error: "not_implemented",
-      detail: expect.stringContaining("openai-upstream streaming"),
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/event-stream/);
+    const body = res.body;
+    // All 6 named events made the round trip.
+    expect(body).toContain("event: response.created");
+    expect(body).toContain("event: response.output_item.added");
+    expect(body).toContain("event: response.content_part.added");
+    expect(body).toContain("event: response.output_text.delta");
+    expect(body).toContain("event: response.output_item.done");
+    expect(body).toContain("event: response.completed");
+    // The text delta survives.
+    expect(body).toContain('"delta":"Hello world"');
+    // Synthetic id from response.created surfaces.
+    expect(body).toContain("resp_oai_stream_1");
+    // Terminal completed event has the usage we sent upstream.
+    expect(body).toContain('"input_tokens":9');
+    expect(body).toContain('"output_tokens":2');
+
+    // Verify upstream got stream=true on the body and was POSTed to
+    // /v1/responses (not /v1/messages).
+    expect(lastUpstreamRequest).not.toBeNull();
+    expect(lastUpstreamRequest!.url).toBe("/v1/responses");
+    const upstreamBody = JSON.parse(lastUpstreamRequest!.body!);
+    expect(upstreamBody.stream).toBe(true);
+    await app.close();
+  });
+
+  it("7c-i. openai stream with malformed SSE JSON mid-stream → continues (lenient)", async () => {
+    // The parser runs in `strict: false` mode at the route, so a single
+    // malformed event doesn't abort the stream — the surrounding events
+    // still reach the client.
+    const orgId = await seedOrg();
+    const userId = await seedUser();
+    const groupId = await seedGroup(orgId, "openai");
+    const rawKey = `ak_resp_oai_strm_mal_${Math.random().toString(36).slice(2)}`;
+    await seedApiKey(orgId, userId, rawKey, groupId);
+    await seedAccount(
+      orgId,
+      JSON.stringify({ type: "api_key", api_key: "sk-openai-test" }),
+      "openai",
+    );
+
+    nextUpstreamResponse = {
+      status: 200,
+      body: "",
+      sseChunks: [
+        `event: response.created\ndata: ${JSON.stringify({
+          type: "response.created",
+          response: { id: "resp_mal", model: "gpt-4o", created_at: 1 },
+        })}\n\n`,
+        // Malformed event — invalid JSON in the middle.
+        `event: response.output_text.delta\ndata: not-json-at-all\n\n`,
+        `event: response.completed\ndata: ${JSON.stringify({
+          type: "response.completed",
+          response: {
+            id: "resp_mal",
+            status: "completed",
+            incomplete_details: null,
+            usage: { input_tokens: 3, output_tokens: 1, total_tokens: 4 },
+          },
+        })}\n\n`,
+      ],
+    };
+
+    const redis = makeRedisMock();
+    const app = await makeApp(redis, container.getConnectionUri());
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/responses",
+      headers: { authorization: `Bearer ${rawKey}` },
+      payload: { ...validResponsesPayload, stream: true },
     });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.body;
+    // Surrounding events made it through.
+    expect(body).toContain("event: response.created");
+    expect(body).toContain("event: response.completed");
+    // The malformed event was dropped (no `not-json-at-all` text in output).
+    expect(body).not.toContain("not-json-at-all");
+    await app.close();
+  });
+
+  it("7c-ii. openai stream truncated before response.completed → usage_log fed null", async () => {
+    // When upstream closes mid-stream without ever emitting
+    // response.completed, the parser exits cleanly (no events left)
+    // and the usage_log row gets null upstreamResponse — which
+    // emitUsageLog then writes as a zero-cost forensic entry.  The
+    // client still gets the partial events that did arrive.
+    const orgId = await seedOrg();
+    const userId = await seedUser();
+    const groupId = await seedGroup(orgId, "openai");
+    const rawKey = `ak_resp_oai_strm_trunc_${Math.random().toString(36).slice(2)}`;
+    await seedApiKey(orgId, userId, rawKey, groupId);
+    await seedAccount(
+      orgId,
+      JSON.stringify({ type: "api_key", api_key: "sk-openai-test" }),
+      "openai",
+    );
+
+    nextUpstreamResponse = {
+      status: 200,
+      body: "",
+      sseChunks: [
+        `event: response.created\ndata: ${JSON.stringify({
+          type: "response.created",
+          response: { id: "resp_trunc", model: "gpt-4o", created_at: 1 },
+        })}\n\n`,
+        `event: response.output_text.delta\ndata: ${JSON.stringify({
+          type: "response.output_text.delta",
+          output_index: 0,
+          content_index: 0,
+          delta: "hi",
+        })}\n\n`,
+        // No response.completed — upstream truncates here.
+      ],
+    };
+
+    const redis = makeRedisMock();
+    const app = await makeApp(redis, container.getConnectionUri());
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/responses",
+      headers: { authorization: `Bearer ${rawKey}` },
+      payload: { ...validResponsesPayload, stream: true },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("event: response.created");
+    expect(res.body).toContain('"delta":"hi"');
+    // No completed event reached the client.
+    expect(res.body).not.toContain("event: response.completed");
     await app.close();
   });
 
