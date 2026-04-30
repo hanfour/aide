@@ -517,6 +517,108 @@ describe("/v1/responses", () => {
     await app.close();
   });
 
+  it("6b. stream=true with tool_use → function_call output_item events", async () => {
+    const orgId = await seedOrg();
+    const userId = await seedUser();
+    const rawKey = `ak_resp_strm_tool_${Math.random().toString(36).slice(2)}`;
+    await seedApiKey(orgId, userId, rawKey);
+    await seedAccount(
+      orgId,
+      JSON.stringify({ type: "api_key", api_key: "sk-anthropic-test" }),
+    );
+
+    // Anthropic SSE for a tool_use turn — message_start, tool_use
+    // content_block_start, two input_json_delta fragments, stop, then
+    // message_delta with stop_reason=tool_use.
+    nextUpstreamResponse = {
+      status: 200,
+      body: "",
+      sseChunks: [
+        `event: message_start\ndata: ${JSON.stringify({
+          type: "message_start",
+          message: {
+            id: "msg_tool_stream",
+            model: "claude-3-haiku-20240307",
+            role: "assistant",
+            content: [],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 4, output_tokens: 0 },
+          },
+        })}\n\n`,
+        `event: content_block_start\ndata: ${JSON.stringify({
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "tu_stream_a",
+            name: "lookup",
+            input: {},
+          },
+        })}\n\n`,
+        `event: content_block_delta\ndata: ${JSON.stringify({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: '{"q":' },
+        })}\n\n`,
+        `event: content_block_delta\ndata: ${JSON.stringify({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: '"weather"}' },
+        })}\n\n`,
+        `event: content_block_stop\ndata: ${JSON.stringify({
+          type: "content_block_stop",
+          index: 0,
+        })}\n\n`,
+        `event: message_delta\ndata: ${JSON.stringify({
+          type: "message_delta",
+          delta: { stop_reason: "tool_use", stop_sequence: null },
+          usage: { output_tokens: 3 },
+        })}\n\n`,
+        `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`,
+      ],
+    };
+
+    const redis = makeRedisMock();
+    const app = await makeApp(redis, container.getConnectionUri());
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/responses",
+      headers: { authorization: `Bearer ${rawKey}` },
+      payload: {
+        ...validResponsesPayload,
+        stream: true,
+        tools: [
+          {
+            type: "function",
+            name: "lookup",
+            parameters: { type: "object" },
+          },
+        ],
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/event-stream/);
+    const body = res.body;
+    // Function-call output_item path emitted, with name + call_id mirrored
+    // from the upstream tool_use id.
+    expect(body).toContain('"type":"function_call"');
+    expect(body).toContain('"name":"lookup"');
+    expect(body).toContain("tu_stream_a");
+    // Both input_json_delta fragments survive as
+    // response.function_call_arguments.delta.
+    expect(body).toContain("event: response.function_call_arguments.delta");
+    expect(body).toContain('"delta":"{\\"q\\":"');
+    expect(body).toContain('"delta":"\\"weather\\"}"');
+    // Terminal completed event status=completed (tool_use is a clean
+    // run-completion in the Responses model; not "incomplete").
+    expect(body).toContain("event: response.completed");
+    expect(body).toContain('"status":"completed"');
+    await app.close();
+  });
+
   it("7. openai-platform group → 503 openai_upstream_not_yet_wired", async () => {
     const orgId = await seedOrg();
     const userId = await seedUser();

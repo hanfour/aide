@@ -43,6 +43,7 @@ import { callUpstreamMessages } from "../runtime/upstreamCall.js";
 import { acquireSlot, releaseSlot } from "../redis/slots.js";
 import { emitUsageLog } from "../runtime/usageLogging.js";
 import { emitBodyCapture } from "../runtime/bodyCapture.js";
+import { buildSyntheticAnthropicUsage } from "../runtime/syntheticUsageShapes.js";
 
 export interface ResponsesRouteOptions {
   env: ServerEnv;
@@ -481,6 +482,7 @@ async function runResponsesStreamingFailover(
             ? syntheticAnthropicFromResponsesUsage(
                 completedUsage,
                 requestedModel,
+                requestId,
               )
             : null;
           await emitUsageLog({
@@ -520,15 +522,19 @@ async function runResponsesStreamingFailover(
       if (reply.raw.headersSent) {
         // Responses uses named events — surface the error in the same
         // shape the SDK consumer would parse from real upstream errors.
+        // M2 from PR #44 review: `message` carries the actual error,
+        // not the requestId; the requestId goes in its own field.
+        const kind =
+          err instanceof FatalUpstreamError
+            ? err.reason
+            : "all_upstreams_failed";
+        const message =
+          err instanceof FatalUpstreamError
+            ? err.message
+            : `all upstreams failed (attempted=${err.attemptedIds.length})`;
         const errorEvent = {
           type: "error" as const,
-          error: {
-            kind:
-              err instanceof FatalUpstreamError
-                ? err.reason
-                : "all_upstreams_failed",
-            message: requestId,
-          },
+          error: { kind, message, request_id: requestId },
         };
         reply.raw.write(
           `event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`,
@@ -563,46 +569,22 @@ async function runResponsesStreamingFailover(
 }
 
 /**
- * Build a minimal Anthropic-shaped response object from the Responses
- * SSE terminal usage so emitUsageLog's pricing path receives the same
- * shape it would on the non-streaming hot path.  Mirrors the helper
- * pattern in chatCompletions.ts.
+ * Adapter from the Responses SSE terminal usage shape into the shared
+ * synthetic Anthropic shape consumed by `emitUsageLog`'s pricing path.
+ * Responses `input_tokens` is the gross count (cached + non-cached);
+ * the pricing path expects Anthropic's split (non-cached in
+ * `input_tokens`, cached in `cache_read_input_tokens`).
  */
 function syntheticAnthropicFromResponsesUsage(
   usage: { input_tokens: number; output_tokens: number; cached_tokens: number },
   model: string,
-): {
-  id: string;
-  type: "message";
-  role: "assistant";
-  content: [];
-  model: string;
-  stop_reason: null;
-  stop_sequence: null;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-    cache_creation_input_tokens: 0;
-    cache_read_input_tokens: number;
-  };
-} {
-  // Responses `input_tokens` is the gross count (including cached); the
-  // existing pricing path expects Anthropic's split (non-cached in
-  // `input_tokens`, cached in `cache_read_input_tokens`).
-  const nonCached = Math.max(0, usage.input_tokens - usage.cached_tokens);
-  return {
-    id: "synthetic",
-    type: "message",
-    role: "assistant",
-    content: [],
+  requestId: string,
+): ReturnType<typeof buildSyntheticAnthropicUsage> {
+  return buildSyntheticAnthropicUsage({
+    id: `synthetic-stream:${requestId}`,
     model,
-    stop_reason: null,
-    stop_sequence: null,
-    usage: {
-      input_tokens: nonCached,
-      output_tokens: usage.output_tokens,
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: usage.cached_tokens,
-    },
-  };
+    inputTokens: Math.max(0, usage.input_tokens - usage.cached_tokens),
+    outputTokens: usage.output_tokens,
+    cacheReadInputTokens: usage.cached_tokens,
+  });
 }
