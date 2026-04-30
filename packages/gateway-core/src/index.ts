@@ -33,4 +33,5 @@ export * from "./translate/stream/responsesToAnthropicStream.js";
 export * from "./translate/stream/chatToResponsesStream.js";
 export * from "./translate/stream/responsesToChatStream.js";
 export * from "./stream/anthropicSseParser.js";
+export * from "./stream/openaiResponsesSseParser.js";
 export * from "./translate/anthropicToOpenaiStream.js";

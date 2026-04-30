@@ -30,6 +30,7 @@ import {
   translateAnthropicResponseToResponses,
   makeAnthropicToResponsesStream,
   parseAnthropicSse,
+  parseOpenAIResponsesSse,
   extractResponsesUsage,
   type ResponsesRequest,
   type ResponsesSSEEvent,
@@ -159,13 +160,19 @@ export async function responsesRoutes(
 
       if (ctx.platform === "openai") {
         // OpenAI upstream is the same format as the inbound — body
-        // passthrough. Streaming defers to PR 9e (parses OpenAI
-        // Responses SSE upstream); non-stream goes here.
+        // passthrough on both the request and the response.  Stream +
+        // non-stream paths share the same shape; only the upstream
+        // call + serialization differ.
         if (body.stream === true) {
-          reply.code(501).send({
-            error: "not_implemented",
-            detail: "openai-upstream streaming arrives in PR 9e",
-          });
+          await runOpenaiResponsesStreamingPassthrough(
+            app,
+            opts,
+            req,
+            reply,
+            body,
+            req.id,
+            body.model,
+          );
           return;
         }
         await runOpenaiResponsesPassthroughFailover(
@@ -711,5 +718,239 @@ async function runOpenaiResponsesPassthroughFailover(
       return;
     }
     throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// OpenAI-upstream streaming passthrough (Plan 5A PR 9e).
+//
+// Same shape as the non-stream openai passthrough — body forwarded
+// verbatim, response forwarded verbatim — but byte-by-byte: parse the
+// upstream Responses SSE via `parseOpenAIResponsesSse`, re-serialize
+// each event to SSE bytes for the client, and watch for the terminal
+// `response.completed` event to extract usage for the pricing path.
+//
+// We don't tee/shadow the byte stream because (a) we need to detect
+// the terminal event to write the usage_log row anyway, (b) parsing
+// + re-serialising is O(event count) with no measurable overhead vs
+// raw passthrough, and (c) it lets the route observe protocol
+// errors and surface them to the client in the same SSE-shaped form
+// the SDK expects.
+// ---------------------------------------------------------------------------
+
+async function runOpenaiResponsesStreamingPassthrough(
+  app: FastifyInstance,
+  opts: ResponsesRouteOptions,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  body: ResponsesRequest,
+  requestId: string,
+  requestedModel: string,
+): Promise<void> {
+  reply.hijack();
+  const startedAtMs = Date.now();
+  const upstreamBodyBuf = Buffer.from(JSON.stringify(body));
+
+  // Wire AbortSignal from client disconnect so a hung upstream is cancelled.
+  const ac = new AbortController();
+  const onClose = () => ac.abort();
+  req.raw.once("close", onClose);
+
+  try {
+    await runFailover({
+      db: app.db,
+      orgId: req.apiKey!.orgId,
+      teamId: req.apiKey!.teamId,
+      maxSwitches: opts.env.GATEWAY_MAX_ACCOUNT_SWITCHES,
+      scheduler: app.gwScheduler,
+      attempt: async (account) =>
+        withSlotAndCredential(
+          app,
+          opts,
+          account,
+          requestId,
+          async (credential) => {
+            const upstream = await callUpstreamResponses({
+              baseUrl: opts.env.UPSTREAM_OPENAI_BASE_URL,
+              body: upstreamBodyBuf,
+              credential,
+              signal: ac.signal,
+            });
+
+            if (upstream.kind !== "stream") {
+              throw {
+                status: upstream.status,
+                message:
+                  upstream.status >= 400
+                    ? upstream.body.toString("utf8").slice(0, 500)
+                    : "expected_stream",
+              };
+            }
+
+            if (upstream.status < 200 || upstream.status >= 300) {
+              throw {
+                status: upstream.status,
+                message: `upstream_${upstream.status}`,
+              };
+            }
+
+            // Capture the terminal `response.completed` event's usage
+            // so the pricing path can run after the stream closes.
+            // Stream events are flushed to the client as soon as they
+            // arrive.  `usageRef` boxing avoids TS's closure-narrowing
+            // confusion (assignments inside `flushEvent` would
+            // otherwise re-narrow to `never` at the read site).
+            const usageRef: {
+              current: {
+                input_tokens: number;
+                output_tokens: number;
+                cached_tokens: number;
+              } | null;
+            } = { current: null };
+
+            if (!reply.raw.headersSent) {
+              reply.raw.writeHead(200, {
+                "content-type": "text/event-stream",
+                "cache-control": "no-cache",
+                connection: "keep-alive",
+              });
+            }
+
+            const flushEvent = (ev: ResponsesSSEEvent): void => {
+              if (ev.type === "response.completed" && ev.response.usage) {
+                usageRef.current = {
+                  input_tokens: ev.response.usage.input_tokens,
+                  output_tokens: ev.response.usage.output_tokens,
+                  cached_tokens:
+                    ev.response.usage.input_tokens_details?.cached_tokens ?? 0,
+                };
+              }
+              reply.raw.write(
+                `event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`,
+              );
+            };
+
+            try {
+              for await (const event of parseOpenAIResponsesSse(upstream.body, {
+                strict: false,
+                onError: (err) => {
+                  req.log.warn(
+                    { requestId, err: err.message },
+                    "openai responses SSE parse error — skipping event",
+                  );
+                },
+                onUnknownEvent: (eventName) => {
+                  req.log.debug(
+                    { requestId, eventName },
+                    "openai responses SSE: unknown event type dropped",
+                  );
+                },
+              })) {
+                flushEvent(event);
+              }
+            } catch (err) {
+              // Mid-stream error: surface as an SSE error event in the
+              // same shape the SDK consumer would parse from real
+              // upstream errors, then close cleanly.
+              const errorEvent = {
+                type: "error" as const,
+                error: {
+                  kind: err instanceof Error ? err.name : "unknown",
+                  message: err instanceof Error ? err.message : String(err),
+                  request_id: requestId,
+                },
+              };
+              reply.raw.write(
+                `event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`,
+              );
+            }
+
+            reply.raw.end();
+
+            // Pricing path: synthetic Anthropic shape from the
+            // captured Responses usage.
+            const completedUsage = usageRef.current;
+            const upstreamForLog = completedUsage
+              ? buildSyntheticAnthropicUsage({
+                  id: `synthetic:openai-stream:${requestId}`,
+                  model: requestedModel,
+                  inputTokens: Math.max(
+                    0,
+                    completedUsage.input_tokens - completedUsage.cached_tokens,
+                  ),
+                  outputTokens: completedUsage.output_tokens,
+                  cacheReadInputTokens: completedUsage.cached_tokens,
+                })
+              : null;
+            await emitUsageLog({
+              app,
+              req,
+              requestedModel,
+              accountId: account.id,
+              upstreamResponse: upstreamForLog,
+              platform: "openai",
+              surface: "responses",
+              statusCode: 200,
+              durationMs: Date.now() - startedAtMs,
+            });
+            await emitBodyCapture({
+              app,
+              req,
+              requestId,
+              requestBodyJson: upstreamBodyBuf.toString("utf8"),
+              responseBody: null,
+              stream: true,
+            });
+            return undefined as never;
+          },
+        ),
+    });
+  } catch (err) {
+    if (
+      err instanceof AllUpstreamsFailed ||
+      err instanceof FatalUpstreamError
+    ) {
+      if (reply.raw.headersSent) {
+        const kind =
+          err instanceof FatalUpstreamError
+            ? err.reason
+            : "all_upstreams_failed";
+        const message =
+          err instanceof FatalUpstreamError
+            ? err.message
+            : `all upstreams failed (attempted=${err.attemptedIds.length})`;
+        const errorEvent = {
+          type: "error" as const,
+          error: { kind, message, request_id: requestId },
+        };
+        reply.raw.write(
+          `event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`,
+        );
+        reply.raw.end();
+      } else {
+        reply.raw.writeHead(
+          err instanceof FatalUpstreamError ? err.statusCode : 503,
+          { "content-type": "application/json" },
+        );
+        reply.raw.end(
+          JSON.stringify({
+            error:
+              err instanceof FatalUpstreamError
+                ? err.reason
+                : "all_upstreams_failed",
+            request_id: requestId,
+          }),
+        );
+      }
+      return;
+    }
+    if (!reply.raw.headersSent) {
+      reply.raw.writeHead(500, { "content-type": "application/json" });
+      reply.raw.end(JSON.stringify({ error: "internal_error" }));
+    } else {
+      reply.raw.end();
+    }
+  } finally {
+    req.raw.removeListener("close", onClose);
   }
 }
