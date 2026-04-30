@@ -86,6 +86,42 @@ function expectNonStream(upstream: UpstreamResult): NonStreamUpstreamResult {
   return upstream;
 }
 
+/**
+ * Serialize an error in the OpenAI Responses SSE error-event shape
+ * (`event: error\ndata: {…}\n\n`). Used by streaming-failover catch
+ * blocks AND mid-stream parse-error handlers — every site emits the
+ * same `{ type, error: { kind, message, request_id } }` envelope.
+ */
+function serializeResponsesSseError(
+  kind: string,
+  message: string,
+  requestId: string,
+): string {
+  const ev = {
+    type: "error" as const,
+    error: { kind, message, request_id: requestId },
+  };
+  return `event: error\ndata: ${JSON.stringify(ev)}\n\n`;
+}
+
+/**
+ * Compute the `kind` + `message` pair from the failover-loop's
+ * terminal error.  Pulled out so the streaming + non-streaming
+ * fallthrough catch blocks share a single phrasing convention.
+ */
+function failoverErrorPair(err: AllUpstreamsFailed | FatalUpstreamError): {
+  kind: string;
+  message: string;
+} {
+  if (err instanceof FatalUpstreamError) {
+    return { kind: err.reason, message: err.message };
+  }
+  return {
+    kind: "all_upstreams_failed",
+    message: `all upstreams failed (attempted=${err.attemptedIds.length})`,
+  };
+}
+
 export interface ResponsesRouteOptions {
   env: ServerEnv;
 }
@@ -514,23 +550,8 @@ async function runResponsesStreamingFailover(
       if (reply.raw.headersSent) {
         // Responses uses named events — surface the error in the same
         // shape the SDK consumer would parse from real upstream errors.
-        // M2 from PR #44 review: `message` carries the actual error,
-        // not the requestId; the requestId goes in its own field.
-        const kind =
-          err instanceof FatalUpstreamError
-            ? err.reason
-            : "all_upstreams_failed";
-        const message =
-          err instanceof FatalUpstreamError
-            ? err.message
-            : `all upstreams failed (attempted=${err.attemptedIds.length})`;
-        const errorEvent = {
-          type: "error" as const,
-          error: { kind, message, request_id: requestId },
-        };
-        reply.raw.write(
-          `event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`,
-        );
+        const { kind, message } = failoverErrorPair(err);
+        reply.raw.write(serializeResponsesSseError(kind, message, requestId));
         reply.raw.end();
       } else {
         reply.raw.writeHead(
@@ -852,16 +873,12 @@ async function runOpenaiResponsesStreamingPassthrough(
               // Mid-stream error: surface as an SSE error event in the
               // same shape the SDK consumer would parse from real
               // upstream errors, then close cleanly.
-              const errorEvent = {
-                type: "error" as const,
-                error: {
-                  kind: err instanceof Error ? err.name : "unknown",
-                  message: err instanceof Error ? err.message : String(err),
-                  request_id: requestId,
-                },
-              };
               reply.raw.write(
-                `event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`,
+                serializeResponsesSseError(
+                  err instanceof Error ? err.name : "unknown",
+                  err instanceof Error ? err.message : String(err),
+                  requestId,
+                ),
               );
             }
 
@@ -911,21 +928,8 @@ async function runOpenaiResponsesStreamingPassthrough(
       err instanceof FatalUpstreamError
     ) {
       if (reply.raw.headersSent) {
-        const kind =
-          err instanceof FatalUpstreamError
-            ? err.reason
-            : "all_upstreams_failed";
-        const message =
-          err instanceof FatalUpstreamError
-            ? err.message
-            : `all upstreams failed (attempted=${err.attemptedIds.length})`;
-        const errorEvent = {
-          type: "error" as const,
-          error: { kind, message, request_id: requestId },
-        };
-        reply.raw.write(
-          `event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`,
-        );
+        const { kind, message } = failoverErrorPair(err);
+        reply.raw.write(serializeResponsesSseError(kind, message, requestId));
         reply.raw.end();
       } else {
         reply.raw.writeHead(

@@ -16,7 +16,10 @@
 import { SSELineSplitter } from "../translate/stream/sseLineSplitter.js";
 import type { ResponsesSSEEvent } from "../translate/stream/responsesSseTypes.js";
 
-const KNOWN_EVENT_TYPES = new Set<ResponsesSSEEvent["type"]>([
+// `satisfies readonly ResponsesSSEEvent["type"][]` makes adding a new
+// type to ResponsesSSEEvent a compile error here too — without it, the
+// Set silently drops the new event at runtime.
+const KNOWN_EVENT_TYPE_LIST = [
   "response.created",
   "response.output_item.added",
   "response.output_item.done",
@@ -25,7 +28,11 @@ const KNOWN_EVENT_TYPES = new Set<ResponsesSSEEvent["type"]>([
   "response.function_call_arguments.delta",
   "response.completed",
   "error",
-]);
+] as const satisfies readonly ResponsesSSEEvent["type"][];
+
+const KNOWN_EVENT_TYPES: ReadonlySet<ResponsesSSEEvent["type"]> = new Set(
+  KNOWN_EVENT_TYPE_LIST,
+);
 
 export class OpenAIResponsesSseParseError extends Error {
   constructor(
@@ -67,9 +74,10 @@ export async function* parseOpenAIResponsesSse(
   const decoder = new TextDecoder("utf-8");
   const strict = opts.strict ?? true;
 
-  const flush = (
-    raw: { event?: string; data: string },
-  ): ResponsesSSEEvent | null => {
+  const flush = (raw: {
+    event?: string;
+    data: string;
+  }): ResponsesSSEEvent | null => {
     if (raw.data.length === 0) return null;
     let parsed: unknown;
     try {
@@ -103,6 +111,16 @@ export async function* parseOpenAIResponsesSse(
       opts.onUnknownEvent?.(eventType);
       return null;
     }
+    // Trade-off: we trust the upstream-emitted shape past the `type`
+    // field — no per-event Zod validation. The OpenAI Responses SSE
+    // protocol is well-documented and stable; full validation would
+    // double the per-event cost without catching real upstream bugs.
+    // If a malformed payload sneaks through (missing `delta`,
+    // missing `output_index`, etc.), downstream code reading those
+    // fields will throw a TypeError — same failure mode as the
+    // Anthropic parser. Route handlers should treat any throw inside
+    // the `for await` as an "abort the stream" signal rather than
+    // assuming each event is well-shaped.
     return parsed as ResponsesSSEEvent;
   };
 
