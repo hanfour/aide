@@ -30,6 +30,14 @@ import { emitBodyCapture } from "../runtime/bodyCapture.js";
 import { withSlotAndCredential } from "../runtime/withSlotAndCredential.js";
 import { usageLogInboundPlatformForSurface } from "../runtime/usageLogging.js";
 import { buildSyntheticAnthropicUsage } from "../runtime/syntheticUsageShapes.js";
+import {
+  parseRetryAfterHeader,
+  buildUpstreamHttpError,
+} from "../runtime/upstreamErrorMapping.js";
+import {
+  serializeAnthropicSseError,
+  respondStreamFailoverCollapse,
+} from "../runtime/sseErrorEvents.js";
 import { autoRoute } from "./dispatch.js";
 
 export interface MessagesRouteOptions {
@@ -263,7 +271,7 @@ async function runNonStreamFailover(
         if (upstream.status < 200 || upstream.status >= 300) {
           // 5xx / unexpected non-2xx → failover-eligible transient error.
           const text = upstream.body.toString("utf8");
-          const ra = parseRetryAfter(upstream.headers["retry-after"]);
+          const ra = parseRetryAfterHeader(upstream.headers["retry-after"]);
           throw {
             status: upstream.status,
             retryAfter: ra,
@@ -466,7 +474,7 @@ async function runStreamingFailover(
             chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
           }
           const text = Buffer.concat(chunks).toString("utf8").slice(0, 500);
-          const ra = parseRetryAfter(upstream.headers["retry-after"]);
+          const ra = parseRetryAfterHeader(upstream.headers["retry-after"]);
           throw { status: upstream.status, retryAfter: ra, message: text };
         }
 
@@ -674,18 +682,6 @@ async function runStreamingFailover(
   });
 }
 
-function parseRetryAfter(
-  raw: string | string[] | undefined,
-): number | undefined {
-  let val = raw;
-  if (Array.isArray(val)) {
-    val = val[0];
-  }
-  if (typeof val !== "string") return undefined;
-  const n = parseInt(val, 10);
-  return Number.isNaN(n) ? undefined : n;
-}
-
 /**
  * Wrap a streaming-usage snapshot into the object shape the shared
  * `buildUsageLogPayload` → `extractUsageFromAnthropicResponse` helper
@@ -823,19 +819,7 @@ export function makeMessagesOpenaiHandler(
               }
 
               if (upstream.status < 200 || upstream.status >= 300) {
-                const text = upstream.body.toString("utf8");
-                const retryAfterRaw = upstream.headers["retry-after"];
-                const retryAfter =
-                  typeof retryAfterRaw === "string"
-                    ? parseInt(retryAfterRaw, 10)
-                    : Array.isArray(retryAfterRaw)
-                      ? parseInt(retryAfterRaw[0]!, 10)
-                      : undefined;
-                throw {
-                  status: upstream.status,
-                  retryAfter: Number.isNaN(retryAfter) ? undefined : retryAfter,
-                  message: text.slice(0, 500),
-                };
+                throw buildUpstreamHttpError(upstream);
               }
 
               let openaiResp: unknown = null;
@@ -953,21 +937,6 @@ export function makeMessagesOpenaiHandler(
 // space) per `usageLogInboundPlatformForSurface("messages")` — the
 // upstream OpenAI provider is recoverable from the `accountId` join.
 // ---------------------------------------------------------------------------
-
-function serializeAnthropicSseError(
-  errType: string,
-  message: string,
-  requestId: string,
-): string {
-  // `request_id` inside the inner `error` object lets ops correlate a
-  // failed stream with its `usage_log` row. Forward-compatible — the
-  // Anthropic SDK ignores unknown fields on error events.
-  const ev = {
-    type: "error" as const,
-    error: { type: errType, message, request_id: requestId },
-  };
-  return `event: error\ndata: ${JSON.stringify(ev)}\n\n`;
-}
 
 async function runMessagesOpenaiStreamingFailover(
   app: FastifyInstance,
@@ -1134,46 +1103,12 @@ async function runMessagesOpenaiStreamingFailover(
         ),
     });
   } catch (err) {
-    if (
-      err instanceof AllUpstreamsFailed ||
-      err instanceof FatalUpstreamError
-    ) {
-      if (reply.raw.headersSent) {
-        const message =
-          err instanceof FatalUpstreamError
-            ? err.message
-            : `all upstreams failed (attempted=${err.attemptedIds.length})`;
-        const errType =
-          err instanceof FatalUpstreamError
-            ? err.reason
-            : "all_upstreams_failed";
-        reply.raw.write(
-          serializeAnthropicSseError(errType, message, requestId),
-        );
-        reply.raw.end();
-      } else {
-        reply.raw.writeHead(
-          err instanceof FatalUpstreamError ? err.statusCode : 503,
-          { "content-type": "application/json" },
-        );
-        reply.raw.end(
-          JSON.stringify({
-            error:
-              err instanceof FatalUpstreamError
-                ? err.reason
-                : "all_upstreams_failed",
-            request_id: requestId,
-          }),
-        );
-      }
-      return;
-    }
-    if (!reply.raw.headersSent) {
-      reply.raw.writeHead(500, { "content-type": "application/json" });
-      reply.raw.end(JSON.stringify({ error: "internal_error" }));
-    } else {
-      reply.raw.end();
-    }
+    respondStreamFailoverCollapse(
+      reply,
+      err,
+      requestId,
+      serializeAnthropicSseError,
+    );
   } finally {
     req.raw.removeListener("close", onClose);
   }

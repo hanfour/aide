@@ -46,36 +46,15 @@ import { emitUsageLog } from "../runtime/usageLogging.js";
 import { emitBodyCapture } from "../runtime/bodyCapture.js";
 import { buildSyntheticAnthropicUsage } from "../runtime/syntheticUsageShapes.js";
 import { withSlotAndCredential } from "../runtime/withSlotAndCredential.js";
+import { buildUpstreamHttpError } from "../runtime/upstreamErrorMapping.js";
+import {
+  serializeResponsesSseError,
+  respondStreamFailoverCollapse,
+} from "../runtime/sseErrorEvents.js";
 import type {
   NonStreamUpstreamResult,
   UpstreamResult,
 } from "../runtime/upstreamCall.js";
-
-/**
- * Convert a non-2xx upstream HTTP response into the throwable shape
- * the failover-loop classifier expects (status + retryAfter +
- * truncated message).  Handles both string and string-array
- * `retry-after` headers.
- */
-function upstreamErrorThrow(upstream: NonStreamUpstreamResult): {
-  status: number;
-  retryAfter?: number;
-  message: string;
-} {
-  const text = upstream.body.toString("utf8");
-  const retryAfterRaw = upstream.headers["retry-after"];
-  const retryAfter =
-    typeof retryAfterRaw === "string"
-      ? parseInt(retryAfterRaw, 10)
-      : Array.isArray(retryAfterRaw)
-        ? parseInt(retryAfterRaw[0]!, 10)
-        : undefined;
-  return {
-    status: upstream.status,
-    retryAfter: Number.isNaN(retryAfter) ? undefined : retryAfter,
-    message: text.slice(0, 500),
-  };
-}
 
 // Type-narrowing helper used by the streaming attempt callback when
 // the upstream call surprisingly returns non-stream (e.g. on 4xx).
@@ -84,42 +63,6 @@ function expectNonStream(upstream: UpstreamResult): NonStreamUpstreamResult {
     throw { status: 502, message: "unexpected_stream" };
   }
   return upstream;
-}
-
-/**
- * Serialize an error in the OpenAI Responses SSE error-event shape
- * (`event: error\ndata: {…}\n\n`). Used by streaming-failover catch
- * blocks AND mid-stream parse-error handlers — every site emits the
- * same `{ type, error: { kind, message, request_id } }` envelope.
- */
-function serializeResponsesSseError(
-  kind: string,
-  message: string,
-  requestId: string,
-): string {
-  const ev = {
-    type: "error" as const,
-    error: { kind, message, request_id: requestId },
-  };
-  return `event: error\ndata: ${JSON.stringify(ev)}\n\n`;
-}
-
-/**
- * Compute the `kind` + `message` pair from the failover-loop's
- * terminal error.  Pulled out so the streaming + non-streaming
- * fallthrough catch blocks share a single phrasing convention.
- */
-function failoverErrorPair(err: AllUpstreamsFailed | FatalUpstreamError): {
-  kind: string;
-  message: string;
-} {
-  if (err instanceof FatalUpstreamError) {
-    return { kind: err.reason, message: err.message };
-  }
-  return {
-    kind: "all_upstreams_failed",
-    message: `all upstreams failed (attempted=${err.attemptedIds.length})`,
-  };
 }
 
 export interface ResponsesRouteOptions {
@@ -306,7 +249,7 @@ export function makeResponsesRouteHandler(
               }
 
               if (upstream.status < 200 || upstream.status >= 300) {
-                throw upstreamErrorThrow(upstream);
+                throw buildUpstreamHttpError(upstream);
               }
 
               // Parse defensively — emit a forensic zero-usage log on
@@ -554,39 +497,12 @@ async function runResponsesStreamingFailover(
         ),
     });
   } catch (err) {
-    if (
-      err instanceof AllUpstreamsFailed ||
-      err instanceof FatalUpstreamError
-    ) {
-      if (reply.raw.headersSent) {
-        // Responses uses named events — surface the error in the same
-        // shape the SDK consumer would parse from real upstream errors.
-        const { kind, message } = failoverErrorPair(err);
-        reply.raw.write(serializeResponsesSseError(kind, message, requestId));
-        reply.raw.end();
-      } else {
-        reply.raw.writeHead(
-          err instanceof FatalUpstreamError ? err.statusCode : 503,
-          { "content-type": "application/json" },
-        );
-        reply.raw.end(
-          JSON.stringify({
-            error:
-              err instanceof FatalUpstreamError
-                ? err.reason
-                : "all_upstreams_failed",
-            request_id: requestId,
-          }),
-        );
-      }
-      return;
-    }
-    if (!reply.raw.headersSent) {
-      reply.raw.writeHead(500, { "content-type": "application/json" });
-      reply.raw.end(JSON.stringify({ error: "internal_error" }));
-    } else {
-      reply.raw.end();
-    }
+    respondStreamFailoverCollapse(
+      reply,
+      err,
+      requestId,
+      serializeResponsesSseError,
+    );
   } finally {
     req.raw.removeListener("close", onClose);
   }
@@ -677,7 +593,7 @@ async function runOpenaiResponsesPassthroughFailover(
             );
 
             if (upstream.status < 200 || upstream.status >= 300) {
-              throw upstreamErrorThrow(upstream);
+              throw buildUpstreamHttpError(upstream);
             }
 
             let openaiResp: unknown = null;
@@ -945,37 +861,12 @@ async function runOpenaiResponsesStreamingPassthrough(
         ),
     });
   } catch (err) {
-    if (
-      err instanceof AllUpstreamsFailed ||
-      err instanceof FatalUpstreamError
-    ) {
-      if (reply.raw.headersSent) {
-        const { kind, message } = failoverErrorPair(err);
-        reply.raw.write(serializeResponsesSseError(kind, message, requestId));
-        reply.raw.end();
-      } else {
-        reply.raw.writeHead(
-          err instanceof FatalUpstreamError ? err.statusCode : 503,
-          { "content-type": "application/json" },
-        );
-        reply.raw.end(
-          JSON.stringify({
-            error:
-              err instanceof FatalUpstreamError
-                ? err.reason
-                : "all_upstreams_failed",
-            request_id: requestId,
-          }),
-        );
-      }
-      return;
-    }
-    if (!reply.raw.headersSent) {
-      reply.raw.writeHead(500, { "content-type": "application/json" });
-      reply.raw.end(JSON.stringify({ error: "internal_error" }));
-    } else {
-      reply.raw.end();
-    }
+    respondStreamFailoverCollapse(
+      reply,
+      err,
+      requestId,
+      serializeResponsesSseError,
+    );
   } finally {
     req.raw.removeListener("close", onClose);
   }
