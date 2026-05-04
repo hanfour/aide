@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -55,6 +56,17 @@ export function AccountGroupEditForm({ orgId, group }: Props) {
     },
   });
 
+  // Map a group row to form values. Memoised refs are not needed because
+  // we re-derive from `group` only on ID change (see effect below) — the
+  // function itself stays in the closure.
+  const groupToValues = (g: Group): FormValues => ({
+    name: g.name,
+    description: g.description ?? "",
+    rateMultiplier: Number(g.rateMultiplier),
+    isExclusive: g.isExclusive,
+    status: g.status === "disabled" ? "disabled" : "active",
+  });
+
   const {
     register,
     handleSubmit,
@@ -62,14 +74,25 @@ export function AccountGroupEditForm({ orgId, group }: Props) {
     reset,
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    values: {
-      name: group.name,
-      description: group.description ?? "",
-      rateMultiplier: Number(group.rateMultiplier),
-      isExclusive: group.isExclusive,
-      status: group.status === "disabled" ? "disabled" : "active",
-    },
+    defaultValues: groupToValues(group),
   });
+
+  // When the underlying group ID changes (admin navigated to a different
+  // group inside the same component instance), reset the form. We
+  // intentionally do NOT reset on every prop change so that an
+  // `accountGroups.get` invalidation triggered by a sibling component
+  // (e.g. AccountGroupMembers updating priorities) won't wipe the
+  // admin's mid-form edits — the prior `values:` prop did the latter.
+  const lastGroupIdRef = useRef(group.id);
+  useEffect(() => {
+    if (lastGroupIdRef.current !== group.id) {
+      lastGroupIdRef.current = group.id;
+      reset(groupToValues(group));
+    }
+    // groupToValues is closure-stable per render and we explicitly depend
+    // only on group.id; eslint can't see the field-narrowing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group.id, reset]);
 
   const onSubmit = handleSubmit(async (v) => {
     await update.mutateAsync({

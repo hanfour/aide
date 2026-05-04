@@ -22,7 +22,13 @@ interface Props {
 
 export function AccountGroupMembers({ orgId, group }: Props) {
   const utils = trpc.useUtils();
-  const { data: allAccounts } = trpc.accounts.list.useQuery({ orgId });
+  // Server-side platform narrowing: avoids pulling every anthropic account
+  // when this group is openai-only (and vice versa). `accounts.list`
+  // accepts an optional `platform` filter — backward-compatible.
+  const { data: platformAccounts } = trpc.accounts.list.useQuery({
+    orgId,
+    platform: group.platform as "anthropic" | "openai",
+  });
 
   const memberIds = useMemo(
     () => new Set(group.members.map((m) => m.accountId)),
@@ -30,11 +36,8 @@ export function AccountGroupMembers({ orgId, group }: Props) {
   );
 
   const eligibleAccounts: Account[] = useMemo(
-    () =>
-      (allAccounts ?? []).filter(
-        (a) => a.platform === group.platform && !memberIds.has(a.id),
-      ),
-    [allAccounts, group.platform, memberIds],
+    () => (platformAccounts ?? []).filter((a) => !memberIds.has(a.id)),
+    [platformAccounts, memberIds],
   );
 
   const [pickedAccountId, setPickedAccountId] = useState<string>("");
@@ -87,7 +90,11 @@ export function AccountGroupMembers({ orgId, group }: Props) {
   const handleAdd = () => {
     if (!pickedAccountId) return;
     const priorityNum = Number.parseInt(pickedPriority, 10);
-    if (!Number.isFinite(priorityNum) || priorityNum < 0 || priorityNum > 1000) {
+    if (
+      !Number.isFinite(priorityNum) ||
+      priorityNum < 0 ||
+      priorityNum > 1000
+    ) {
       toast.error("Priority must be 0-1000");
       return;
     }
@@ -111,7 +118,11 @@ export function AccountGroupMembers({ orgId, group }: Props) {
     const draft = priorityDrafts[accountId];
     if (draft === undefined) return;
     const priorityNum = Number.parseInt(draft, 10);
-    if (!Number.isFinite(priorityNum) || priorityNum < 0 || priorityNum > 1000) {
+    if (
+      !Number.isFinite(priorityNum) ||
+      priorityNum < 0 ||
+      priorityNum > 1000
+    ) {
       toast.error("Priority must be 0-1000");
       return;
     }
@@ -157,14 +168,20 @@ export function AccountGroupMembers({ orgId, group }: Props) {
                 const draft = priorityDrafts[m.accountId];
                 const draftDirty =
                   draft !== undefined && Number(draft) !== m.priority;
-                const busy =
-                  removeMember.isPending || setPriority.isPending;
+                const busy = removeMember.isPending || setPriority.isPending;
                 return (
                   <tr
                     key={m.accountId}
                     className="border-b border-border last:border-0 hover:bg-accent/20"
                   >
-                    <td className="px-4 py-2.5 font-medium">{m.accountName}</td>
+                    <td className="px-4 py-2.5 font-medium">
+                      {m.accountName}
+                      {m.accountDeletedAt !== null && (
+                        <span className="ml-2 text-xs text-destructive">
+                          (deleted)
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-2.5 text-xs text-muted-foreground">
                       {m.accountType === "oauth" ? "OAuth" : "API key"}
                     </td>
@@ -204,9 +221,7 @@ export function AccountGroupMembers({ orgId, group }: Props) {
                         size="sm"
                         variant="ghost"
                         className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                        onClick={() =>
-                          handleRemove(m.accountId, m.accountName)
-                        }
+                        onClick={() => handleRemove(m.accountId, m.accountName)}
                         disabled={busy}
                         aria-label={`Remove ${m.accountName}`}
                       >
@@ -225,9 +240,9 @@ export function AccountGroupMembers({ orgId, group }: Props) {
         <h4 className="mb-3 text-sm font-medium">Add member</h4>
         {eligibleAccounts.length === 0 ? (
           <p className="text-xs text-muted-foreground">
-            No eligible accounts — every {group.platform} account in this org
-            is already a member, or there are no {group.platform} accounts at
-            all. Create one in the Accounts tab first.
+            No eligible accounts — every {group.platform} account in this org is
+            already a member, or there are no {group.platform} accounts at all.
+            Create one in the Accounts tab first.
           </p>
         ) : (
           <div className="flex items-end gap-3">

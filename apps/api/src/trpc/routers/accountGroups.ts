@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { accountGroups, accountGroupMembers, upstreamAccounts } from "@aide/db";
+import {
+  accountGroups,
+  accountGroupMembers,
+  upstreamAccounts,
+  ACCOUNT_GROUP_STATUS_VALUES,
+} from "@aide/db";
 import { can } from "@aide/auth";
 import {
   protectedProcedure,
@@ -19,7 +24,7 @@ import {
 
 const uuid = z.string().uuid();
 const platformEnum = z.enum(["anthropic", "openai"]);
-const groupStatusEnum = z.enum(["active", "disabled"]);
+const groupStatusEnum = z.enum(ACCOUNT_GROUP_STATUS_VALUES);
 
 function ensureGatewayEnabled(env: { ENABLE_GATEWAY: boolean }) {
   if (!env.ENABLE_GATEWAY) {
@@ -90,6 +95,11 @@ export const accountGroupsRouter = router({
         throw new TRPCError({ code: "NOT_FOUND" });
       }
 
+      // The membership row's FK cascades on hard-delete of the account, but
+      // soft-deleted accounts (`deletedAt IS NOT NULL`) still return rows
+      // here. Surface `accountDeletedAt` so the UI can render a "tombstoned"
+      // affordance instead of pretending the account is healthy. Scheduler
+      // already skips deleted accounts at runtime via `selectAccount`.
       const members = await ctx.db
         .select({
           accountId: accountGroupMembers.accountId,
@@ -100,6 +110,7 @@ export const accountGroupsRouter = router({
           accountSchedulable: upstreamAccounts.schedulable,
           accountPlatform: upstreamAccounts.platform,
           accountType: upstreamAccounts.type,
+          accountDeletedAt: upstreamAccounts.deletedAt,
         })
         .from(accountGroupMembers)
         .innerJoin(
@@ -240,14 +251,23 @@ export const accountGroupsRouter = router({
       }
       // Soft-delete + flip status so the gateway scheduler stops considering
       // this group on its next selection pass (it filters status='active').
-      await ctx.db
-        .update(accountGroups)
-        .set({
-          deletedAt: sql`NOW()`,
-          status: "disabled",
-          updatedAt: sql`NOW()`,
-        })
-        .where(eq(accountGroups.id, input.id));
+      // Also hard-delete the membership rows — they're an inner join'd
+      // optimisation table, not authoritative, and leaving them around just
+      // makes a future (unrelated) hard-delete of the group cascade
+      // surprising. The member upstream_accounts themselves are untouched.
+      await ctx.db.transaction(async (tx) => {
+        await tx
+          .delete(accountGroupMembers)
+          .where(eq(accountGroupMembers.groupId, input.id));
+        await tx
+          .update(accountGroups)
+          .set({
+            deletedAt: sql`NOW()`,
+            status: "disabled",
+            updatedAt: sql`NOW()`,
+          })
+          .where(eq(accountGroups.id, input.id));
+      });
       return { ok: true as const };
     }),
 

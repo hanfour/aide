@@ -1,11 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { and, eq, isNotNull } from "drizzle-orm";
 import type { Database } from "@aide/db";
-import {
-  accountGroups,
-  accountGroupMembers,
-  upstreamAccounts,
-} from "@aide/db";
+import { accountGroups, accountGroupMembers, upstreamAccounts } from "@aide/db";
 import { resolvePermissions } from "@aide/auth";
 import type { ServerEnv } from "@aide/config";
 import {
@@ -143,6 +139,44 @@ describe("accountGroups.get", () => {
     const byName = new Map(got.members.map((m) => [m.accountName, m]));
     expect(byName.get("k1")?.priority).toBe(10);
     expect(byName.get("k2")?.priority).toBe(20);
+    // `accountDeletedAt` is exposed so the UI can render tombstoned-but-
+    // still-linked accounts; null for healthy ones.
+    expect(byName.get("k1")?.accountDeletedAt).toBeNull();
+    expect(byName.get("k2")?.accountDeletedAt).toBeNull();
+  });
+
+  it("get: surfaces accountDeletedAt for soft-deleted member accounts", async () => {
+    // Membership row stays after the account is soft-deleted (FK only
+    // cascades on hard delete); UI relies on this field to show a
+    // "tombstoned" indicator instead of pretending the member is healthy.
+    const org = await makeOrg(t.db);
+    const admin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const [group] = await t.db
+      .insert(accountGroups)
+      .values({ orgId: org.id, name: "ghosts", platform: "openai" })
+      .returning();
+    const acct = await makeAccount(t.db, org.id, "openai", "rip");
+    await t.db.insert(accountGroupMembers).values({
+      groupId: group!.id,
+      accountId: acct.id,
+      priority: 10,
+    });
+    const tombstone = new Date();
+    await t.db
+      .update(upstreamAccounts)
+      .set({ deletedAt: tombstone })
+      .where(eq(upstreamAccounts.id, acct.id));
+
+    const caller = await callerFor(t.db, admin.id);
+    const got = await caller.accountGroups.get({ id: group!.id });
+    expect(got.members).toHaveLength(1);
+    expect(got.members[0]?.accountDeletedAt).not.toBeNull();
+    expect(got.members[0]?.accountName).toBe("rip");
   });
 
   it("NOT_FOUND for unknown id and for cross-org (no leak)", async () => {
@@ -286,9 +320,9 @@ describe("accountGroups.update", () => {
       scopeId: org.id,
       orgId: org.id,
     });
-    await t.db.insert(accountGroups).values([
-      { orgId: org.id, name: "taken", platform: "openai" },
-    ]);
+    await t.db
+      .insert(accountGroups)
+      .values([{ orgId: org.id, name: "taken", platform: "openai" }]);
     const [other] = await t.db
       .insert(accountGroups)
       .values({ orgId: org.id, name: "free", platform: "openai" })
@@ -323,7 +357,7 @@ describe("accountGroups.update", () => {
 });
 
 describe("accountGroups.delete", () => {
-  it("soft-deletes (deletedAt set, status=disabled)", async () => {
+  it("soft-deletes group + hard-deletes membership rows", async () => {
     const org = await makeOrg(t.db);
     const admin = await makeUser(t.db, {
       role: "org_admin",
@@ -335,6 +369,12 @@ describe("accountGroups.delete", () => {
       .insert(accountGroups)
       .values({ orgId: org.id, name: "byebye", platform: "openai" })
       .returning();
+    const acct = await makeAccount(t.db, org.id, "openai", "doomed");
+    await t.db.insert(accountGroupMembers).values({
+      groupId: group!.id,
+      accountId: acct.id,
+      priority: 50,
+    });
     const caller = await callerFor(t.db, admin.id);
 
     const result = await caller.accountGroups.delete({ id: group!.id });
@@ -344,10 +384,29 @@ describe("accountGroups.delete", () => {
       .select()
       .from(accountGroups)
       .where(
-        and(eq(accountGroups.id, group!.id), isNotNull(accountGroups.deletedAt)),
+        and(
+          eq(accountGroups.id, group!.id),
+          isNotNull(accountGroups.deletedAt),
+        ),
       );
     expect(row).toBeDefined();
     expect(row!.status).toBe("disabled");
+
+    // Membership rows are hard-deleted alongside the soft-deleted group —
+    // they're an optimisation table, not authoritative.
+    const remainingMembers = await t.db
+      .select()
+      .from(accountGroupMembers)
+      .where(eq(accountGroupMembers.groupId, group!.id));
+    expect(remainingMembers).toHaveLength(0);
+
+    // The underlying upstream_accounts row stays intact.
+    const [stillThere] = await t.db
+      .select()
+      .from(upstreamAccounts)
+      .where(eq(upstreamAccounts.id, acct.id));
+    expect(stillThere).toBeDefined();
+    expect(stillThere!.deletedAt).toBeNull();
   });
 });
 

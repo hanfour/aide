@@ -108,10 +108,17 @@ function parseOauthExpiresAt(credentialsJson: string): Date | null {
 }
 
 export const accountsRouter = router({
-  list: permissionProcedure(z.object({ orgId: uuid }), (_, input) => ({
-    type: "account.read",
-    orgId: input.orgId,
-  })).query(async ({ ctx, input }) => {
+  list: permissionProcedure(
+    // Optional `platform` narrows server-side so callers like
+    // AccountGroupMembers (which only cares about a single platform) don't
+    // have to pull every account in the org and filter client-side.
+    // Backward-compatible: omitting `platform` returns the same superset.
+    z.object({ orgId: uuid, platform: platformEnum.optional() }),
+    (_, input) => ({
+      type: "account.read",
+      orgId: input.orgId,
+    }),
+  ).query(async ({ ctx, input }) => {
     ensureGatewayEnabled(ctx.env);
     const rows = await ctx.db
       .select()
@@ -120,6 +127,9 @@ export const accountsRouter = router({
         and(
           eq(upstreamAccounts.orgId, input.orgId),
           isNull(upstreamAccounts.deletedAt),
+          input.platform !== undefined
+            ? eq(upstreamAccounts.platform, input.platform)
+            : undefined,
         ),
       );
     // upstream_accounts holds no credential material (that's in
