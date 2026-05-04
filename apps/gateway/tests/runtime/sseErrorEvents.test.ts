@@ -155,7 +155,7 @@ describe("respondStreamFailoverCollapse", () => {
 
   it("FatalUpstreamError + no headers → JSON err.statusCode", () => {
     const f = makeFakeReply(false);
-    const err = new FatalUpstreamError(401, "auth_failed", "bad key");
+    const err = new FatalUpstreamError(401, "auth_failed");
     respondStreamFailoverCollapse(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       f.reply as any,
