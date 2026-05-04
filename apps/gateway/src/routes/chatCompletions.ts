@@ -30,6 +30,11 @@ import {
 import { emitBodyCapture } from "../runtime/bodyCapture.js";
 import { withSlotAndCredential } from "../runtime/withSlotAndCredential.js";
 import { buildSyntheticAnthropicUsage } from "../runtime/syntheticUsageShapes.js";
+import { buildUpstreamHttpError } from "../runtime/upstreamErrorMapping.js";
+import {
+  serializeChatSseError,
+  respondStreamFailoverCollapse,
+} from "../runtime/sseErrorEvents.js";
 import { autoRoute } from "./dispatch.js";
 
 export interface ChatCompletionsRouteOptions {
@@ -187,19 +192,7 @@ export function makeChatCompletionsAnthropicHandler(
 
             // Throw non-2xx so failover classifier sees the status.
             if (result.status < 200 || result.status >= 300) {
-              const text = result.body.toString("utf8");
-              const retryAfterRaw = result.headers["retry-after"];
-              const retryAfter =
-                typeof retryAfterRaw === "string"
-                  ? parseInt(retryAfterRaw, 10)
-                  : Array.isArray(retryAfterRaw)
-                    ? parseInt(retryAfterRaw[0]!, 10)
-                    : undefined;
-              throw {
-                status: result.status,
-                retryAfter: Number.isNaN(retryAfter) ? undefined : retryAfter,
-                message: text.slice(0, 500),
-              };
+              throw buildUpstreamHttpError(result);
             }
 
             // Parse Anthropic response defensively. A malformed 2xx body
@@ -476,48 +469,12 @@ async function runChatCompletionsStreamingFailover(
       },
     });
   } catch (err) {
-    if (
-      err instanceof AllUpstreamsFailed ||
-      err instanceof FatalUpstreamError
-    ) {
-      // Headers already sent (we wrote them on the first chunk attempt) →
-      // append a synthetic SSE error event.  If we never got far enough
-      // to write headers (failover blew up at credential resolution
-      // etc.), fall through to a JSON error response.
-      if (reply.raw.headersSent) {
-        reply.raw.write(
-          `data: ${JSON.stringify({
-            error:
-              err instanceof FatalUpstreamError
-                ? err.reason
-                : "all_upstreams_failed",
-            request_id: requestId,
-          })}\n\n`,
-        );
-        reply.raw.end();
-      } else {
-        reply.raw.writeHead(
-          err instanceof FatalUpstreamError ? err.statusCode : 503,
-          { "content-type": "application/json" },
-        );
-        reply.raw.end(
-          JSON.stringify({
-            error:
-              err instanceof FatalUpstreamError
-                ? err.reason
-                : "all_upstreams_failed",
-            request_id: requestId,
-          }),
-        );
-      }
-      return;
-    }
-    if (!reply.raw.headersSent) {
-      reply.raw.writeHead(500, { "content-type": "application/json" });
-      reply.raw.end(JSON.stringify({ error: "internal_error" }));
-    } else {
-      reply.raw.end();
-    }
+    // Plan 5A PR 9j: unify with the openai-streaming branch so both
+    // paths emit the same `{ error: { type, message, request_id } }`
+    // shape inside the SSE chunk. Strict improvement — old shape was
+    // `{ error: "<reason>", request_id }` which OpenAI SDK clients
+    // didn't recognise as a real error event.
+    respondStreamFailoverCollapse(reply, err, requestId, serializeChatSseError);
   } finally {
     req.raw.removeListener("close", onClose);
   }
@@ -660,19 +617,7 @@ export function makeChatCompletionsOpenaiHandler(
               }
 
               if (upstream.status < 200 || upstream.status >= 300) {
-                const text = upstream.body.toString("utf8");
-                const retryAfterRaw = upstream.headers["retry-after"];
-                const retryAfter =
-                  typeof retryAfterRaw === "string"
-                    ? parseInt(retryAfterRaw, 10)
-                    : Array.isArray(retryAfterRaw)
-                      ? parseInt(retryAfterRaw[0]!, 10)
-                      : undefined;
-                throw {
-                  status: upstream.status,
-                  retryAfter: Number.isNaN(retryAfter) ? undefined : retryAfter,
-                  message: text.slice(0, 500),
-                };
+                throw buildUpstreamHttpError(upstream);
               }
 
               let openaiResp: unknown = null;
@@ -763,23 +708,6 @@ export function makeChatCompletionsOpenaiHandler(
       req.raw.off("close", onClose);
     }
   };
-}
-
-/**
- * Serialize an OpenAI Chat Completions error event for the streaming
- * branch's mid-stream / failover-collapse paths. Chat clients parse
- * the well-known `data: { "error": { ... } }\n\n` chunk shape.
- * `request_id` is included so ops can correlate with the usage_log row.
- */
-function serializeChatSseError(
-  errType: string,
-  message: string,
-  requestId: string,
-): string {
-  const ev = {
-    error: { type: errType, message, request_id: requestId },
-  };
-  return `data: ${JSON.stringify(ev)}\n\n`;
 }
 
 async function runChatCompletionsOpenaiStreamingFailover(
@@ -945,44 +873,7 @@ async function runChatCompletionsOpenaiStreamingFailover(
         ),
     });
   } catch (err) {
-    if (
-      err instanceof AllUpstreamsFailed ||
-      err instanceof FatalUpstreamError
-    ) {
-      if (reply.raw.headersSent) {
-        const message =
-          err instanceof FatalUpstreamError
-            ? err.message
-            : `all upstreams failed (attempted=${err.attemptedIds.length})`;
-        const errType =
-          err instanceof FatalUpstreamError
-            ? err.reason
-            : "all_upstreams_failed";
-        reply.raw.write(serializeChatSseError(errType, message, requestId));
-        reply.raw.end();
-      } else {
-        reply.raw.writeHead(
-          err instanceof FatalUpstreamError ? err.statusCode : 503,
-          { "content-type": "application/json" },
-        );
-        reply.raw.end(
-          JSON.stringify({
-            error:
-              err instanceof FatalUpstreamError
-                ? err.reason
-                : "all_upstreams_failed",
-            request_id: requestId,
-          }),
-        );
-      }
-      return;
-    }
-    if (!reply.raw.headersSent) {
-      reply.raw.writeHead(500, { "content-type": "application/json" });
-      reply.raw.end(JSON.stringify({ error: "internal_error" }));
-    } else {
-      reply.raw.end();
-    }
+    respondStreamFailoverCollapse(reply, err, requestId, serializeChatSseError);
   } finally {
     req.raw.removeListener("close", onClose);
   }

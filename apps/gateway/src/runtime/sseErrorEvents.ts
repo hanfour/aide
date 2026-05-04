@@ -1,0 +1,149 @@
+// Plan 5A PR 9j — shared SSE error-event serializers + the post-hijack
+// failover-collapse responder.  Before this module, each route file
+// inlined its own copy of these three helpers (one per inbound SSE
+// flavour) plus the same ~30-line catch block that branches on
+// `reply.raw.headersSent` to decide whether to write an SSE error
+// chunk or a JSON 503.
+//
+// The three serializers stay separate (rather than a single
+// parameterized function) because the wire shapes genuinely differ:
+//
+//   * Anthropic: `event: error\ndata: {type, error: {type, message,
+//     request_id}}\n\n`. SDK clients parse `error.type`.
+//   * OpenAI Chat: `data: {error: {type, message, request_id}}\n\n`
+//     — no `event:` prefix, the streaming format predates SSE event
+//     names.
+//   * OpenAI Responses: `event: error\ndata: {type, error: {kind,
+//     message, request_id}}\n\n`. Note `kind` not `type` on the
+//     inner object — matches what sub2api recordings show.
+//
+// `request_id` is included on every flavour so ops can correlate a
+// failed stream with its `usage_log` row.  Forward-compatible: SDK
+// error parsers ignore unknown fields.
+
+import type { FastifyReply } from "fastify";
+import {
+  AllUpstreamsFailed,
+  FatalUpstreamError,
+} from "./failoverLoop.js";
+
+/** Anthropic Messages SSE error event (`/v1/messages` openai-stream). */
+export function serializeAnthropicSseError(
+  errType: string,
+  message: string,
+  requestId: string,
+): string {
+  const ev = {
+    type: "error" as const,
+    error: { type: errType, message, request_id: requestId },
+  };
+  return `event: error\ndata: ${JSON.stringify(ev)}\n\n`;
+}
+
+/** OpenAI Chat Completions streaming error chunk (`/v1/chat/completions`). */
+export function serializeChatSseError(
+  errType: string,
+  message: string,
+  requestId: string,
+): string {
+  const ev = {
+    error: { type: errType, message, request_id: requestId },
+  };
+  return `data: ${JSON.stringify(ev)}\n\n`;
+}
+
+/** OpenAI Responses SSE error event (`/v1/responses`). */
+export function serializeResponsesSseError(
+  kind: string,
+  message: string,
+  requestId: string,
+): string {
+  const ev = {
+    type: "error" as const,
+    error: { kind, message, request_id: requestId },
+  };
+  return `event: error\ndata: ${JSON.stringify(ev)}\n\n`;
+}
+
+/**
+ * Compute the `kind` (or `type`) + `message` pair from the failover
+ * loop's terminal error.  Centralised so every route uses the same
+ * phrasing convention for `all_upstreams_failed` vs the
+ * FatalUpstreamError's `reason`.
+ */
+export function failoverErrorPair(
+  err: AllUpstreamsFailed | FatalUpstreamError,
+): { kind: string; message: string } {
+  if (err instanceof FatalUpstreamError) {
+    return { kind: err.reason, message: err.message };
+  }
+  return {
+    kind: "all_upstreams_failed",
+    message: `all upstreams failed (attempted=${err.attemptedIds.length})`,
+  };
+}
+
+/** SSE error-event serializer signature (one per inbound surface). */
+export type SseErrorSerializer = (
+  kindOrType: string,
+  message: string,
+  requestId: string,
+) => string;
+
+/**
+ * Handle the post-hijack failover collapse path.  After `reply.hijack()`
+ * we've taken over the response, so a terminal `AllUpstreamsFailed` /
+ * `FatalUpstreamError` must be surfaced via either:
+ *
+ *   * an SSE error chunk (when headers were already written — i.e.
+ *     a later attempt's stream started before the failover blew up
+ *     OR mid-stream parser error), OR
+ *   * a JSON 503/4xx (when the failover collapse happened before
+ *     any attempt reached the upstream-success path that writes
+ *     headers — e.g. credential resolve / scheduler emptied).
+ *
+ * The fallback (non-failover error → 500 JSON or just `end()`) is
+ * also handled here so the calling route doesn't need a fallthrough.
+ *
+ * @param reply              The Fastify reply (already hijacked).
+ * @param err                The error from the failover loop.
+ * @param requestId          For the JSON body / SSE error event.
+ * @param serializeSseError  Route-specific SSE error serializer.
+ */
+export function respondStreamFailoverCollapse(
+  reply: FastifyReply,
+  err: unknown,
+  requestId: string,
+  serializeSseError: SseErrorSerializer,
+): void {
+  if (err instanceof AllUpstreamsFailed || err instanceof FatalUpstreamError) {
+    if (reply.raw.headersSent) {
+      const { kind, message } = failoverErrorPair(err);
+      reply.raw.write(serializeSseError(kind, message, requestId));
+      reply.raw.end();
+    } else {
+      reply.raw.writeHead(
+        err instanceof FatalUpstreamError ? err.statusCode : 503,
+        { "content-type": "application/json" },
+      );
+      reply.raw.end(
+        JSON.stringify({
+          error:
+            err instanceof FatalUpstreamError
+              ? err.reason
+              : "all_upstreams_failed",
+          request_id: requestId,
+        }),
+      );
+    }
+    return;
+  }
+  // Unexpected error — 500 JSON if headers haven't been sent, else
+  // just close the open stream so the client doesn't hang.
+  if (!reply.raw.headersSent) {
+    reply.raw.writeHead(500, { "content-type": "application/json" });
+    reply.raw.end(JSON.stringify({ error: "internal_error" }));
+  } else {
+    reply.raw.end();
+  }
+}
