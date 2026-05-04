@@ -4,6 +4,12 @@ This guide walks you through running `aide` (platform mode) on your own
 infrastructure using the published Docker images. For CLI mode, see the root
 `README.md`.
 
+> **Just want to try it locally first?** See
+> [`LOCAL_DEPLOY.md`](./LOCAL_DEPLOY.md) — a 5-minute path to running
+> aide on your laptop with Docker Desktop, plus escalations to
+> "local + real OpenAI key" and "on-prem production". Strongly
+> recommended before committing to any cloud bill.
+>
 > **Looking for a managed alternative?** Pre-baked deploy templates are
 > available in [`deploy/render/`](../deploy/render/), [`deploy/fly/`](../deploy/fly/),
 > and [`deploy/railway/`](../deploy/railway/) — these target Render
