@@ -134,6 +134,7 @@ Images are published on every `v*` tag to:
 
 Operator guides:
 
+- **Try locally first**: [`docs/LOCAL_DEPLOY.md`](docs/LOCAL_DEPLOY.md) — 5-min path on your laptop, escalates to on-prem production
 - Self-hosting bring-up (api + web + gateway): [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md)
 - Gateway operator + user reference: [`docs/GATEWAY.md`](docs/GATEWAY.md)
 
