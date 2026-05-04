@@ -1,11 +1,4 @@
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  beforeEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
@@ -56,7 +49,16 @@ afterAll(async () => {
 
 let fakeServer: Server;
 let fakeBaseUrl: string;
-let nextUpstreamResponse: { status: number; body: string };
+let nextUpstreamResponse: {
+  status: number;
+  body: string;
+  /**
+   * When set, the fake server writes SSE chunks
+   * (`event: …\ndata: …\n\n`) instead of a JSON body, with
+   * `content-type: text/event-stream`. Used by the streaming test.
+   */
+  sseChunks?: string[];
+};
 let lastUpstreamRequest: {
   url: string | undefined;
   method: string | undefined;
@@ -74,6 +76,14 @@ beforeAll(async () => {
     });
     req.on("end", () => {
       lastUpstreamRequest = { url: req.url, method: req.method, body };
+      if (nextUpstreamResponse.sseChunks) {
+        res.statusCode = nextUpstreamResponse.status;
+        res.setHeader("content-type", "text/event-stream");
+        res.setHeader("cache-control", "no-cache");
+        for (const c of nextUpstreamResponse.sseChunks) res.write(c);
+        res.end();
+        return;
+      }
       res.statusCode = nextUpstreamResponse.status;
       res.setHeader("content-type", "application/json");
       res.end(nextUpstreamResponse.body);
@@ -389,6 +399,70 @@ describe("/backend-api/codex/responses (Codex CLI alias)", () => {
       payload: validResponsesPayload,
     });
     expect(res.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it("6. stream=true through Codex URL → SSE bytes parsed and re-emitted", async () => {
+    // Smoke test: streaming flows through the same handler path as
+    // /v1/responses. If a future refactor accidentally short-circuits
+    // the alias (e.g. swap forcePlatform for a misimplemented wrapper),
+    // this catches it.
+    const orgId = await seedOrg();
+    const userId = await seedUser();
+    const groupId = await seedGroup(orgId, "openai");
+    const rawKey = `ak_codex_strm_${Math.random().toString(36).slice(2)}`;
+    await seedApiKey(orgId, userId, rawKey, groupId);
+    await seedAccount(
+      orgId,
+      JSON.stringify({ type: "api_key", api_key: "sk-openai-test" }),
+      "openai",
+    );
+
+    nextUpstreamResponse = {
+      status: 200,
+      body: "",
+      sseChunks: [
+        `event: response.created\ndata: ${JSON.stringify({
+          type: "response.created",
+          response: { id: "resp_codex_stream", model: "gpt-4o", created_at: 1 },
+        })}\n\n`,
+        `event: response.output_text.delta\ndata: ${JSON.stringify({
+          type: "response.output_text.delta",
+          output_index: 0,
+          content_index: 0,
+          delta: "via codex",
+        })}\n\n`,
+        `event: response.completed\ndata: ${JSON.stringify({
+          type: "response.completed",
+          response: {
+            id: "resp_codex_stream",
+            status: "completed",
+            incomplete_details: null,
+            usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+          },
+        })}\n\n`,
+      ],
+    };
+
+    const redis = makeRedisMock();
+    const app = await makeApp(redis, container.getConnectionUri());
+    const res = await app.inject({
+      method: "POST",
+      url: "/backend-api/codex/responses",
+      headers: { authorization: `Bearer ${rawKey}` },
+      payload: { ...validResponsesPayload, stream: true },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/event-stream/);
+    expect(res.body).toContain("event: response.created");
+    expect(res.body).toContain("event: response.output_text.delta");
+    expect(res.body).toContain('"delta":"via codex"');
+    expect(res.body).toContain("event: response.completed");
+    // Upstream POST was sent with stream=true on the Responses-shaped body.
+    const upstreamBody = JSON.parse(lastUpstreamRequest!.body!);
+    expect(upstreamBody.stream).toBe(true);
+    expect(lastUpstreamRequest!.url).toBe("/v1/responses");
     await app.close();
   });
 });
