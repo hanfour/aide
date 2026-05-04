@@ -24,6 +24,7 @@ import type { SelectedAccount } from "../runtime/selectAccount.js";
 import { emitUsageLog } from "../runtime/usageLogging.js";
 import { emitBodyCapture } from "../runtime/bodyCapture.js";
 import { withSlotAndCredential } from "../runtime/withSlotAndCredential.js";
+import { usageLogInboundPlatformForSurface } from "../runtime/usageLogging.js";
 import { autoRoute } from "./dispatch.js";
 
 export interface MessagesRouteOptions {
@@ -747,11 +748,13 @@ export function makeMessagesOpenaiHandler(
       return;
     }
 
-    // Cast: the route accepts loose body shape for backward
-    // compatibility with the 4A inline handler. The translator's
-    // input type is `AnthropicMessagesRequest`; we trust the client
-    // body up to the model+messages level since the 4A route did
-    // the same.
+    // Body validation is best-effort — the 4A inline handler also
+    // forwards loose-shaped Anthropic bodies upstream. The translator
+    // is total over a well-shaped input but may throw when invoked on
+    // malformed `tools[].input_schema` or unexpected `tool_use` block
+    // shapes; we catch that throw below and surface 400.  Proper Zod
+    // validation could move here once an `AnthropicMessagesRequestSchema`
+    // exists in gateway-core (deferred).
     const anthropicBody = body as unknown as AnthropicMessagesRequest;
 
     let openaiBody;
@@ -769,6 +772,13 @@ export function makeMessagesOpenaiHandler(
     const upstreamBodyBuf = Buffer.from(JSON.stringify(openaiBody));
     const startedAtMs = Date.now();
     const requestedModel = anthropicBody.model;
+
+    // Wire AbortSignal from client disconnect → upstream cancel.
+    // Without this, a long-running OpenAI call keeps holding upstream
+    // resources for up to 60s after the client gives up.
+    const ac = new AbortController();
+    const onClose = () => ac.abort();
+    req.raw.once("close", onClose);
 
     try {
       const anthropicResp = await runFailover({
@@ -788,6 +798,7 @@ export function makeMessagesOpenaiHandler(
                 baseUrl: opts.env.UPSTREAM_OPENAI_BASE_URL,
                 body: upstreamBodyBuf,
                 credential,
+                signal: ac.signal,
               });
 
               if (upstream.kind === "stream") {
@@ -833,13 +844,24 @@ export function makeMessagesOpenaiHandler(
                   )
                 : null;
 
+              // Forensic-row contract: emitUsageLog runs BEFORE the
+              // parse-failure throw so a malformed-2xx attempt leaves
+              // a zero-cost row recording which account misbehaved.
+              // With N accounts all returning malformed 2xx we'd
+              // write N rows + 1 final 503 — intentional, lets ops
+              // count "how many of my accounts are returning bad
+              // data" via dashboards. Mirrors PR 9b/9d/9e.
               await emitUsageLog({
                 app,
                 req,
                 requestedModel,
                 accountId: account.id,
                 upstreamResponse: translated,
-                platform: "anthropic",
+                // `platform` is the inbound URL space (anthropic for
+                // /v1/messages), NOT the upstream provider. The
+                // upstream OpenAI account can be pivoted via
+                // `accountId` joined to `account.platform`.
+                platform: usageLogInboundPlatformForSurface("messages"),
                 surface: "messages",
                 statusCode: 200,
                 durationMs: Date.now() - startedAtMs,
@@ -883,6 +905,8 @@ export function makeMessagesOpenaiHandler(
         return;
       }
       throw err;
+    } finally {
+      req.raw.off("close", onClose);
     }
   };
 }

@@ -805,4 +805,179 @@ describe("POST /v1/messages", () => {
     expect(lastRequest!.url).toBe("/v1/messages");
     await app.close();
   });
+
+  it("openai-platform group + upstream 503 with one account → 503 all_upstreams_failed", async () => {
+    const orgId = await seedOrg();
+    const userId = await seedUser(orgId);
+    const groupId = await seedGroup(orgId, "openai");
+    const rawKey = `ak_msg_oai_5xx_${Math.random().toString(36).slice(2)}`;
+    await seedApiKey(orgId, userId, rawKey, groupId);
+    await seedAccount(
+      orgId,
+      JSON.stringify({ type: "api_key", api_key: "sk-openai-test" }),
+      { platform: "openai" },
+    );
+    nextUpstreamResponse = {
+      status: 503,
+      body: JSON.stringify({ error: { message: "Service unavailable" } }),
+    };
+    const redis = new RedisMock({
+      keyPrefix: "aide:gw:",
+    }) as unknown as Redis;
+    const { parseServerEnv } = await import("@aide/config");
+    const env = parseServerEnv(buildEnv(container.getConnectionUri()));
+    const app = await buildServer({ env, db, redis });
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/messages",
+      headers: { authorization: `Bearer ${rawKey}` },
+      payload: {
+        model: "claude-3-haiku-20240307",
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 10,
+      },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ error: "all_upstreams_failed" });
+    await app.close();
+  });
+
+  it("openai-platform group + upstream 401 → switch_account → AllUpstreamsFailed → 503", async () => {
+    const orgId = await seedOrg();
+    const userId = await seedUser(orgId);
+    const groupId = await seedGroup(orgId, "openai");
+    const rawKey = `ak_msg_oai_4xx_${Math.random().toString(36).slice(2)}`;
+    await seedApiKey(orgId, userId, rawKey, groupId);
+    await seedAccount(
+      orgId,
+      JSON.stringify({ type: "api_key", api_key: "sk-openai-test" }),
+      { platform: "openai" },
+    );
+    nextUpstreamResponse = {
+      status: 401,
+      body: JSON.stringify({ error: { message: "Invalid API key" } }),
+    };
+    const redis = new RedisMock({
+      keyPrefix: "aide:gw:",
+    }) as unknown as Redis;
+    const { parseServerEnv } = await import("@aide/config");
+    const env = parseServerEnv(buildEnv(container.getConnectionUri()));
+    const app = await buildServer({ env, db, redis });
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/messages",
+      headers: { authorization: `Bearer ${rawKey}` },
+      payload: {
+        model: "claude-3-haiku-20240307",
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 10,
+      },
+    });
+    // 401 is `switch_account` per the failover classifier; with one
+    // account in the pool, the pool exhausts → AllUpstreamsFailed.
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error).toBe("all_upstreams_failed");
+    await app.close();
+  });
+
+  it("openai-platform group + upstream 200 with malformed JSON → 502 / 503 forensic path", async () => {
+    const orgId = await seedOrg();
+    const userId = await seedUser(orgId);
+    const groupId = await seedGroup(orgId, "openai");
+    const rawKey = `ak_msg_oai_mal_${Math.random().toString(36).slice(2)}`;
+    await seedApiKey(orgId, userId, rawKey, groupId);
+    await seedAccount(
+      orgId,
+      JSON.stringify({ type: "api_key", api_key: "sk-openai-test" }),
+      { platform: "openai" },
+    );
+    nextUpstreamResponse = {
+      status: 200,
+      body: "not valid json {",
+    };
+    const redis = new RedisMock({
+      keyPrefix: "aide:gw:",
+    }) as unknown as Redis;
+    const { parseServerEnv } = await import("@aide/config");
+    const env = parseServerEnv(buildEnv(container.getConnectionUri()));
+    const app = await buildServer({ env, db, redis });
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/messages",
+      headers: { authorization: `Bearer ${rawKey}` },
+      payload: {
+        model: "claude-3-haiku-20240307",
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 10,
+      },
+    });
+    // The handler throws { status: 502 } inside attempt; with one
+    // account, failover surfaces AllUpstreamsFailed → 503.
+    expect([502, 503]).toContain(res.statusCode);
+    await app.close();
+  });
+
+  it("openai-platform + Anthropic system prompt → translates to instructions → comes back as Anthropic", async () => {
+    const orgId = await seedOrg();
+    const userId = await seedUser(orgId);
+    const groupId = await seedGroup(orgId, "openai");
+    const rawKey = `ak_msg_oai_sys_${Math.random().toString(36).slice(2)}`;
+    await seedApiKey(orgId, userId, rawKey, groupId);
+    await seedAccount(
+      orgId,
+      JSON.stringify({ type: "api_key", api_key: "sk-openai-test" }),
+      { platform: "openai" },
+    );
+    nextUpstreamResponse = {
+      status: 200,
+      body: JSON.stringify({
+        id: "resp_sys",
+        object: "response",
+        created_at: 1700000000,
+        model: "gpt-4o",
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            id: "msg_sys",
+            role: "assistant",
+            status: "completed",
+            content: [
+              { type: "output_text", text: "ok terse", annotations: [] },
+            ],
+          },
+        ],
+        usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+        incomplete_details: null,
+      }),
+    };
+    const redis = new RedisMock({
+      keyPrefix: "aide:gw:",
+    }) as unknown as Redis;
+    const { parseServerEnv } = await import("@aide/config");
+    const env = parseServerEnv(buildEnv(container.getConnectionUri()));
+    const app = await buildServer({ env, db, redis });
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/messages",
+      headers: { authorization: `Bearer ${rawKey}` },
+      payload: {
+        model: "claude-3-haiku-20240307",
+        system: "be terse",
+        messages: [{ role: "user", content: "hello" }],
+        max_tokens: 50,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    // End-to-end shape assertion: client gets Anthropic Messages
+    // shape back with the translated content. The system → instructions
+    // round-trip is unit-tested in gateway-core; this confirms the
+    // wiring works end-to-end with the `system` field present.
+    expect(res.json()).toMatchObject({
+      type: "message",
+      role: "assistant",
+    });
+    expect(res.json().content[0].text).toBe("ok terse");
+    await app.close();
+  });
 });
