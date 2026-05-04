@@ -87,6 +87,11 @@ export const serverEnvSchema = z
     // entirely (still increments counters for observability when 0
     // would be confusing — currently we just skip the check).
     GATEWAY_APIKEY_RPM_LIMIT: z.coerce.number().int().min(0).default(600),
+    // Phase 3 #2 — response-cache TTL. 0 disables caching. Cache scope is
+    // (orgId, platform, request_body_bytes) → upstream response, only for
+    // 200 + non-streaming + body < 64 KiB.  See
+    // `apps/gateway/src/runtime/responseCache.ts` for the boundaries.
+    GATEWAY_CACHE_TTL_SEC: z.coerce.number().int().min(0).default(0),
   })
   .superRefine((data, ctx) => {
     if (!data.ENABLE_GATEWAY) {
