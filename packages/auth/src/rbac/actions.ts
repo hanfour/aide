@@ -45,6 +45,11 @@ export type Action =
   | { type: "account.update"; orgId: string; accountId: string }
   | { type: "account.rotate"; orgId: string; accountId: string }
   | { type: "account.delete"; orgId: string; accountId: string }
+  | { type: "account_group.read"; orgId: string }
+  | { type: "account_group.create"; orgId: string }
+  | { type: "account_group.update"; orgId: string; groupId: string }
+  | { type: "account_group.delete"; orgId: string; groupId: string }
+  | { type: "account_group.manage_members"; orgId: string; groupId: string }
   | { type: "api_key.issue_own" }
   | { type: "api_key.issue_for_user"; orgId: string; targetUserId: string }
   | { type: "api_key.list_own" }

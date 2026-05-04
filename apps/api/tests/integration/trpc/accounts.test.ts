@@ -86,6 +86,40 @@ describe("accounts router", () => {
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
+  it("list: optional platform filter narrows server-side", async () => {
+    const org = await makeOrg(t.db);
+    const admin = await makeUser(t.db, {
+      role: "org_admin",
+      scopeType: "organization",
+      scopeId: org.id,
+      orgId: org.id,
+    });
+    const caller = await callerFor(t.db, admin.id);
+    // Insert via DB directly so this test stays decoupled from the
+    // accounts.create platformEnum widening (lives on the parallel
+    // phase1 branch); we only need rows of distinct platforms to verify
+    // the SELECT WHERE clause picks them up.
+    await t.db.insert(upstreamAccounts).values([
+      { orgId: org.id, name: "ant", platform: "anthropic", type: "api_key" },
+      { orgId: org.id, name: "oai", platform: "openai", type: "api_key" },
+    ]);
+
+    const all = await caller.accounts.list({ orgId: org.id });
+    expect(all.map((r) => r.name).sort()).toEqual(["ant", "oai"]);
+
+    const onlyOpenai = await caller.accounts.list({
+      orgId: org.id,
+      platform: "openai",
+    });
+    expect(onlyOpenai.map((r) => r.name)).toEqual(["oai"]);
+
+    const onlyAnthropic = await caller.accounts.list({
+      orgId: org.id,
+      platform: "anthropic",
+    });
+    expect(onlyAnthropic.map((r) => r.name)).toEqual(["ant"]);
+  });
+
   it("get: NOT_FOUND for unknown id and unauthorized id", async () => {
     const orgA = await makeOrg(t.db);
     const orgB = await makeOrg(t.db);

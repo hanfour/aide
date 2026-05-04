@@ -14,6 +14,15 @@ import { sql } from "drizzle-orm";
 import { organizations } from "./org.js";
 import { upstreamAccounts } from "./accounts.js";
 
+// API-key migration plan Phase 3 #1 follow-up — app-layer source of truth
+// for the `account_groups.status` text column.  The gateway scheduler
+// filters on `"active"`; admin tRPC `update`/`delete` set `"disabled"`.
+// Mirrors the `UPSTREAM_ACCOUNT_STATUS_VALUES` pattern; consumers wrap
+// in `z.enum(...)` for input validation.
+export const ACCOUNT_GROUP_STATUS_VALUES = ["active", "disabled"] as const;
+
+export type AccountGroupStatus = (typeof ACCOUNT_GROUP_STATUS_VALUES)[number];
+
 export const accountGroups = pgTable(
   "account_groups",
   {

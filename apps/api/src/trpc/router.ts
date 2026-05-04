@@ -8,6 +8,7 @@ import { invitesRouter } from "./routers/invites.js";
 import { rolesRouter } from "./routers/roles.js";
 import { auditLogsRouter } from "./routers/audit-logs.js";
 import { accountsRouter } from "./routers/accounts.js";
+import { accountGroupsRouter } from "./routers/accountGroups.js";
 import { apiKeysRouter } from "./routers/apiKeys.js";
 import { usageRouter } from "./routers/usage.js";
 import { contentCaptureRouter } from "./routers/contentCapture.js";
@@ -25,6 +26,7 @@ export const appRouter = router({
   roles: rolesRouter,
   auditLogs: auditLogsRouter,
   accounts: accountsRouter,
+  accountGroups: accountGroupsRouter,
   apiKeys: apiKeysRouter,
   usage: usageRouter,
   contentCapture: contentCaptureRouter,

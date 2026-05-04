@@ -125,6 +125,18 @@ priority, per-account concurrency, rate-limit state, and team scope.
 | `/dashboard/organizations/[id]/accounts` | `account.read` |
 | `/dashboard/organizations/[id]/accounts/new` | `account.create` |
 | `/dashboard/organizations/[id]/teams/[tid]` → Accounts tab | `account.read` |
+| `/dashboard/organizations/[id]/account-groups` | `account_group.read` |
+| `/dashboard/organizations/[id]/account-groups/new` | `account_group.create` |
+| `/dashboard/organizations/[id]/account-groups/[gid]` | `account_group.read` (members CRUD requires `account_group.manage_members`) |
+
+**Account groups.** Groups bundle multiple upstream accounts of the same
+platform under a single name + rate multiplier; the gateway scheduler
+load-balances across members by ascending `priority`. The admin UI
+covers full CRUD: create / rename / disable / soft-delete groups, and
+add / remove / reprioritise members. The Phase 1 OpenAI onboarding
+story is most useful with groups — admins typically create one group
+per platform/environment (e.g. `openai-prod-pool`) and pin several
+project-scoped `sk-` keys with different priorities + spend caps.
 
 **Shape stored per account** (see `packages/db/src/schema/accounts.ts`):
 
