@@ -171,6 +171,15 @@ export function can(perm: UserPermissions, action: Action): boolean {
     case "account.update":
     case "account.rotate":
     case "account.delete":
+    // Account groups are an org-level scheduling concern that mirrors the
+    // org-admin gate on individual accounts.  Per Phase 3 #1 of the API key
+    // migration plan, anyone allowed to manage upstream accounts can also
+    // manage their grouping for load-balancing purposes.
+    case "account_group.read":
+    case "account_group.create":
+    case "account_group.update":
+    case "account_group.delete":
+    case "account_group.manage_members":
       return rolesAt(perm, "organization", action.orgId).has("org_admin");
     case "api_key.issue_own":
     case "api_key.list_own":
