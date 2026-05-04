@@ -954,10 +954,17 @@ export function makeMessagesOpenaiHandler(
 // upstream OpenAI provider is recoverable from the `accountId` join.
 // ---------------------------------------------------------------------------
 
-function serializeAnthropicSseError(errType: string, message: string): string {
+function serializeAnthropicSseError(
+  errType: string,
+  message: string,
+  requestId: string,
+): string {
+  // `request_id` inside the inner `error` object lets ops correlate a
+  // failed stream with its `usage_log` row. Forward-compatible — the
+  // Anthropic SDK ignores unknown fields on error events.
   const ev = {
     type: "error" as const,
-    error: { type: errType, message },
+    error: { type: errType, message, request_id: requestId },
   };
   return `event: error\ndata: ${JSON.stringify(ev)}\n\n`;
 }
@@ -1078,6 +1085,7 @@ async function runMessagesOpenaiStreamingFailover(
                 serializeAnthropicSseError(
                   err instanceof Error ? err.name : "unknown",
                   err instanceof Error ? err.message : String(err),
+                  requestId,
                 ),
               );
             }
@@ -1139,7 +1147,9 @@ async function runMessagesOpenaiStreamingFailover(
           err instanceof FatalUpstreamError
             ? err.reason
             : "all_upstreams_failed";
-        reply.raw.write(serializeAnthropicSseError(errType, message));
+        reply.raw.write(
+          serializeAnthropicSseError(errType, message, requestId),
+        );
         reply.raw.end();
       } else {
         reply.raw.writeHead(
