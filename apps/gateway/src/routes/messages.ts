@@ -39,6 +39,12 @@ import {
   respondStreamFailoverCollapse,
 } from "../runtime/sseErrorEvents.js";
 import { autoRoute } from "./dispatch.js";
+import {
+  computeCacheKey,
+  decodeCachedBody,
+  maybeCacheStore,
+  tryCacheRead,
+} from "../runtime/responseCache.js";
 
 export interface MessagesRouteOptions {
   env: ServerEnv;
@@ -103,6 +109,30 @@ export function makeMessagesAnthropicHandler(
     const requestId = req.id; // Fastify auto-generates UUID per request.
     const upstreamBodyBuf = Buffer.from(JSON.stringify(body));
 
+    // Phase 3 #2 — response cache for non-streaming requests. Disabled
+    // when GATEWAY_CACHE_TTL_SEC=0 (default).
+    const cacheTtlSec = opts.env.GATEWAY_CACHE_TTL_SEC;
+    let cacheKey: string | undefined;
+    if (!isStream && cacheTtlSec > 0) {
+      cacheKey = computeCacheKey(req.gwOrg.id, "anthropic", upstreamBodyBuf);
+      const cached = await tryCacheRead(
+        { redis: app.redis, ttlSec: cacheTtlSec },
+        cacheKey,
+      );
+      if (cached) {
+        reply.code(cached.status);
+        for (const [k, v] of Object.entries(cached.headers)) {
+          reply.header(k, v);
+        }
+        reply.header("x-cache", "hit");
+        reply.send(decodeCachedBody(cached));
+        return;
+      }
+      // Mark miss so clients can observe cache behaviour even on the
+      // upstream-served path; runNonStreamFailover stores on success.
+      reply.header("x-cache", "miss");
+    }
+
     // Wire AbortSignal from client disconnect.
     const ac = new AbortController();
     const onClose = () => ac.abort();
@@ -128,6 +158,7 @@ export function makeMessagesAnthropicHandler(
           upstreamBodyBuf,
           requestId,
           ac.signal,
+          cacheKey,
         );
       }
     } catch (err) {
@@ -196,6 +227,12 @@ async function runNonStreamFailover(
   upstreamBodyBuf: Buffer,
   requestId: string,
   signal: AbortSignal,
+  /**
+   * Phase 3 #2 — when present, the route handler computed a cache key
+   * upfront after a cache-miss read. We store the upstream response
+   * here on success so the next identical request can short-circuit.
+   */
+  cacheKey?: string,
 ): Promise<void> {
   // Capture start time BEFORE the failover loop so durationMs includes
   // credential resolve + slot acquire + failover switches. Sub-task B of
@@ -354,6 +391,22 @@ async function runNonStreamFailover(
     if (typeof v === "undefined") continue;
     if (HOP_BY_HOP.has(k.toLowerCase())) continue;
     reply.header(k, v as string);
+  }
+
+  // Phase 3 #2 — fire-and-forget cache write on success. Don't await
+  // (Redis SET is fast but no need to add it to the user-visible path).
+  // maybeCacheStore swallows its own errors and gates on status === 200
+  // + body size.
+  if (cacheKey !== undefined) {
+    void maybeCacheStore(
+      { redis: app.redis, ttlSec: opts.env.GATEWAY_CACHE_TTL_SEC },
+      cacheKey,
+      {
+        status: result.status,
+        headers: result.headers,
+        body: result.body,
+      },
+    );
   }
 
   reply.send(result.body);
