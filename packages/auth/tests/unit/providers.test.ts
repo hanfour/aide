@@ -44,8 +44,10 @@ describe("buildProviders", () => {
     expect(buildProviders({})).toHaveLength(0);
   });
 
-  it("skips a provider when only one half of the pair is set", () => {
-    // Misconfiguration — id without secret is not a working provider.
+  it("skips a half-set provider (defense in depth — schema rejects this at boot)", () => {
+    // The env schema's superRefine catches half-set pairs before this
+    // function ever sees them in normal boot. This case pins the defensive
+    // behavior for direct/unit-test callers that bypass the schema gate.
     const providers = buildProviders({
       GOOGLE_CLIENT_ID: "google-id",
       GOOGLE_CLIENT_SECRET: "",

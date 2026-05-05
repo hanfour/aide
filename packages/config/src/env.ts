@@ -144,14 +144,48 @@ export const serverEnvSchema = z
     ),
   })
   .superRefine((data, ctx) => {
-    const hasGoogle = !!data.GOOGLE_CLIENT_ID && !!data.GOOGLE_CLIENT_SECRET;
-    const hasGitHub = !!data.GITHUB_CLIENT_ID && !!data.GITHUB_CLIENT_SECRET;
+    // OAuth provider validity: each pair must be set together (id + secret),
+    // and at least one fully configured pair must exist. The half-set check
+    // catches typos / missed copy-paste; without it, `buildProviders` would
+    // silently drop the half-set provider and operators would scratch their
+    // heads at a missing sign-in button.
+    const googleId = !!data.GOOGLE_CLIENT_ID;
+    const googleSecret = !!data.GOOGLE_CLIENT_SECRET;
+    if (googleId !== googleSecret) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: googleId ? ["GOOGLE_CLIENT_SECRET"] : ["GOOGLE_CLIENT_ID"],
+        message:
+          "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together (or both empty to disable Google OAuth).",
+      });
+    }
+    const githubId = !!data.GITHUB_CLIENT_ID;
+    const githubSecret = !!data.GITHUB_CLIENT_SECRET;
+    if (githubId !== githubSecret) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: githubId ? ["GITHUB_CLIENT_SECRET"] : ["GITHUB_CLIENT_ID"],
+        message:
+          "GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must be set together (or both empty to disable GitHub OAuth).",
+      });
+    }
+    const hasGoogle = googleId && googleSecret;
+    const hasGitHub = githubId && githubSecret;
     if (!hasGoogle && !hasGitHub) {
+      // Emit on both provider fields so the operator sees the error next to
+      // whichever block they're trying to configure — the message itself
+      // names both providers, so directionality of `path` isn't load-bearing.
+      const message =
+        "At least one OAuth provider must be configured. Set GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET or GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET (or both).";
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["GOOGLE_CLIENT_ID"],
-        message:
-          "At least one OAuth provider must be configured. Set GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET or GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET (or both).",
+        message,
+      });
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["GITHUB_CLIENT_ID"],
+        message,
       });
     }
 

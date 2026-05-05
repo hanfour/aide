@@ -144,6 +144,53 @@ describe("parseServerEnv", () => {
         }),
       ).toThrow(/At least one OAuth provider/);
     });
+
+    // Half-set pairs are a common typo: copy GOOGLE_CLIENT_ID, forget the
+    // secret. Without an explicit reject, buildProviders silently drops the
+    // half-set provider and the operator gets a missing sign-in button with
+    // no boot-time signal.
+
+    it("rejects half-set Google pair (id without secret)", () => {
+      expect(() =>
+        parseServerEnv({
+          ...valid,
+          GOOGLE_CLIENT_ID: "g-id",
+          GOOGLE_CLIENT_SECRET: "",
+        }),
+      ).toThrow(/GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together/);
+    });
+
+    it("rejects half-set Google pair (secret without id)", () => {
+      expect(() =>
+        parseServerEnv({
+          ...valid,
+          GOOGLE_CLIENT_ID: "",
+          GOOGLE_CLIENT_SECRET: "g-secret",
+        }),
+      ).toThrow(/GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together/);
+    });
+
+    it("rejects half-set GitHub pair (id without secret)", () => {
+      expect(() =>
+        parseServerEnv({
+          ...valid,
+          GITHUB_CLIENT_ID: "gh-id",
+          GITHUB_CLIENT_SECRET: "",
+        }),
+      ).toThrow(/GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must be set together/);
+    });
+
+    it("accepts half-set Google + valid GitHub doesn't help — half-set still rejects", () => {
+      // Even with GitHub valid, the half-set Google is still a config error
+      // worth surfacing; we don't want to silently drop the typo.
+      expect(() =>
+        parseServerEnv({
+          ...valid,
+          GOOGLE_CLIENT_ID: "g-id",
+          GOOGLE_CLIENT_SECRET: "",
+        }),
+      ).toThrow(/GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together/);
+    });
   });
 
   // ── AUTH_TRUST_HOST default ────────────────────────────────────────────────

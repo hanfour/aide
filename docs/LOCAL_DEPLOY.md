@@ -260,6 +260,15 @@ For internal-only deployments without internet access, swap Caddy/Let's Encrypt
 for an internal CA — the configs in `deploy/proxy/` document the cert paths
 they expect.
 
+> **Trust-host posture for on-prem.** The `AUTH_TRUST_HOST` env defaults to
+> `true` (set in compose) so Auth.js v5 accepts requests on whatever host
+> your reverse proxy serves. That's correct when the proxy is yours
+> (Caddy / nginx in `deploy/proxy/`) and `NEXTAUTH_URL` is the canonical
+> external origin. If you ever sit behind a reverse proxy you don't control
+> (e.g. a shared corporate edge that may forward arbitrary `Host` headers),
+> set `AUTH_TRUST_HOST=false` in `.env` and rely on `NEXTAUTH_URL` alone —
+> Auth.js will then reject requests on any other host.
+
 #### 4. Bring the stack up
 
 Same as Mode 1:
