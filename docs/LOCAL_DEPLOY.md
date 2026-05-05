@@ -91,9 +91,13 @@ You should see:
 ### 3. Verify
 
 ```bash
-curl -fsS http://localhost:3000/api/health        # → {"status":"ok"}
-curl -fsS http://localhost:3002/health            # → {"status":"ok"}
+curl -sS -o /dev/null -w "%{http_code}\n" http://localhost:3000/   # → 307 (redirects to /sign-in)
+curl -fsS http://localhost:3002/health                              # → {"status":"ok"}
 ```
+
+The web tier doesn't expose a JSON health endpoint — `docker compose ps`
+showing `web` as `(healthy)` is enough; the 307 above just confirms Next.js
+is serving traffic and the auth middleware is wiring redirects correctly.
 
 Open <http://localhost:3000> in your browser → sign in with the email
 you set as `BOOTSTRAP_SUPER_ADMIN_EMAIL` → you should land in
