@@ -16,13 +16,14 @@ const nextConfig = {
     // at `next build` time. `process.env.API_INTERNAL_URL` is unset during the
     // image build, so a literal substitution would freeze the fallback string
     // forever — runtime env changes would be ignored. Instead, in production
-    // builds we emit a placeholder destination and the runtime entrypoint
+    // builds we emit a placeholder ORIGIN (must start with http:// for
+    // Next.js's rewrite validator) and the runtime entrypoint
     // (docker/web-entrypoint.sh) sed-substitutes the real value into the
     // manifest before `node server.js` starts. Dev (`next dev`) reads env
     // live, so the placeholder dance isn't needed there.
     const apiInternal =
       process.env.NODE_ENV === 'production'
-        ? '__AIDE_INTERNAL_API_URL__'
+        ? 'http://aide-internal-api-url-placeholder'
         : (process.env.API_INTERNAL_URL ?? 'http://localhost:3001')
     return [
       { source: '/trpc/:path*', destination: `${apiInternal}/trpc/:path*` },
