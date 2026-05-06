@@ -263,6 +263,18 @@ admin-customizable rubrics, GDPR workflow, labor-law-friendly transparency.
   per-team usage drill-down, IP-allowlist UI, scripted credential-key
   rotation.
 
+## CLI v0.1.1 — 2026-05-06 — README refresh (no behaviour change)
+
+npm package `@hanfour.huang/aide`. Pure docs bump — `dist/` and
+`templates/` are byte-identical to v0.1.0. Republishes the bundled
+`README.md` so the [npm package page](https://www.npmjs.com/package/@hanfour.huang/aide)
+surfaces the new platform-mode entry points (`docs/GETTING_STARTED.md`
+walkthrough + Pages tutorial CTA), giving CLI-first visitors a path
+to the self-hosted personal gateway use case if they want it.
+
+No CLI runtime change. Existing `aide` users have no reason to upgrade
+unless they explicitly want the refreshed docs.
+
 ## v0.2.0 — Platform mode launched
 
 Self-hostable web platform: Next.js UI + Fastify API, OAuth sign-in,
