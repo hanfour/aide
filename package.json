@@ -19,6 +19,7 @@
     "pretest": "scripts/cleanup-testcontainers.sh",
     "test": "pnpm build && vitest run",
     "test:watch": "vitest",
+    "pretest:coverage": "scripts/cleanup-testcontainers.sh",
     "test:coverage": "vitest run --config vitest.coverage.config.ts",
     "prepublishOnly": "pnpm build && pnpm test",
     "lint": "turbo run lint",

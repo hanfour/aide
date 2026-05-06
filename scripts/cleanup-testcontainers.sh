@@ -20,6 +20,13 @@
 #
 # Safe to run with no Docker daemon (silently no-ops); safe to run
 # when there are zero leaked containers (silently no-ops).
+#
+# Concurrency caveat: this nukes ALL testcontainer-labelled containers
+# system-wide, including any in use by a parallel `pnpm test` (e.g. one
+# from VS Code Test Explorer alongside one from a terminal). For solo
+# sequential workflows this is fine. If you regularly run multiple test
+# processes in parallel, scope by container age / session id before
+# enabling this hook.
 set -eu
 
 # Skip silently if Docker isn't reachable — many CI / build envs don't
