@@ -100,14 +100,15 @@ export const ResponsesRequestSchema = z
     stream: z.boolean().optional(),
     /**
      * Per design A6 — client-supplied `previous_response_id` is allowed
-     * (the gateway uses it for sticky scheduling in Part 7). Other
-     * client-side feature flags (`parallel_tool_calls`, `reasoning`,
-     * `file_search`, …) are rejected by `.strict()` below so the route
-     * handler can return HTTP 400 `unsupported_feature` instead of
-     * silently dropping them. The one exception is `store`, which the
-     * route strips pre-Zod (see SILENTLY_DROPPED_FIELDS in
-     * routes/responses.ts) — codex CLI / openai SDK send it
-     * unconditionally and aide doesn't honour it either way.
+     * (the gateway uses it for sticky scheduling in Part 7). Server-
+     * side tool flags (`file_search`, `code_interpreter`, `computer_use`)
+     * are rejected by `.strict()` below so the route returns a clear
+     * HTTP 400 `unsupported_feature` instead of silently mis-translating.
+     *
+     * Three flags codex CLI / openai SDK send unconditionally (`store`,
+     * `parallel_tool_calls`, `reasoning`) are stripped pre-Zod by the
+     * route (see SILENTLY_DROPPED_FIELDS in routes/responses.ts) so
+     * they pass through `.strict()` as no-ops.
      */
     previous_response_id: z.string().optional(),
   })

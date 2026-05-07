@@ -366,16 +366,28 @@ describe("/v1/responses", () => {
     await app.close();
   });
 
-  it("3. `store` is silently dropped (codex CLI compat) — 200, not forwarded upstream", async () => {
-    // codex CLI / openai SDK send `store` unconditionally; aide doesn't
-    // honour OpenAI's server-side response storage either way, so the
-    // route strips the field before Zod parsing rather than 400-ing.
-    // Both true/false should pass through; neither should appear in
-    // the translated Anthropic body sent upstream.
-    for (const storeValue of [true, false]) {
+  it("3. silently-dropped fields (codex CLI compat) — 200, not forwarded upstream", async () => {
+    // codex CLI / openai SDK send these fields unconditionally on every
+    // /v1/responses call. aide treats them as no-ops for now (route
+    // strips pre-Zod) so .strict() doesn't 400 against them. Each
+    // field × representative value must:
+    //   a) succeed with 200
+    //   b) not appear in the translated Anthropic body sent upstream
+    const cases: Array<{ field: string; payload: Record<string, unknown> }> = [
+      { field: "store", payload: { store: true } },
+      { field: "store", payload: { store: false } },
+      { field: "parallel_tool_calls", payload: { parallel_tool_calls: true } },
+      {
+        field: "parallel_tool_calls",
+        payload: { parallel_tool_calls: false },
+      },
+      { field: "reasoning", payload: { reasoning: { effort: "high" } } },
+    ];
+
+    for (const { field, payload } of cases) {
       const orgId = await seedOrg();
       const userId = await seedUser();
-      const rawKey = `ak_resp_store_${storeValue}_${Math.random().toString(36).slice(2)}`;
+      const rawKey = `ak_resp_drop_${field}_${Math.random().toString(36).slice(2)}`;
       await seedApiKey(orgId, userId, rawKey);
       await seedAccount(
         orgId,
@@ -389,23 +401,27 @@ describe("/v1/responses", () => {
         method: "POST",
         url: "/v1/responses",
         headers: { authorization: `Bearer ${rawKey}` },
-        payload: { ...validResponsesPayload, store: storeValue },
+        payload: { ...validResponsesPayload, ...payload },
       });
-      expect(res.statusCode).toBe(200);
+      expect(
+        res.statusCode,
+        `field=${field} payload=${JSON.stringify(payload)}`,
+      ).toBe(200);
 
-      // Upstream Anthropic body must not carry the dropped field —
-      // translator never sees it, so it can't slip through.
       expect(lastUpstreamRequest).not.toBeNull();
       const upstreamBody = JSON.parse(lastUpstreamRequest!.body!);
-      expect(upstreamBody).not.toHaveProperty("store");
+      expect(
+        upstreamBody,
+        `field=${field} should be stripped from upstream body`,
+      ).not.toHaveProperty(field);
       await app.close();
     }
   });
 
-  it("4. unsupported feature `parallel_tool_calls` → 400", async () => {
+  it("4. server-side tool `file_search` → 400 (still rejected)", async () => {
     const orgId = await seedOrg();
     const userId = await seedUser();
-    const rawKey = `ak_resp_para_${Math.random().toString(36).slice(2)}`;
+    const rawKey = `ak_resp_fs_${Math.random().toString(36).slice(2)}`;
     await seedApiKey(orgId, userId, rawKey);
     await seedAccount(
       orgId,
@@ -419,12 +435,12 @@ describe("/v1/responses", () => {
       method: "POST",
       url: "/v1/responses",
       headers: { authorization: `Bearer ${rawKey}` },
-      payload: { ...validResponsesPayload, parallel_tool_calls: false },
+      payload: { ...validResponsesPayload, file_search: { enabled: true } },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({
       error: "unsupported_feature",
-      field: "parallel_tool_calls",
+      field: "file_search",
     });
     await app.close();
   });
