@@ -23,6 +23,7 @@ import {
   createBodyCaptureQueue,
   type BodyCaptureJobPayload,
 } from "./workers/bodyCaptureQueue.js";
+import { createBodyCaptureWorker } from "./workers/bodyCaptureWorker.js";
 import {
   createEvaluatorQueue,
   type EvaluatorJobPayload,
@@ -366,7 +367,42 @@ async function wireBodyCapturePipeline(
 
   app.decorate("bodyCaptureQueue", queue);
 
+  // Spawn the worker that drains the queue into request_bodies. Without
+  // this, jobs accumulate in redis indefinitely while content_capture
+  // *appears* enabled — the prior comment claimed the worker was
+  // "managed externally" but no caller ever started it.
+  // CREDENTIAL_ENCRYPTION_KEY is already required by parseServerEnv when
+  // ENABLE_GATEWAY=true, so the non-null assertion is safe here.
+  if (!app.db) {
+    throw new Error(
+      "app.db must be decorated before wireBodyCapturePipeline runs",
+    );
+  }
+  const worker = createBodyCaptureWorker({
+    connection: bullmqRedis,
+    db: app.db,
+    masterKeyHex: env.CREDENTIAL_ENCRYPTION_KEY!,
+  });
+  worker.on("failed", (job, err) => {
+    app.log.warn(
+      {
+        jobId: job?.id,
+        attempt: job?.attemptsMade,
+        err: err.message,
+      },
+      "body capture job failed",
+    );
+  });
+
   app.addHook("onClose", async () => {
+    try {
+      await worker.close();
+    } catch (err) {
+      app.log.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "body capture worker close failed",
+      );
+    }
     try {
       await queue.close();
     } catch (err) {
