@@ -69,6 +69,16 @@ export default function OrganizationLayout({
       visible: (p) => p.isSuperAdmin || p.isOrgAdmin,
     },
     {
+      href: "/usage",
+      label: "Usage",
+      visible: (p) => p.isSuperAdmin || p.isOrgAdmin,
+    },
+    {
+      href: "/evaluator/status",
+      label: "Evaluator",
+      visible: (p) => p.isSuperAdmin || p.isOrgAdmin,
+    },
+    {
       href: "/audit",
       label: "Audit",
       visible: (p) => p.isSuperAdmin || p.isOrgAdmin,
