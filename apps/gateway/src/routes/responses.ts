@@ -36,7 +36,6 @@ import {
   parseAnthropicSse,
   parseOpenAIResponsesSse,
   extractResponsesUsage,
-  type ResponsesRequest,
   type ResponsesSSEEvent,
 } from "@aide/gateway-core";
 import {
@@ -146,10 +145,85 @@ export function makeResponsesRouteHandler(
       return;
     }
 
+    // ── Dispatch by platform ────────────────────────────────────────
+    // The Anthropic translator branch needs strict Zod validation to
+    // safely transform the body. The OpenAI passthrough branch does
+    // not — aide forwards the body verbatim to the OpenAI-compatible
+    // upstream, which owns request validation. Skipping the schema on
+    // the passthrough path lets aide stay compatible with codex CLI /
+    // openai SDK as they evolve (new tools like `web_search` /
+    // `local_shell`, new top-level fields like `include` / `text` /
+    // `prompt_cache_key` / `client_metadata`) without aide needing to
+    // model every shape upstream introduces.
+
+    if (ctx.platform === "openai") {
+      const modelRaw = rawBody.model;
+      if (typeof modelRaw !== "string" || modelRaw.length === 0) {
+        reply.code(400).send({
+          error: "invalid_request",
+          detail: "`model` is required",
+        });
+        return;
+      }
+      const stream = rawBody.stream === true;
+
+      // Cache key uses the raw client body so a verbatim repeat (e.g.
+      // codex retry on transient failure) hits the cache.
+      const clientBodyBuf = Buffer.from(JSON.stringify(rawBody));
+      let cacheKey: string | null = null;
+      if (!stream) {
+        const result = await checkRouteCache({
+          redis: app.redis,
+          ttlSec: opts.env.GATEWAY_CACHE_TTL_SEC,
+          orgId: req.gwOrg.id,
+          scope: "v1/responses",
+          bodyBuf: clientBodyBuf,
+          reply,
+          onResult: (r) => app.gwMetrics.gwCacheTotal.inc({ result: r }),
+        });
+        if (result.hit) return;
+        cacheKey = result.cacheKey;
+      }
+
+      if (stream) {
+        await runOpenaiResponsesStreamingPassthrough(
+          app,
+          opts,
+          req,
+          reply,
+          rawBody,
+          req.id,
+          modelRaw,
+        );
+        return;
+      }
+      await runOpenaiResponsesPassthroughFailover(
+        app,
+        opts,
+        req,
+        reply,
+        rawBody,
+        req.id,
+        modelRaw,
+        cacheKey,
+      );
+      return;
+    }
+
+    if (ctx.platform !== "anthropic") {
+      // gemini / antigravity not in 5A scope; clear deferral signal.
+      reply.code(503).send({
+        error: "platform_not_yet_wired",
+        platform: ctx.platform,
+      });
+      return;
+    }
+
+    // ── Anthropic translator path: strict schema needed ────────────
     // Strip no-op fields some clients send unconditionally (codex CLI's
-    // `store`) before they hit `.strict()`. Done first so the explicit
-    // reject list and Zod see the same body the gateway will actually
-    // process.
+    // `store`, `parallel_tool_calls`, `reasoning`) before they hit
+    // `.strict()`. Done first so the explicit reject list and Zod see
+    // the same body the translator will actually process.
     const sanitizedBody: Record<string, unknown> = { ...rawBody };
     for (const key of SILENTLY_DROPPED_FIELDS) {
       delete sanitizedBody[key];
@@ -181,10 +255,7 @@ export function makeResponsesRouteHandler(
     }
     const body = parsed.data;
 
-    // Phase 3 #2 — cache scope `v1/responses` keyed on the Zod-
-    // validated client body. Shared across the openai-platform
-    // passthrough and the anthropic-platform translator branches so a
-    // group reconfigure preserves cache hits.
+    // Cache scope `v1/responses` keyed on the Zod-validated body.
     const clientBodyBuf = Buffer.from(JSON.stringify(body));
     let cacheKey: string | null = null;
     if (body.stream !== true) {
@@ -199,45 +270,6 @@ export function makeResponsesRouteHandler(
       });
       if (result.hit) return;
       cacheKey = result.cacheKey;
-    }
-
-    if (ctx.platform === "openai") {
-      // OpenAI upstream is the same format as the inbound — body
-      // passthrough on both the request and the response.  Stream +
-      // non-stream paths share the same shape; only the upstream
-      // call + serialization differ.
-      if (body.stream === true) {
-        await runOpenaiResponsesStreamingPassthrough(
-          app,
-          opts,
-          req,
-          reply,
-          body,
-          req.id,
-          body.model,
-        );
-        return;
-      }
-      await runOpenaiResponsesPassthroughFailover(
-        app,
-        opts,
-        req,
-        reply,
-        body,
-        req.id,
-        body.model,
-        cacheKey,
-      );
-      return;
-    }
-
-    if (ctx.platform !== "anthropic") {
-      // gemini / antigravity not in 5A scope; clear deferral signal.
-      reply.code(503).send({
-        error: "platform_not_yet_wired",
-        platform: ctx.platform,
-      });
-      return;
     }
 
     // Translate Responses request → Anthropic shape.  The translator is
@@ -629,7 +661,7 @@ async function runOpenaiResponsesPassthroughFailover(
   opts: ResponsesRouteOptions,
   req: FastifyRequest,
   reply: FastifyReply,
-  body: ResponsesRequest,
+  body: Record<string, unknown>,
   requestId: string,
   requestedModel: string,
   cacheKey: string | null,
@@ -789,7 +821,7 @@ async function runOpenaiResponsesStreamingPassthrough(
   opts: ResponsesRouteOptions,
   req: FastifyRequest,
   reply: FastifyReply,
-  body: ResponsesRequest,
+  body: Record<string, unknown>,
   requestId: string,
   requestedModel: string,
 ): Promise<void> {
