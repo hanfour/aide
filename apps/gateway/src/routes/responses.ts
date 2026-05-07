@@ -85,21 +85,35 @@ export interface ResponsesRouteOptions {
  * so error messages name them, instead of "unrecognized_keys".
  */
 const EXPLICIT_UNSUPPORTED_FIELDS = [
-  "parallel_tool_calls",
-  "reasoning",
   "file_search",
   "code_interpreter",
   "computer_use",
 ] as const;
 
 /**
- * Fields the gateway accepts for client compatibility but ignores
- * before forwarding upstream. `store` is OpenAI's 30-day response
- * storage flag — a server-side concern aide never honours either way,
- * but codex CLI / openai SDK send it unconditionally. Stripping pre-
- * Zod keeps `.strict()` from 400-ing on a no-op flag.
+ * Fields codex CLI / openai SDK send unconditionally on every
+ * `/v1/responses` call, but which aide doesn't currently forward
+ * upstream. Stripped pre-Zod so `.strict()` doesn't 400 the request.
+ *
+ * Trade-off (acknowledged): on the OpenAI passthrough path these
+ * flags have real upstream semantics; silently dropping them means a
+ * client that explicitly disabled e.g. `parallel_tool_calls: false`
+ * gets the upstream's default behaviour instead. In practice both
+ * codex CLI and the OpenAI default sit on the permissive side
+ * (`parallel_tool_calls: true`, no `reasoning`, `store: true`), so
+ * drop ≈ no-op for the dominant case.
+ *
+ * Long-term fix (tracked separately): add these fields to
+ * `ResponsesRequestSchema` and forward them on the OpenAI passthrough
+ * path so client intent is preserved when it diverges from the upstream
+ * default. The Anthropic translator branch will keep dropping them
+ * because Anthropic Messages has no equivalent.
  */
-const SILENTLY_DROPPED_FIELDS = ["store"] as const;
+const SILENTLY_DROPPED_FIELDS = [
+  "store",
+  "parallel_tool_calls",
+  "reasoning",
+] as const;
 
 /**
  * Core handler for the OpenAI Responses surface — exported so the
