@@ -477,6 +477,63 @@ docker compose --profile gateway down -v   # stop + WIPE DB (forces full re-onbo
 > Lock Screen*, or run `caffeinate -d -i &` in any terminal — both keep
 > the host awake (at the cost of battery if not plugged in).
 
+### Quality of life: lifecycle aliases
+
+Typing the multi-step `cd … && docker compose …` chain every time gets
+old. Drop these three helpers into the host Mac's `~/.zshrc` (or
+`~/.bashrc`) so day-2 collapses to a single `aide-up`:
+
+```bash
+# ── aide gateway lifecycle ─────────────────────────────────────────
+export AIDE_DIR="$HOME/path/to/aide/docker"     # ← edit to your checkout
+export AIDE_PORT="3002"                         # ← match GATEWAY_PORT in .env
+
+aide-up() {
+  (cd "$AIDE_DIR" && docker compose --profile gateway up -d) || return 1
+  sleep 6
+  curl -sS -o /dev/null -w "gateway: HTTP %{http_code}\n" \
+    "http://localhost:${AIDE_PORT}/health"
+  pgrep -qf 'caffeinate -d -i' >/dev/null 2>&1 || (caffeinate -d -i &)
+  echo "✅ aide up + caffeinate keeping mac awake"
+}
+
+aide-down() {
+  # Kills ANY `caffeinate -d -i` — if you run caffeinate for another
+  # purpose, narrow this filter or stop that process separately.
+  pkill -f 'caffeinate -d -i' 2>/dev/null
+  (cd "$AIDE_DIR" && docker compose --profile gateway down)
+  echo "✅ aide down + caffeinate killed (mac can sleep again)"
+}
+
+aide-status() {
+  (cd "$AIDE_DIR" && docker compose ps \
+    --format 'table {{.Name}}\t{{.Status}}')
+  echo
+  curl -sS -o /dev/null -w "gateway: HTTP %{http_code}\n" \
+    "http://localhost:${AIDE_PORT}/health" 2>&1
+  pgrep -qf 'caffeinate -d -i' \
+    && echo "caffeinate: running" \
+    || echo "caffeinate: not running"
+}
+```
+
+`source ~/.zshrc` once, then:
+
+| Command | Behaviour |
+|---|---|
+| `aide-up` | Boots the stack, waits ~6s, prints gateway health, ensures `caffeinate` is running so other devices stay reachable |
+| `aide-down` | Stops the stack (keeps DB volume) and kills `caffeinate` so the Mac can sleep |
+| `aide-status` | Prints container state + gateway HTTP code + caffeinate status |
+
+DB volume is preserved across `aide-down`/`aide-up` cycles, so user,
+org, OAuth account, and `ak_…` keys all stay intact — no re-onboarding.
+
+> **Auto-start on Mac login** is left as an exercise — launchd plists
+> invoke binaries (not zsh functions), so you'd wrap `aide-up` in a
+> standalone script and reference that script from the plist. Most
+> operators find the explicit alias more intuitive anyway: you control
+> when the stack (and its battery cost) is running.
+
 ---
 
 ## Troubleshooting
