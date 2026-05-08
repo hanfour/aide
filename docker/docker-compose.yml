@@ -175,9 +175,30 @@ services:
       GATEWAY_OAUTH_REFRESH_LEAD_MIN: ${GATEWAY_OAUTH_REFRESH_LEAD_MIN:-}
       GATEWAY_OAUTH_MAX_FAIL: ${GATEWAY_OAUTH_MAX_FAIL:-}
       GATEWAY_ANTHROPIC_OAUTH_TOKEN_URL: ${GATEWAY_ANTHROPIC_OAUTH_TOKEN_URL:-}
+      # Issue #93 option B': enables keychain-re-read short-circuit on
+      # OAuth refresh. Operator runs scripts/keychain-helper/install.sh
+      # on the host, then sets these envs.
+      #
+      # Why TCP (not unix-socket): Docker Desktop on macOS bind-mounts
+      # unix sockets through VirtioFS, which doesn't preserve socket
+      # inode semantics — the file appears in the container but
+      # connect() returns ECONNREFUSED. TCP via host.docker.internal
+      # works reliably across Docker Desktop versions.
+      GATEWAY_KEYCHAIN_HELPER_ENDPOINT: ${GATEWAY_KEYCHAIN_HELPER_ENDPOINT:-}
+      GATEWAY_KEYCHAIN_HELPER_TOKEN_PATH: ${GATEWAY_KEYCHAIN_HELPER_TOKEN_PATH:-/run/aide-keychain.token}
       GATEWAY_QUEUE_SATURATE_THRESHOLD: ${GATEWAY_QUEUE_SATURATE_THRESHOLD:-}
       UPSTREAM_ANTHROPIC_BASE_URL: ${UPSTREAM_ANTHROPIC_BASE_URL:-}
       UPSTREAM_OPENAI_BASE_URL: ${UPSTREAM_OPENAI_BASE_URL:-}
+    # Mount the helper's bearer token (read-only, owner-only on host
+    # → owner-only in container). Empty file is fine if helper isn't
+    # installed — the keychainReader will warn + fall through to
+    # direct anthropic refresh.
+    volumes:
+      - ${HOME}/.aide/keychain.token:/run/aide-keychain.token:ro
+    # Lets the container reach the host helper via host.docker.internal
+    # on Linux Docker Engine (works automatically on Docker Desktop).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       # Customer-facing /v1/messages and /v1/chat/completions endpoints.
       # Put a TLS-terminating reverse proxy in front in production.

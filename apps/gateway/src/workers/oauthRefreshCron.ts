@@ -9,6 +9,7 @@ import {
   recordFailure,
   readCredential,
   readVaultRotatedAt,
+  maybeUseKeychainBundle,
   type OAuthRefreshOptions,
 } from "../runtime/oauthRefresh.js";
 
@@ -41,7 +42,13 @@ const DEFAULT_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
 
 export interface CronOptions extends Pick<
   OAuthRefreshOptions,
-  "masterKeyHex" | "maxFail" | "tokenUrl" | "clientId"
+  | "masterKeyHex"
+  | "maxFail"
+  | "tokenUrl"
+  | "clientId"
+  | "keychainEndpoint"
+  | "keychainTokenPath"
+  | "keychainReader"
 > {
   /** Pino-style logger; receives info for refreshes/skips, error for failures. */
   logger?: {
@@ -192,6 +199,43 @@ export class OAuthRefreshCron {
         return "skipped";
       }
       const prevRotatedAt = await readVaultRotatedAt(this.#db, row.id);
+
+      // Issue #93 option B': try the host Keychain first. If the
+      // Claude Code app rotated the bundle independently, inherit it
+      // without calling anthropic — same logic as the inline path.
+      const fromKeychain = await maybeUseKeychainBundle({
+        opts: {
+          keychainEndpoint: this.#opts.keychainEndpoint,
+          keychainTokenPath: this.#opts.keychainTokenPath,
+          keychainReader: this.#opts.keychainReader,
+          logger: this.#opts.logger,
+        },
+        currentRefreshToken: credential.refreshToken,
+        // Cron uses LEAD_MINUTES_CRON; reuse here so a keychain
+        // bundle that's also "about to expire" doesn't get picked.
+        leadMs: LEAD_MINUTES_CRON * 60 * 1000,
+        now,
+      });
+      if (fromKeychain) {
+        await persistRefresh(
+          this.#db,
+          row.id,
+          fromKeychain,
+          this.#opts.masterKeyHex,
+          now,
+          prevRotatedAt,
+        );
+        this.#opts.logger?.info(
+          {
+            accountId: row.id,
+            source: "keychain",
+            expiresAt: fromKeychain.expiresAt,
+          },
+          "oauth refresh cron: inherited rotated bundle from host keychain",
+        );
+        return "refreshed";
+      }
+
       const fresh = await performRefresh({
         currentRefreshToken: credential.refreshToken,
         tokenUrl: this.#opts.tokenUrl ?? DEFAULT_TOKEN_URL,
