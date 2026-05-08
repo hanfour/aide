@@ -469,6 +469,12 @@ export async function persistRefresh(
   await db
     .update(upstreamAccounts)
     .set({
+      // Mirror the credential_vault rotation onto the denormalised
+      // `expires_at` column the UI reads, so badges/auto-pause logic
+      // see the fresh access_token expiry instead of the stale value
+      // from the original onboard. Without this, AccountList renders
+      // "Expired" forever after the first refresh.
+      expiresAt: credential.expiresAt,
       oauthRefreshFailCount: 0,
       oauthRefreshLastError: null,
       oauthRefreshLastRunAt: new Date(now()),
