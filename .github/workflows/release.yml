@@ -19,14 +19,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Plan 4C Part 12 — arm64 dropped from `web` image: QEMU cross-build
-        # of the Next.js standalone bundle was unstable (intermittent OOM and
-        # node_modules native-binding mismatches). `api` and `gateway` keep
-        # multi-arch coverage; users on arm64 hosts can still run the web tier
-        # under amd64 emulation if absolutely required.
+        # arm64 dropped from `web` and `api` images: QEMU cross-build hangs
+        # indefinitely (>40min) on the next-auth / Next.js standalone
+        # toolchains under emulation. Closes #98 (recurring v0.4.4/v0.4.5
+        # behaviour where the api job was the lone laggard while web/gateway
+        # finished in ~5min).
+        #
+        # `gateway` keeps multi-arch — its dep tree is leaner (no
+        # next-auth, no Next.js standalone) and arm64 builds reliably in
+        # ~5min like the amd64 pass.
+        #
+        # arm64 hosts run the api/web tiers under amd64 emulation. Same
+        # workaround was already documented for web; api now joins.
         include:
           - image: api
-            platforms: linux/amd64,linux/arm64
+            platforms: linux/amd64
           - image: gateway
             platforms: linux/amd64,linux/arm64
           - image: web
