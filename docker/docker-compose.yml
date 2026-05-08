@@ -184,8 +184,12 @@ services:
       # inode semantics — the file appears in the container but
       # connect() returns ECONNREFUSED. TCP via host.docker.internal
       # works reliably across Docker Desktop versions.
+      # Both knobs default to empty (feature off). Set BOTH in .env to
+      # enable: setting only the endpoint without the token path makes
+      # the reader log "tokenPath required — disabled" and silently
+      # falls through to direct anthropic refresh.
       GATEWAY_KEYCHAIN_HELPER_ENDPOINT: ${GATEWAY_KEYCHAIN_HELPER_ENDPOINT:-}
-      GATEWAY_KEYCHAIN_HELPER_TOKEN_PATH: ${GATEWAY_KEYCHAIN_HELPER_TOKEN_PATH:-/run/aide-keychain.token}
+      GATEWAY_KEYCHAIN_HELPER_TOKEN_PATH: ${GATEWAY_KEYCHAIN_HELPER_TOKEN_PATH:-}
       GATEWAY_QUEUE_SATURATE_THRESHOLD: ${GATEWAY_QUEUE_SATURATE_THRESHOLD:-}
       UPSTREAM_ANTHROPIC_BASE_URL: ${UPSTREAM_ANTHROPIC_BASE_URL:-}
       UPSTREAM_OPENAI_BASE_URL: ${UPSTREAM_OPENAI_BASE_URL:-}

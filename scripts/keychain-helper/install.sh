@@ -56,6 +56,17 @@ fi
 mkdir -p "$LAUNCH_AGENT_DIR" "$LOG_DIR" "$AIDE_DIR"
 chmod 700 "$AIDE_DIR"
 
+# Pre-create the helper's log file with owner-only perms. launchd
+# would otherwise create it with the default 0644, exposing the
+# helper's pino-style log lines (op + outcome — no token contents,
+# but `security`-tool error messages can mention the keychain item
+# name + path) to other users on shared hosts.
+LOG_FILE="$LOG_DIR/aide-keychain-helper.log"
+if [ ! -f "$LOG_FILE" ]; then
+  : > "$LOG_FILE"
+fi
+chmod 600 "$LOG_FILE"
+
 # Substitute absolute paths into the plist template.
 PLIST_SRC="$SCRIPT_DIR/aide-keychain-helper.plist"
 sed \

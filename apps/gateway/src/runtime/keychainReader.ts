@@ -31,6 +31,54 @@
 import { connect } from "node:net";
 import { readFile } from "node:fs/promises";
 
+/**
+ * Cache the bearer token in process memory for this long. Trade-off
+ * is operator UX: rotate the token via re-running install.sh and you
+ * have to wait up to 60s for the gateway to pick it up. That's
+ * acceptable — token rotation is rare and the alternative is per-
+ * request fs.readFile during the lead window when refresh is being
+ * hammered by parallel requests.
+ *
+ * Keyed by tokenPath so different paths cache independently (cron +
+ * inline could hypothetically use different mounts).
+ */
+const TOKEN_CACHE_TTL_MS = 60_000;
+const tokenCache = new Map<string, { at: number; token: string }>();
+
+async function readTokenCached(
+  tokenPath: string,
+  log: { warn: (obj: unknown, msg?: string) => void },
+): Promise<string | null> {
+  const now = Date.now();
+  const cached = tokenCache.get(tokenPath);
+  if (cached && now - cached.at < TOKEN_CACHE_TTL_MS) {
+    return cached.token;
+  }
+  try {
+    const token = (await readFile(tokenPath, "utf8")).trim();
+    if (!token || token.length < 32) {
+      log.warn(
+        { tokenPath, len: token.length },
+        "keychain helper token unreadable / too short",
+      );
+      return null;
+    }
+    tokenCache.set(tokenPath, { at: now, token });
+    return token;
+  } catch (err) {
+    log.warn(
+      {
+        err: err instanceof Error ? err.message : String(err),
+        tokenPath,
+      },
+      "keychain helper token file unavailable",
+    );
+    // Don't cache failure — operator may have just installed the
+    // helper; we want to retry on the next call.
+    return null;
+  }
+}
+
 export interface KeychainBundle {
   /** Anthropic OAuth access_token (sk-ant-oat01-…). */
   accessToken: string;
@@ -75,12 +123,21 @@ interface HelperResponse {
 }
 
 /**
+ * Public type for callers that want to inject a fake reader (tests,
+ * future Linux/Windows adapters, etc.) without coupling to the
+ * implementation function's exact inferred signature.
+ */
+export type KeychainReader = (
+  opts: ReadKeychainOptions,
+) => Promise<KeychainBundle | null>;
+
+/**
  * Connect to the helper, send `{op:"read",auth:"<token>"}`, parse
  * the response. Returns the keychain bundle or null on any failure.
  */
-export async function readKeychainBundle(
+export const readKeychainBundle: KeychainReader = async (
   opts: ReadKeychainOptions,
-): Promise<KeychainBundle | null> {
+): Promise<KeychainBundle | null> => {
   const log = opts.logger ?? { warn: (o: unknown, m?: string) =>
     process.stderr.write(JSON.stringify({ msg: m, ...((o as object) ?? {}) }) + "\n") };
   const timeoutMs = opts.timeoutMs ?? 3_000;
@@ -97,25 +154,8 @@ export async function readKeychainBundle(
       );
       return null;
     }
-    try {
-      token = (await readFile(opts.tokenPath, "utf8")).trim();
-      if (!token || token.length < 32) {
-        log.warn(
-          { tokenPath: opts.tokenPath, len: token.length },
-          "keychain helper token unreadable / too short",
-        );
-        return null;
-      }
-    } catch (err) {
-      log.warn(
-        {
-          err: err instanceof Error ? err.message : String(err),
-          tokenPath: opts.tokenPath,
-        },
-        "keychain helper token file unavailable",
-      );
-      return null;
-    }
+    token = await readTokenCached(opts.tokenPath, log);
+    if (!token) return null;
   }
 
   return new Promise<KeychainBundle | null>((resolve) => {
@@ -154,6 +194,13 @@ export async function readKeychainBundle(
     });
 
     sock.on("data", (chunk) => {
+      // Re-entry guard: once we've parsed the first \n-terminated line
+      // and called settle(), any further data events from a chunky
+      // upstream or from the helper writing more than one reply per
+      // request would re-run parse against stale buffer. Today's
+      // helper sends exactly one reply per connection so this is
+      // theoretical, but cheap to harden.
+      if (settled) return;
       buffer += chunk.toString("utf8");
       const nl = buffer.indexOf("\n");
       if (nl === -1) return;
@@ -212,6 +259,11 @@ export async function readKeychainBundle(
     });
 
     sock.on("error", (err) => {
+      // Re-entry guard mirrors the data handler — sock.destroy()
+      // from the timeout path emits 'error' (ECONNRESET / "premature
+      // close"), which would otherwise log a spurious "unavailable"
+      // *after* we already settled with the timeout outcome.
+      if (settled) return;
       clearTimeout(timer);
       // Most common cases: ENOENT (unix socket missing) or
       // ECONNREFUSED (TCP port not listening). Logged at warn so
@@ -224,4 +276,4 @@ export async function readKeychainBundle(
       settle(null);
     });
   });
-}
+};
