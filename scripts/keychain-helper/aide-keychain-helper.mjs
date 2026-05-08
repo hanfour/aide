@@ -55,6 +55,16 @@ const KEYCHAIN_ENTRY =
 /** Per-connection idle timeout. Keep tight — clients should send + go. */
 const CONN_IDLE_MS = 5_000;
 
+/**
+ * In-memory cache TTL for the keychain bundle. macOS' keychain
+ * subsystem is fine with hundreds of reads/sec but a buggy gateway
+ * loop hammering us serves no one — cache the parsed bundle for
+ * 1s. Real refresh frequency is bounded by the access_token TTL
+ * (hours), so 1s is well below the freshness floor caller cares
+ * about.
+ */
+const READ_CACHE_TTL_MS = 1_000;
+
 function log(level, msg, extra) {
   const obj = {
     ts: new Date().toISOString(),
@@ -91,16 +101,35 @@ function reshapeBundle(raw) {
   };
 }
 
+/** READ_CACHE_TTL_MS-bounded cache of the last successful read. */
+let readCache = { at: 0, value: null };
+/** Coalesce concurrent reads: if a request is in flight, others wait. */
+let inflight = null;
+
 async function readKeychain() {
-  // -w flag prints just the password (the JSON blob) to stdout.
-  // -s matches the service name exactly.
-  const { stdout } = await execFileP(
-    "/usr/bin/security",
-    ["find-generic-password", "-s", KEYCHAIN_ENTRY, "-w"],
-    { timeout: 3_000 },
-  );
-  const raw = JSON.parse(stdout);
-  return reshapeBundle(raw);
+  const now = Date.now();
+  if (readCache.value && now - readCache.at < READ_CACHE_TTL_MS) {
+    return readCache.value;
+  }
+  if (inflight) return inflight;
+  inflight = (async () => {
+    try {
+      // -w flag prints just the password (the JSON blob) to stdout.
+      // -s matches the service name exactly.
+      const { stdout } = await execFileP(
+        "/usr/bin/security",
+        ["find-generic-password", "-s", KEYCHAIN_ENTRY, "-w"],
+        { timeout: 3_000 },
+      );
+      const raw = JSON.parse(stdout);
+      const value = reshapeBundle(raw);
+      readCache = { at: Date.now(), value };
+      return value;
+    } finally {
+      inflight = null;
+    }
+  })();
+  return inflight;
 }
 
 async function handleCommand(line, expectedToken) {

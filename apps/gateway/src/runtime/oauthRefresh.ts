@@ -13,6 +13,7 @@ import type { ResolvedCredential } from "./resolveCredential.js";
 import {
   readKeychainBundle as defaultKeychainReader,
   type KeychainBundle,
+  type KeychainReader,
 } from "./keychainReader.js";
 
 const LOCK_TTL_SEC = 30;
@@ -163,7 +164,7 @@ export interface OAuthRefreshOptions {
    * Production code passes `keychainEndpoint` and the default
    * `readKeychainBundle` function gets used.
    */
-  keychainReader?: typeof defaultKeychainReader;
+  keychainReader?: KeychainReader;
   /** Sleep injection for tests. */
   sleep?: (ms: number) => Promise<void>;
   /** Time source for tests. */
