@@ -215,6 +215,10 @@ export const accountsRouter = router({
           notes: input.notes ?? null,
           platform: input.platform,
           type: input.type,
+          // For oauth, mirror the credential expiry onto the row the UI
+          // reads. `parseOauthExpiresAt` returns null for api_key, so
+          // this is a no-op there.
+          expiresAt: oauthExpiresAt,
           schedulable: input.schedulable ?? true,
           priority: input.priority ?? 50,
           concurrency: input.concurrency ?? 3,
@@ -468,12 +472,15 @@ export const accountsRouter = router({
       }
 
       // Reset failure state so the scheduler can pick this account
-      // back up immediately.
+      // back up immediately. Also mirror the new expiry onto the
+      // denormalised column the UI reads — otherwise the "Expired"
+      // badge sticks even after a successful re-onboard.
       await ctx.db
         .update(upstreamAccounts)
         .set({
           status: "active",
           schedulable: true,
+          expiresAt: oauthExpiresAt,
           oauthRefreshFailCount: 0,
           oauthRefreshLastError: null,
           tempUnschedulableUntil: null,
