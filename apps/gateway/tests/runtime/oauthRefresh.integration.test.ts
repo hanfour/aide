@@ -898,4 +898,233 @@ describe("maybeRefreshOAuth", () => {
     expect(body.refresh_token).toBe("my-refresh-token-123");
     expect(body.client_id).toBe(testClientId);
   });
+
+  // ── Issue #93 option B': keychain re-read short-circuits anthropic ──
+
+  it("8. keychain has fresher bundle → maybeRefreshOAuth uses it instead of calling anthropic", async () => {
+    const acct = await seedAccount();
+    const expiresAt = staleExpiresAt();
+    await seedVault(acct.id, {
+      accessToken: "stale-from-vault",
+      refreshToken: "stale-refresh-from-vault",
+      expiresAt,
+    });
+
+    const redis = makeRedis();
+    const currentCredential: Extract<ResolvedCredential, { type: "oauth" }> = {
+      type: "oauth",
+      accessToken: "stale-from-vault",
+      refreshToken: "stale-refresh-from-vault",
+      expiresAt,
+    };
+
+    // Anthropic would explode if called — fail loudly to prove
+    // keychain short-circuit worked.
+    nextTokenResponse = {
+      status: 500,
+      body: '{"error":"should-not-be-called"}',
+    };
+
+    const fakeReader = async () => ({
+      accessToken: "fresh-from-keychain",
+      refreshToken: "fresh-refresh-from-keychain",
+      expiresAt: freshExpiresAt(),
+    });
+
+    const got = await maybeRefreshOAuth(
+      db as never,
+      redis,
+      acct.id,
+      currentCredential,
+      {
+        masterKeyHex: MASTER_KEY,
+        leadMinutes: 10,
+        maxFail: 3,
+        tokenUrl: tokenBaseUrl,
+        keychainEndpoint: "/dev/null", // any non-empty triggers the path
+        keychainReader: fakeReader,
+      },
+    );
+
+    expect(got.accessToken).toBe("fresh-from-keychain");
+    expect(got.refreshToken).toBe("fresh-refresh-from-keychain");
+    // Anthropic was never called
+    expect(lastTokenRequest).toBeNull();
+    // Vault was updated
+    const [vaultRow] = await db
+      .select({
+        nonce: credentialVault.nonce,
+        ciphertext: credentialVault.ciphertext,
+        authTag: credentialVault.authTag,
+      })
+      .from(credentialVault)
+      .where(eq(credentialVault.accountId, acct.id));
+    const decrypted = JSON.parse(
+      decryptCredential({
+        masterKeyHex: MASTER_KEY,
+        accountId: acct.id,
+        sealed: {
+          nonce: vaultRow!.nonce,
+          ciphertext: vaultRow!.ciphertext,
+          authTag: vaultRow!.authTag,
+        },
+      }),
+    );
+    expect(decrypted.access_token).toBe("fresh-from-keychain");
+    expect(decrypted.refresh_token).toBe("fresh-refresh-from-keychain");
+  });
+
+  it("9. keychain has same refresh_token (host hasn't rotated) → falls through to anthropic", async () => {
+    const acct = await seedAccount();
+    const expiresAt = staleExpiresAt();
+    await seedVault(acct.id, {
+      accessToken: "stale-access",
+      refreshToken: "shared-refresh",
+      expiresAt,
+    });
+
+    const redis = makeRedis();
+    const currentCredential: Extract<ResolvedCredential, { type: "oauth" }> = {
+      type: "oauth",
+      accessToken: "stale-access",
+      refreshToken: "shared-refresh",
+      expiresAt,
+    };
+
+    nextTokenResponse = {
+      status: 200,
+      body: JSON.stringify({
+        access_token: "anthropic-issued",
+        refresh_token: "anthropic-rotated",
+        expires_in: 3600,
+      }),
+    };
+
+    // Same refresh_token in keychain — no benefit to using it.
+    const fakeReader = async () => ({
+      accessToken: "stale-access",
+      refreshToken: "shared-refresh",
+      expiresAt: freshExpiresAt(),
+    });
+
+    const got = await maybeRefreshOAuth(
+      db as never,
+      redis,
+      acct.id,
+      currentCredential,
+      {
+        masterKeyHex: MASTER_KEY,
+        leadMinutes: 10,
+        maxFail: 3,
+        tokenUrl: tokenBaseUrl,
+        keychainEndpoint: "/dev/null",
+        keychainReader: fakeReader,
+      },
+    );
+
+    // Fell through to anthropic
+    expect(lastTokenRequest).not.toBeNull();
+    expect(got.accessToken).toBe("anthropic-issued");
+  });
+
+  it("10. keychain bundle also stale → falls through to anthropic", async () => {
+    const acct = await seedAccount();
+    const expiresAt = staleExpiresAt();
+    await seedVault(acct.id, {
+      accessToken: "vault-access",
+      refreshToken: "vault-refresh",
+      expiresAt,
+    });
+
+    const redis = makeRedis();
+    const currentCredential: Extract<ResolvedCredential, { type: "oauth" }> = {
+      type: "oauth",
+      accessToken: "vault-access",
+      refreshToken: "vault-refresh",
+      expiresAt,
+    };
+
+    nextTokenResponse = {
+      status: 200,
+      body: JSON.stringify({
+        access_token: "anthropic-issued",
+        refresh_token: "anthropic-rotated",
+        expires_in: 3600,
+      }),
+    };
+
+    // Different refresh_token but also expired → not useful.
+    const fakeReader = async () => ({
+      accessToken: "keychain-stale-too",
+      refreshToken: "keychain-different-refresh",
+      expiresAt: staleExpiresAt(),
+    });
+
+    await maybeRefreshOAuth(
+      db as never,
+      redis,
+      acct.id,
+      currentCredential,
+      {
+        masterKeyHex: MASTER_KEY,
+        leadMinutes: 10,
+        maxFail: 3,
+        tokenUrl: tokenBaseUrl,
+        keychainEndpoint: "/dev/null",
+        keychainReader: fakeReader,
+      },
+    );
+    expect(lastTokenRequest).not.toBeNull();
+  });
+
+  it("11. no keychainEndpoint → keychain path skipped entirely", async () => {
+    const acct = await seedAccount();
+    const expiresAt = staleExpiresAt();
+    await seedVault(acct.id, {
+      accessToken: "vault-access",
+      refreshToken: "vault-refresh",
+      expiresAt,
+    });
+
+    const redis = makeRedis();
+    const currentCredential: Extract<ResolvedCredential, { type: "oauth" }> = {
+      type: "oauth",
+      accessToken: "vault-access",
+      refreshToken: "vault-refresh",
+      expiresAt,
+    };
+
+    nextTokenResponse = {
+      status: 200,
+      body: JSON.stringify({
+        access_token: "anthropic-issued",
+        refresh_token: "anthropic-rotated",
+        expires_in: 3600,
+      }),
+    };
+
+    let readerCalled = false;
+    const fakeReader = async () => {
+      readerCalled = true;
+      return null;
+    };
+
+    await maybeRefreshOAuth(
+      db as never,
+      redis,
+      acct.id,
+      currentCredential,
+      {
+        masterKeyHex: MASTER_KEY,
+        leadMinutes: 10,
+        maxFail: 3,
+        tokenUrl: tokenBaseUrl,
+        // keychainEndpoint omitted on purpose
+        keychainReader: fakeReader,
+      },
+    );
+
+    expect(readerCalled).toBe(false);
+    expect(lastTokenRequest).not.toBeNull();
+  });
 });

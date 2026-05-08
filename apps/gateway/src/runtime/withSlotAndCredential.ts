@@ -76,6 +76,9 @@ export async function withSlotAndCredential<T>(
           leadMinutes: opts.env.GATEWAY_OAUTH_REFRESH_LEAD_MIN,
           maxFail: opts.env.GATEWAY_OAUTH_MAX_FAIL,
           tokenUrl: opts.env.GATEWAY_ANTHROPIC_OAUTH_TOKEN_URL,
+          keychainEndpoint: opts.env.GATEWAY_KEYCHAIN_HELPER_ENDPOINT,
+          keychainTokenPath: opts.env.GATEWAY_KEYCHAIN_HELPER_TOKEN_PATH,
+          logger: app.log,
         },
       );
     }

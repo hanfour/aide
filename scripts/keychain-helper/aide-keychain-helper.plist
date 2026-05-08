@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd LaunchAgent for aide-keychain-helper.
+
+  Install:
+    cp aide-keychain-helper.plist ~/Library/LaunchAgents/com.hanfour.aide.keychain-helper.plist
+    # edit the absolute paths in WorkingDirectory + ProgramArguments to
+    # match your checkout (or run install.sh which does this for you)
+    launchctl load ~/Library/LaunchAgents/com.hanfour.aide.keychain-helper.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.hanfour.aide.keychain-helper.plist
+    rm ~/Library/LaunchAgents/com.hanfour.aide.keychain-helper.plist
+
+  Notes:
+  - LaunchAgent (per-user), not LaunchDaemon (system-wide). The keychain
+    item belongs to the user, not the system, so the helper has to run
+    as that user.
+  - RunAtLoad + KeepAlive together = autostart at login + restart on crash.
+  - StandardOutPath / StandardErrorPath go into ~/Library/Logs so
+    `Console.app` finds them under "User Reports".
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hanfour.aide.keychain-helper</string>
+
+    <!-- install.sh substitutes __NODE_BIN__ with the absolute path
+         of node as discovered on the operator's PATH. launchd starts
+         processes with a stripped environment (no nvm shims, no
+         /opt/homebrew/bin), so we can't rely on `/usr/bin/env node`
+         finding it. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>__NODE_BIN__</string>
+        <string>__INSTALL_DIR__/aide-keychain-helper.mjs</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__INSTALL_DIR__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/aide-keychain-helper.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/aide-keychain-helper.log</string>
+</dict>
+</plist>

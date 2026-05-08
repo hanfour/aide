@@ -138,6 +138,34 @@ export const serverEnvSchema = z
         .url()
         .default("https://console.anthropic.com/v1/oauth/token"),
     ),
+    /**
+     * `host:port` of the aide-keychain-helper TCP server. When set
+     * (and the helper is reachable + the auth token is mounted),
+     * the gateway will attempt to read the host macOS Keychain
+     * before calling anthropic's OAuth refresh endpoint — this
+     * avoids the rotation race with the host Claude Code app
+     * (issue #93).
+     *
+     * Operator wires this in by:
+     *   1. Running scripts/keychain-helper/install.sh on the host
+     *      (autostarts a localhost TCP server + writes a 0600 token
+     *      file at $HOME/.aide/keychain.token)
+     *   2. Adding a docker compose volume + env (see
+     *      docker/docker-compose.yml gateway service)
+     *   3. Setting GATEWAY_KEYCHAIN_HELPER_ENDPOINT to
+     *      `host.docker.internal:47823` and
+     *      GATEWAY_KEYCHAIN_HELPER_TOKEN_PATH to
+     *      `/run/aide-keychain.token` (the in-container mount path)
+     *
+     * Empty/unset → keychain re-read disabled, gateway falls back to
+     * direct anthropic refresh (pre-#93 behaviour).
+     */
+    GATEWAY_KEYCHAIN_HELPER_ENDPOINT: emptyAsUndefined(
+      z.string().optional(),
+    ),
+    GATEWAY_KEYCHAIN_HELPER_TOKEN_PATH: emptyAsUndefined(
+      z.string().optional(),
+    ),
     GATEWAY_QUEUE_SATURATE_THRESHOLD: emptyAsUndefined(
       z.coerce.number().int().min(1).default(5000),
     ),

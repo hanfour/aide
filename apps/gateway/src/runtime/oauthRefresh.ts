@@ -10,6 +10,10 @@ import {
 } from "@aide/gateway-core";
 import { keys } from "../redis/keys.js";
 import type { ResolvedCredential } from "./resolveCredential.js";
+import {
+  readKeychainBundle as defaultKeychainReader,
+  type KeychainBundle,
+} from "./keychainReader.js";
 
 const LOCK_TTL_SEC = 30;
 const POLL_INTERVAL_MS = 200;
@@ -142,10 +146,30 @@ export interface OAuthRefreshOptions {
   tokenUrl?: string;
   /** Override for tests. */
   clientId?: string;
+  /**
+   * `host:port` of the aide-keychain-helper TCP server. When set,
+   * `maybeRefreshOAuth` consults the host Keychain *before* calling
+   * the anthropic OAuth endpoint — the Claude Code app on the same
+   * host may have already rotated the bundle, in which case aide
+   * just inherits the new tokens for free (no upstream call, no
+   * race). Only falls back to anthropic refresh when the keychain
+   * bundle is also stale or unavailable. See issue #93 / option B'.
+   */
+  keychainEndpoint?: string;
+  /** Path to the bearer token file inside the container. */
+  keychainTokenPath?: string;
+  /**
+   * Test-only injection: replace the keychain reader with a fake.
+   * Production code passes `keychainEndpoint` and the default
+   * `readKeychainBundle` function gets used.
+   */
+  keychainReader?: typeof defaultKeychainReader;
   /** Sleep injection for tests. */
   sleep?: (ms: number) => Promise<void>;
   /** Time source for tests. */
   now?: () => number;
+  /** Pino-style logger. Optional — used to log keychain re-read outcomes. */
+  logger?: { warn: (obj: unknown, msg?: string) => void; info?: (obj: unknown, msg?: string) => void };
 }
 
 interface TokenResponse {
@@ -200,6 +224,35 @@ export async function maybeRefreshOAuth(
   if (acquired === "OK") {
     try {
       const prevRotatedAt = await readVaultRotatedAt(db, accountId);
+
+      // Issue #93 option B': consult the host Keychain before
+      // calling anthropic. If the Claude Code app on the same host
+      // already rotated the bundle, we inherit the new tokens for
+      // free — no upstream call, no rotation race. Only proceed to
+      // performRefresh when the keychain bundle is also stale or
+      // unavailable.
+      const fromKeychain = await maybeUseKeychainBundle({
+        opts,
+        currentRefreshToken: currentCredential.refreshToken,
+        leadMs,
+        now,
+      });
+      if (fromKeychain) {
+        await persistRefresh(
+          db,
+          accountId,
+          fromKeychain,
+          opts.masterKeyHex,
+          now,
+          prevRotatedAt,
+        );
+        opts.logger?.info?.(
+          { accountId, source: "keychain", expiresAt: fromKeychain.expiresAt },
+          "oauth refresh: inherited rotated bundle from host keychain",
+        );
+        return fromKeychain;
+      }
+
       const fresh = await performRefresh({
         currentRefreshToken: currentCredential.refreshToken,
         tokenUrl: opts.tokenUrl ?? DEFAULT_TOKEN_URL,
@@ -488,6 +541,69 @@ export async function recordFailure(
   await redis
     .set(keys.oauthBackoff(accountId), "1", "EX", backoffSec)
     .catch(() => {});
+}
+
+/**
+ * Issue #93 option B' helper. Asks the host keychain for the current
+ * Claude Code OAuth bundle and decides whether it's worth using
+ * instead of calling anthropic ourselves.
+ *
+ * Returns the keychain bundle (in the same shape `performRefresh`
+ * returns) when **all** of the following are true:
+ *
+ * 1. `opts.keychainEndpoint` is configured (otherwise the keychain
+ *    re-read feature is disabled — return null).
+ * 2. The keychain reader returned a bundle (not null — covers socket
+ *    missing, helper error, malformed response, etc.).
+ * 3. The keychain's `refresh_token` differs from the one we currently
+ *    hold (otherwise it's the same stale bundle and using it just
+ *    pretends to refresh).
+ * 4. The keychain's `access_token` is not within the lead window of
+ *    expiry (otherwise it's just as stale as ours — call anthropic).
+ *
+ * Returns null in all other cases; caller falls through to the
+ * existing `performRefresh` path.
+ */
+export async function maybeUseKeychainBundle(input: {
+  opts: Pick<
+    OAuthRefreshOptions,
+    "keychainEndpoint" | "keychainTokenPath" | "keychainReader" | "logger"
+  >;
+  currentRefreshToken: string;
+  leadMs: number;
+  now: () => number;
+}): Promise<Extract<ResolvedCredential, { type: "oauth" }> | null> {
+  const { opts, currentRefreshToken, leadMs, now } = input;
+  if (!opts.keychainEndpoint) return null;
+
+  const reader = opts.keychainReader ?? defaultKeychainReader;
+  let bundle: KeychainBundle | null;
+  try {
+    bundle = await reader({
+      endpoint: opts.keychainEndpoint,
+      tokenPath: opts.keychainTokenPath,
+      logger: opts.logger,
+    });
+  } catch {
+    // readKeychainBundle promises never to throw, but be defensive.
+    return null;
+  }
+  if (!bundle) return null;
+
+  // Same refresh_token = host hasn't rotated since our last read =
+  // no point trying to use it.
+  if (bundle.refreshToken === currentRefreshToken) return null;
+
+  // Bundle expires inside the lead window or sooner = just as stale
+  // as ours, no benefit. Call anthropic instead.
+  if (bundle.expiresAt.getTime() <= now() + leadMs) return null;
+
+  return {
+    type: "oauth",
+    accessToken: bundle.accessToken,
+    refreshToken: bundle.refreshToken,
+    expiresAt: bundle.expiresAt,
+  };
 }
 
 /**
