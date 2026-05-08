@@ -23,6 +23,10 @@ export default function DashboardPage() {
       a.role === 'org_admin' || a.role === 'super_admin' || a.role === 'dept_manager'
   )
 
+  // `/dashboard/{invites,audit}` aren't wired as top-level routes — only
+  // org-scoped variants exist. Link to the first covered org so the card
+  // actually goes somewhere; hide the card if the user has no org.
+  const firstOrgId = session.coveredOrgs[0]
   const quickActions = [
     {
       href: '/dashboard/organizations/new',
@@ -32,20 +36,23 @@ export default function DashboardPage() {
       visible: session.assignments.some((a: { role: string }) => a.role === 'super_admin')
     },
     {
-      href: '/dashboard/invites',
+      href: firstOrgId ? `/dashboard/organizations/${firstOrgId}/invites` : null,
       label: 'Invite someone',
       desc: 'Send an invite to a new member',
       icon: Mail,
       visible: isAdmin
     },
     {
-      href: '/dashboard/audit',
+      href: firstOrgId ? `/dashboard/organizations/${firstOrgId}/audit` : null,
       label: 'Review audit log',
       desc: 'See recent activity',
       icon: FileText,
       visible: isAdmin
     }
-  ].filter((a) => a.visible)
+  ].filter(
+    (a): a is { href: string; label: string; desc: string; icon: typeof Plus; visible: boolean } =>
+      a.visible && a.href !== null
+  )
 
   return (
     <div className="space-y-8">
