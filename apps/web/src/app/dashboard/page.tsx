@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import { Building2, Network, Users, Plus, Mail, FileText, ArrowRight } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -8,14 +9,16 @@ import { trpc } from '@/lib/trpc/client'
 
 export default function DashboardPage() {
   const { data: session, isLoading } = trpc.me.session.useQuery()
+  const t = useTranslations('dashboard')
+  const tCommon = useTranslations('common')
 
-  if (isLoading) return <div className="text-muted-foreground">Loading…</div>
+  if (isLoading) return <div className="text-muted-foreground">{tCommon('loading')}</div>
   if (!session) return null
 
   const stats = [
-    { label: 'Organizations', value: session.coveredOrgs.length, icon: Building2 },
-    { label: 'Departments', value: session.coveredDepts.length, icon: Network },
-    { label: 'Teams', value: session.coveredTeams.length, icon: Users }
+    { key: 'organizations' as const, value: session.coveredOrgs.length, icon: Building2 },
+    { key: 'departments' as const, value: session.coveredDepts.length, icon: Network },
+    { key: 'teams' as const, value: session.coveredTeams.length, icon: Users }
   ]
 
   const isAdmin = session.assignments.some(
@@ -27,52 +30,57 @@ export default function DashboardPage() {
   // org-scoped variants exist. Link to the first covered org so the card
   // actually goes somewhere; hide the card if the user has no org.
   const firstOrgId = session.coveredOrgs[0]
-  const quickActions = [
+  type QuickAction = {
+    href: string | null
+    labelKey: 'createOrg' | 'invite' | 'audit'
+    descKey: 'createOrgDesc' | 'inviteDesc' | 'auditDesc'
+    icon: typeof Plus
+    visible: boolean
+  }
+  const allActions: QuickAction[] = [
     {
       href: '/dashboard/organizations/new',
-      label: 'Create organization',
-      desc: 'Spin up a new workspace',
+      labelKey: 'createOrg',
+      descKey: 'createOrgDesc',
       icon: Plus,
       visible: session.assignments.some((a: { role: string }) => a.role === 'super_admin')
     },
     {
       href: firstOrgId ? `/dashboard/organizations/${firstOrgId}/invites` : null,
-      label: 'Invite someone',
-      desc: 'Send an invite to a new member',
+      labelKey: 'invite',
+      descKey: 'inviteDesc',
       icon: Mail,
       visible: isAdmin
     },
     {
       href: firstOrgId ? `/dashboard/organizations/${firstOrgId}/audit` : null,
-      label: 'Review audit log',
-      desc: 'See recent activity',
+      labelKey: 'audit',
+      descKey: 'auditDesc',
       icon: FileText,
       visible: isAdmin
     }
-  ].filter(
-    (a): a is { href: string; label: string; desc: string; icon: typeof Plus; visible: boolean } =>
-      a.visible && a.href !== null
+  ]
+  const quickActions = allActions.filter(
+    (a): a is QuickAction & { href: string } => a.visible && a.href !== null
   )
 
   return (
     <div className="space-y-8">
       <div>
         <h2 className="text-[28px] font-semibold tracking-tight">
-          Welcome back, {session.user?.email?.split('@')[0]}
+          {t('welcome', { name: session.user?.email?.split('@')[0] ?? '' })}
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Here&apos;s what&apos;s happening in your workspace.
-        </p>
+        <p className="mt-1 text-sm text-muted-foreground">{t('subtitle')}</p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
         {stats.map((s) => {
           const Icon = s.icon
           return (
-            <Card key={s.label} className="shadow-card">
+            <Card key={s.key} className="shadow-card">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
-                  {s.label}
+                  {t(`stats.${s.key}`)}
                 </CardTitle>
                 <Icon className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
@@ -86,7 +94,9 @@ export default function DashboardPage() {
 
       {quickActions.length > 0 && (
         <section>
-          <h3 className="mb-3 text-sm font-semibold text-muted-foreground">Quick actions</h3>
+          <h3 className="mb-3 text-sm font-semibold text-muted-foreground">
+            {t('quickActions.title')}
+          </h3>
           <div className="grid gap-3 sm:grid-cols-3">
             {quickActions.map((a) => {
               const Icon = a.icon
@@ -101,10 +111,12 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">{a.label}</span>
+                      <span className="text-sm font-medium">{t(`quickActions.${a.labelKey}`)}</span>
                       <ArrowRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
                     </div>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{a.desc}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {t(`quickActions.${a.descKey}`)}
+                    </p>
                   </div>
                 </Link>
               )
@@ -115,11 +127,11 @@ export default function DashboardPage() {
 
       <Card className="shadow-card">
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-medium">Your roles</CardTitle>
+          <CardTitle className="text-sm font-medium">{t('yourRoles')}</CardTitle>
         </CardHeader>
         <CardContent>
           {session.assignments.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No active roles.</p>
+            <p className="text-sm text-muted-foreground">{t('noActiveRoles')}</p>
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {session.assignments.map(

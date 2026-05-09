@@ -1,0 +1,292 @@
+{
+  "common": {
+    "appName": "aide",
+    "loading": "読み込み中…",
+    "save": "保存",
+    "saving": "保存中…",
+    "saveChanges": "変更を保存",
+    "cancel": "キャンセル",
+    "create": "作成",
+    "creating": "作成中…",
+    "delete": "削除",
+    "deleting": "削除中…",
+    "edit": "編集",
+    "back": "戻る",
+    "next": "次へ",
+    "previous": "前へ",
+    "search": "検索…",
+    "close": "閉じる",
+    "yes": "はい",
+    "no": "いいえ",
+    "noWorkspace": "ワークスペースがありません",
+    "active": "有効",
+    "disabled": "無効",
+    "expired": "有効期限切れ",
+    "error": "エラー",
+    "rateLimited": "レート制限中",
+    "overloaded": "過負荷",
+    "paused": "一時停止中",
+    "page": "ページ",
+    "pageOf": "{total} ページ中 {current} ページ目",
+    "rowsPerPage": "1 ページあたりの件数",
+    "noResults": "結果なし",
+    "comingSoon": "近日公開",
+    "copy": "コピー",
+    "copied": "コピーしました",
+    "moreOptions": "その他のオプション"
+  },
+  "nav": {
+    "sections": {"overview": "概要", "workspace": "ワークスペース", "account": "アカウント"},
+    "items": {"dashboard": "ダッシュボード", "organizations": "組織", "teams": "チーム", "invites": "招待", "auditLog": "監査ログ", "profile": "プロフィール"},
+    "topbar": {"switchTheme": "テーマを切り替え", "notifications": "通知", "userMenu": "ユーザーメニュー", "language": "言語", "signOut": "サインアウト", "workspaces": "ワークスペース", "noOrganizations": "組織がありません"}
+  },
+  "dashboard": {
+    "welcome": "おかえりなさい、{name} さん",
+    "subtitle": "あなたのワークスペースの最新状況です。",
+    "stats": {"organizations": "組織", "departments": "部署", "teams": "チーム"},
+    "quickActions": {"title": "クイックアクション", "createOrg": "組織を作成", "createOrgDesc": "新しいワークスペースを立ち上げる", "invite": "メンバーを招待", "inviteDesc": "新しいメンバーに招待を送る", "audit": "監査ログを確認", "auditDesc": "最近のアクティビティを見る"},
+    "yourRoles": "あなたのロール",
+    "noActiveRoles": "現在割り当てられているロールはありません。"
+  },
+  "profile": {
+    "title": "プロフィール",
+    "subtitle": "ワークスペースでの表示方法を管理します。",
+    "displayName": "表示名",
+    "displayNamePlaceholder": "山田 太郎",
+    "profilePictureUrl": "プロフィール画像 URL",
+    "signedInVia": "OAuth プロバイダー経由でサインイン",
+    "evaluationEnabled": "評価が有効です",
+    "evaluationEnabledDesc": "AI 支援開発のアクティビティが評価されています。下の透明性レポートをご確認ください。",
+    "viewReports": "レポートを見る →",
+    "viewUsage": "使用量を見る",
+    "apiKeys": {
+      "title": "API キー",
+      "description": "API キーは CLI / スクリプトから gateway に接続する際の認証に使われます。パスワード同様に厳重に管理してください。",
+      "newKey": "新しいキー",
+      "name": "名前", "prefix": "プレフィックス", "status": "状態", "created": "作成日時", "lastUsed": "最終使用",
+      "noKeys": "API キーはまだありません。",
+      "revoke": "失効", "revoked": "失効済み",
+      "createDialog": {
+        "title": "API キーを作成",
+        "description": "あなたのアカウントに紐づく新しいキーを発行します。原文の値は作成時に一度だけ表示されます。",
+        "namePlaceholder": "ノート PC の Codex CLI",
+        "create": "キーを作成",
+        "rawWarning": "今すぐコピーしてください — 二度と表示されません。",
+        "rawLabel": "API キー"
+      }
+    }
+  },
+  "profileUsage": {
+    "title": "私の使用量",
+    "subtitle": "あなたのリクエスト数、トークン消費量、コスト。",
+    "ranges": {"7d": "過去 7 日間", "30d": "過去 30 日間", "90d": "過去 90 日間"},
+    "metrics": {"requests": "リクエスト数", "totalCost": "総コスト", "totalTokens": "総トークン数", "topModel": "最も使用したモデル"},
+    "topModels": "コスト順のモデル",
+    "requestsTable": {
+      "title": "{count} 件のリクエスト",
+      "empty": "この期間内にリクエストはありません。",
+      "created": "作成日時", "model": "モデル", "surface": "インターフェイス", "status": "状態", "tokens": "トークン", "cost": "コスト", "duration": "所要時間"
+    }
+  },
+  "profileEvaluation": {
+    "title": "私の評価",
+    "subtitle": "AI 支援開発の透明性レポート。",
+    "noReports": "評価レポートがまだありません",
+    "noReportsHint": "最初の評価は夜間の cron で生成されます。明日また確認してください。"
+  },
+  "organizations": {
+    "title": "組織",
+    "subtitle": "あなたが所属するワークスペース。",
+    "newOrganization": "新しい組織",
+    "noOrganizations": "組織がまだありません。",
+    "name": "名前", "namePlaceholder": "Acme Corp",
+    "slug": "スラッグ", "slugPlaceholder": "acme",
+    "createNew": "作成", "creating": "作成中…"
+  },
+  "org": {
+    "tabs": {"overview": "概要", "departments": "部署", "teams": "チーム", "members": "メンバー", "invites": "招待", "accounts": "アカウント", "accountGroups": "アカウントグループ", "usage": "使用量", "evaluator": "Evaluator", "audit": "監査"},
+    "overview": {"subtitle": "このワークスペースのアカウントスナップショット。", "upstreamAccounts": "上流アカウント", "upstreamAccountsDesc": "この組織のリクエストをルーティングするための Anthropic / OpenAI 認証情報。"}
+  },
+  "departments": {
+    "subtitle": "部署はワークスペース内のチームをグループ化します。",
+    "newDepartment": "新しい部署",
+    "empty": "部署はまだありません",
+    "emptyHint": "最初の部署を作成してチームを整理しましょう。",
+    "name": "名前", "members": "メンバー", "createdAt": "作成日時"
+  },
+  "teams": {
+    "subtitle": "チームは運用単位です。メンバーはチームに所属します。",
+    "newTeam": "新しいチーム",
+    "empty": "チームはまだありません",
+    "emptyHint": "最初のチームを作成して運用を開始しましょう。",
+    "name": "名前", "department": "部署", "members": "メンバー"
+  },
+  "members": {
+    "countSingular": "1 名のメンバー", "countPlural": "{count} 名のメンバー",
+    "name": "メンバー", "joined": "参加日", "latestScore": "最新スコア",
+    "apiKeys": "API キー", "backToMembers": "メンバー一覧へ戻る"
+  },
+  "memberDetail": {
+    "loadingEvaluation": "評価データを読み込み中…",
+    "noEvaluations": "過去 30 日間に評価レポートはありません。",
+    "rerun": "評価を再実行",
+    "rerunSuccess": "{count} 件をキューに追加しました",
+    "rerunFailed": "再実行のキュー追加に失敗しました"
+  },
+  "invites": {
+    "subtitle": "この組織の保留中の招待。",
+    "newInvite": "新しい招待",
+    "empty": "保留中の招待はありません",
+    "emptyHint": "メンバーを招待してコラボを開始しましょう。",
+    "email": "メール", "role": "ロール", "scope": "スコープ", "expiresAt": "有効期限"
+  },
+  "accounts": {
+    "subtitle": "この組織のリクエストをルーティングするための Anthropic / OpenAI 認証情報。",
+    "newAccount": "新しいアカウント",
+    "empty": "アカウントがまだありません。",
+    "name": "名前", "platform": "プラットフォーム", "type": "タイプ", "status": "状態", "priority": "優先度", "concurrency": "並列数", "lastUsed": "最終使用",
+    "typeApiKey": "API キー", "typeOauth": "OAuth",
+    "create": {
+      "title": "新しいアカウント",
+      "subtitle": "上流の認証情報を追加して、gateway がこの組織のリクエストをルーティングできるようにします。",
+      "namePlaceholder": "例: Production Anthropic key",
+      "platformLabel": "プラットフォーム", "typeLabel": "タイプ", "scopeLabel": "スコープ", "scopeOrg": "組織", "scopeTeam": "チーム", "teamPicker": "チーム",
+      "credentialsLabel": "認証情報",
+      "credentialsApiKeyPlaceholder": "sk-proj-…",
+      "credentialsOauthPlaceholder": "OAuth JSON を貼り付け …",
+      "credentialsOauthHint": "`claude auth login` が返した OAuth JSON を貼り付けます。`access_token`、`refresh_token`、`expires_at` を含む必要があります。",
+      "submit": "アカウントを作成", "submitting": "作成中…",
+      "backToAccounts": "アカウント一覧へ戻る"
+    }
+  },
+  "accountGroups": {
+    "title": "アカウントグループ",
+    "subtitle": "同じプラットフォームの上流アカウントを共有レート上限の下にプールします。gateway スケジューラーは優先度に従ってメンバー間で負荷分散します。",
+    "newGroup": "新しいグループ",
+    "empty": "グループがまだありません。",
+    "name": "名前", "platform": "プラットフォーム", "rateMultiplier": "レート倍率", "exclusive": "排他", "status": "状態",
+    "create": {
+      "title": "新しいアカウントグループ",
+      "subtitle": "アカウントをグループにまとめて、共有レート上限のもとでスケジューラーが管理できるようにします。",
+      "namePlaceholder": "openai-pool",
+      "descriptionLabel": "説明",
+      "descriptionPlaceholder": "運用者向けのメモ(任意)。",
+      "platformLabel": "プラットフォーム", "rateMultiplierLabel": "レート倍率",
+      "isExclusiveLabel": "排他 — メンバーは他のグループから使用されません",
+      "submit": "グループを作成"
+    },
+    "detail": {
+      "membersTitle": "メンバー",
+      "membersDesc": "優先度の値が小さいほど先に選ばれます。",
+      "memberAccount": "アカウント", "memberType": "タイプ", "memberStatus": "状態", "memberSchedulable": "スケジュール可", "memberPriority": "優先度",
+      "addMember": "メンバーを追加",
+      "noEligibleAccounts": "対象アカウントがありません — この組織内のすべての {platform} アカウントが既にメンバーであるか、{platform} アカウントが存在しません。先に「アカウント」タブで作成してください。",
+      "settingsTitle": "設定",
+      "settingsDesc": "名前変更、レート上限の調整、または一時的なスケジューラー無効化を行います。",
+      "platformFixed": "プラットフォームは {platform} で固定されています — 変更するにはグループを削除して再作成してください(プラットフォーム不一致は拒否されるため、いずれにしてもメンバーは再追加が必要です)。",
+      "remove": "削除", "save": "変更を保存"
+    }
+  },
+  "memberApiKeys": {
+    "ownTitle": "あなたの API キー",
+    "ownDescription": "あなた自身が発行し使用するキー。原文は作成時に一度だけ表示されます。",
+    "adminTitle": "API キー",
+    "adminDescription": "管理者がこの組織内でメンバーに発行した有効な API キー。",
+    "issueOwn": "新しいキー",
+    "issueForUser": "ユーザーの代わりにキーを発行",
+    "revoke": "失効",
+    "name": "名前", "prefix": "プレフィックス", "status": "状態", "created": "作成日時", "lastUsed": "最終使用",
+    "empty": "有効な API キーはありません。"
+  },
+  "usage": {
+    "title": "使用量",
+    "subtitle": "組織全体のリクエスト数、トークン消費量、コスト。",
+    "metrics": {"requests": "リクエスト数", "totalCost": "総コスト", "totalTokens": "総トークン数", "topModel": "最も使用したモデル"},
+    "topModels": "コスト順のモデル",
+    "requestsTitle": "リクエスト",
+    "requestsCount": "{count} 件のリクエスト",
+    "tableHeaders": {"created": "作成日時", "model": "モデル", "surface": "インターフェイス", "status": "状態", "tokens": "トークン", "cost": "コスト", "duration": "所要時間"},
+    "ranges": {"7d": "過去 7 日間", "30d": "過去 30 日間", "90d": "過去 90 日間"}
+  },
+  "evaluator": {
+    "title": "Evaluator",
+    "subtitle": "キャプチャしたリクエスト本文の確認、キャプチャと LLM 評価の設定、ルーブリックの管理、コストの確認を行います。",
+    "tabs": {"status": "状態", "settings": "設定", "rubrics": "ルーブリック", "costs": "コスト"},
+    "status": {
+      "title": "Evaluator の状態",
+      "description": "現在の cron の健全性とカバレッジ。",
+      "monthlySpend": "今月の LLM 費用",
+      "viewCostDashboard": "コストダッシュボードを見る →",
+      "cronHealthTitle": "Cron 健全性",
+      "cronHealthDesc": "評価の現在の健全性とカバレッジ統計。",
+      "refresh": "更新",
+      "lastCronRun": "前回実行", "never": "未実行",
+      "nextCronScheduled": "次回スケジュール",
+      "cronDailyAt": "UTC 毎日 {time}",
+      "members": "メンバー", "reports24h": "レポート (24 時間)", "coverage": "カバレッジ"
+    },
+    "settings": {
+      "title": "Evaluator の設定",
+      "description": "この組織のコンテンツキャプチャと評価を設定します。",
+      "captureTitle": "キャプチャ",
+      "enableCapture": "コンテンツキャプチャを有効化",
+      "enableCaptureDesc": "この組織のリクエストとレスポンス本文を記録します。",
+      "retentionPeriod": "保持期間",
+      "retentionDefault": "デフォルト(90 日)",
+      "retention30": "30 日", "retention60": "60 日", "retention90": "90 日",
+      "llmEvalTitle": "LLM 評価",
+      "enableLlm": "LLM 評価を有効化",
+      "enableLlmDesc": "キャプチャしたリクエストに対して LLM 審査員による自動評価を実行します。",
+      "llmAccount": "LLM アカウント",
+      "llmAccountPlaceholder": "— アカウントを選択 —",
+      "llmModel": "LLM モデル",
+      "captureThinking": "Thinking もキャプチャ"
+    },
+    "rubrics": {
+      "title": "ルーブリック",
+      "description": "組織が AI 支援開発をどう採点するかをカスタマイズします。",
+      "newRubric": "新しいルーブリック",
+      "name": "名前", "version": "バージョン", "source": "ソース", "status": "状態",
+      "default": "デフォルト", "platformBadge": "プラットフォーム"
+    },
+    "costs": {
+      "title": "LLM コストダッシュボード",
+      "description": "タスク種別とモデル別に分けた月次の Evaluator LLM コスト。",
+      "thisMonth": "今月 — {month}",
+      "remaining": "残り", "unlimited": "無制限",
+      "projected": "月末見込み",
+      "breakdownTitle": "内訳", "byTask": "タスク別", "byModel": "モデル別",
+      "noUsageThisMonth": "今月の使用量はありません。",
+      "last6Months": "直近 6 か月",
+      "tableHeaders": {"item": "項目", "calls": "呼び出し数", "usd": "USD"},
+      "tasks": {"facetExtraction": "Facet 抽出", "deepAnalysis": "詳細分析"}
+    }
+  },
+  "audit": {
+    "title": "監査",
+    "subtitle": "この組織で行われた操作。",
+    "empty": "監査エントリはありません",
+    "emptyHint": "この組織で行われた操作がここに表示されます。",
+    "headers": {"when": "日時", "actor": "実行者", "action": "アクション", "target": "対象", "details": "詳細"}
+  },
+  "signIn": {
+    "title": "aide にサインイン",
+    "subtitle": "プロバイダーのアカウントで続行します。",
+    "google": "Google で続行",
+    "github": "GitHub で続行",
+    "emailMagicLink": "メールのマジックリンク"
+  },
+  "invitePage": {
+    "title": "{orgName} に招待されました",
+    "subtitle": "サインインして招待を受け入れます。",
+    "claim": "招待を受け入れる",
+    "expired": "この招待は有効期限が切れています。",
+    "alreadyClaimed": "この招待はすでに受け入れられています。",
+    "wrongUser": "この招待は別のメールアドレスに送信されました。"
+  },
+  "reveal": {
+    "title": "あなたの新しい API キー",
+    "subtitle": "今すぐコピーしてください — 二度と表示されません。",
+    "copyHint": "コピー"
+  }
+}

@@ -1,0 +1,292 @@
+{
+  "common": {
+    "appName": "aide",
+    "loading": "불러오는 중…",
+    "save": "저장",
+    "saving": "저장 중…",
+    "saveChanges": "변경사항 저장",
+    "cancel": "취소",
+    "create": "만들기",
+    "creating": "만드는 중…",
+    "delete": "삭제",
+    "deleting": "삭제 중…",
+    "edit": "편집",
+    "back": "뒤로",
+    "next": "다음",
+    "previous": "이전",
+    "search": "검색…",
+    "close": "닫기",
+    "yes": "예",
+    "no": "아니요",
+    "noWorkspace": "워크스페이스 없음",
+    "active": "활성",
+    "disabled": "비활성",
+    "expired": "만료됨",
+    "error": "오류",
+    "rateLimited": "속도 제한",
+    "overloaded": "과부하",
+    "paused": "일시 중지됨",
+    "page": "페이지",
+    "pageOf": "{total} 페이지 중 {current} 페이지",
+    "rowsPerPage": "페이지당 행 수",
+    "noResults": "결과 없음",
+    "comingSoon": "출시 예정",
+    "copy": "복사",
+    "copied": "복사됨",
+    "moreOptions": "추가 옵션"
+  },
+  "nav": {
+    "sections": {"overview": "개요", "workspace": "워크스페이스", "account": "계정"},
+    "items": {"dashboard": "대시보드", "organizations": "조직", "teams": "팀", "invites": "초대", "auditLog": "감사 로그", "profile": "프로필"},
+    "topbar": {"switchTheme": "테마 전환", "notifications": "알림", "userMenu": "사용자 메뉴", "language": "언어", "signOut": "로그아웃", "workspaces": "워크스페이스", "noOrganizations": "조직 없음"}
+  },
+  "dashboard": {
+    "welcome": "다시 오신 것을 환영합니다, {name} 님",
+    "subtitle": "워크스페이스의 최신 상황입니다.",
+    "stats": {"organizations": "조직", "departments": "부서", "teams": "팀"},
+    "quickActions": {"title": "빠른 작업", "createOrg": "조직 만들기", "createOrgDesc": "새 워크스페이스를 시작하세요", "invite": "멤버 초대", "inviteDesc": "새 멤버에게 초대 보내기", "audit": "감사 로그 보기", "auditDesc": "최근 활동 보기"},
+    "yourRoles": "내 역할",
+    "noActiveRoles": "현재 할당된 역할이 없습니다."
+  },
+  "profile": {
+    "title": "프로필",
+    "subtitle": "워크스페이스에서 표시되는 방식을 관리합니다.",
+    "displayName": "표시 이름",
+    "displayNamePlaceholder": "홍길동",
+    "profilePictureUrl": "프로필 사진 URL",
+    "signedInVia": "OAuth 공급자로 로그인",
+    "evaluationEnabled": "평가가 활성화됨",
+    "evaluationEnabledDesc": "AI 지원 개발 활동이 평가되고 있습니다. 아래에서 투명성 보고서를 확인하세요.",
+    "viewReports": "내 보고서 보기 →",
+    "viewUsage": "사용량 보기",
+    "apiKeys": {
+      "title": "API 키",
+      "description": "API 키는 CLI / 스크립트가 gateway에 인증할 때 사용됩니다. 비밀번호처럼 안전하게 보관하세요.",
+      "newKey": "새 키",
+      "name": "이름", "prefix": "접두사", "status": "상태", "created": "생성 시각", "lastUsed": "마지막 사용",
+      "noKeys": "아직 API 키가 없습니다.",
+      "revoke": "취소", "revoked": "취소됨",
+      "createDialog": {
+        "title": "API 키 만들기",
+        "description": "내 계정에 연결된 새 키를 발급합니다. 원본 값은 생성 시 한 번만 표시됩니다.",
+        "namePlaceholder": "노트북의 Codex CLI",
+        "create": "키 만들기",
+        "rawWarning": "지금 즉시 복사하세요 — 다시 표시되지 않습니다.",
+        "rawLabel": "API 키"
+      }
+    }
+  },
+  "profileUsage": {
+    "title": "내 사용량",
+    "subtitle": "내 요청 수, 토큰 사용량, 비용입니다.",
+    "ranges": {"7d": "최근 7일", "30d": "최근 30일", "90d": "최근 90일"},
+    "metrics": {"requests": "요청 수", "totalCost": "총 비용", "totalTokens": "총 토큰 수", "topModel": "가장 많이 사용한 모델"},
+    "topModels": "비용 순 모델",
+    "requestsTable": {
+      "title": "{count} 건의 요청",
+      "empty": "이 기간에 요청이 없습니다.",
+      "created": "생성 시각", "model": "모델", "surface": "인터페이스", "status": "상태", "tokens": "토큰", "cost": "비용", "duration": "소요 시간"
+    }
+  },
+  "profileEvaluation": {
+    "title": "내 평가",
+    "subtitle": "AI 지원 개발 투명성 보고서.",
+    "noReports": "아직 평가 보고서가 없습니다",
+    "noReportsHint": "첫 번째 평가는 야간 cron에서 생성됩니다. 내일 다시 확인하세요."
+  },
+  "organizations": {
+    "title": "조직",
+    "subtitle": "내가 속한 워크스페이스.",
+    "newOrganization": "새 조직",
+    "noOrganizations": "아직 조직이 없습니다.",
+    "name": "이름", "namePlaceholder": "Acme Corp",
+    "slug": "슬러그", "slugPlaceholder": "acme",
+    "createNew": "만들기", "creating": "만드는 중…"
+  },
+  "org": {
+    "tabs": {"overview": "개요", "departments": "부서", "teams": "팀", "members": "멤버", "invites": "초대", "accounts": "계정", "accountGroups": "계정 그룹", "usage": "사용량", "evaluator": "Evaluator", "audit": "감사"},
+    "overview": {"subtitle": "이 워크스페이스의 계정 스냅샷.", "upstreamAccounts": "상위 계정", "upstreamAccountsDesc": "이 조직의 요청을 라우팅하는 데 사용되는 Anthropic / OpenAI 자격 증명."}
+  },
+  "departments": {
+    "subtitle": "부서는 워크스페이스 내 팀을 그룹화합니다.",
+    "newDepartment": "새 부서",
+    "empty": "아직 부서가 없습니다",
+    "emptyHint": "첫 번째 부서를 만들어 팀을 정리해 보세요.",
+    "name": "이름", "members": "멤버", "createdAt": "생성 시각"
+  },
+  "teams": {
+    "subtitle": "팀은 운영 단위입니다. 멤버는 팀에 속합니다.",
+    "newTeam": "새 팀",
+    "empty": "아직 팀이 없습니다",
+    "emptyHint": "첫 번째 팀을 만들어 시작하세요.",
+    "name": "이름", "department": "부서", "members": "멤버"
+  },
+  "members": {
+    "countSingular": "1명의 멤버", "countPlural": "{count}명의 멤버",
+    "name": "멤버", "joined": "참여일", "latestScore": "최신 점수",
+    "apiKeys": "API 키", "backToMembers": "멤버 목록으로"
+  },
+  "memberDetail": {
+    "loadingEvaluation": "평가 데이터를 불러오는 중…",
+    "noEvaluations": "최근 30일간 평가 보고서가 없습니다.",
+    "rerun": "평가 재실행",
+    "rerunSuccess": "{count}개 대상이 큐에 추가되었습니다",
+    "rerunFailed": "큐 추가 실패"
+  },
+  "invites": {
+    "subtitle": "이 조직의 대기 중 초대.",
+    "newInvite": "새 초대",
+    "empty": "대기 중 초대가 없습니다",
+    "emptyHint": "멤버를 초대하여 협업을 시작하세요.",
+    "email": "이메일", "role": "역할", "scope": "범위", "expiresAt": "만료 시각"
+  },
+  "accounts": {
+    "subtitle": "이 조직의 요청을 라우팅하는 데 사용되는 Anthropic / OpenAI 자격 증명.",
+    "newAccount": "새 계정",
+    "empty": "아직 계정이 없습니다.",
+    "name": "이름", "platform": "플랫폼", "type": "유형", "status": "상태", "priority": "우선순위", "concurrency": "동시 처리 수", "lastUsed": "마지막 사용",
+    "typeApiKey": "API 키", "typeOauth": "OAuth",
+    "create": {
+      "title": "새 계정",
+      "subtitle": "상위 자격 증명을 추가하여 gateway가 이 조직의 요청을 라우팅할 수 있게 합니다.",
+      "namePlaceholder": "예: Production Anthropic key",
+      "platformLabel": "플랫폼", "typeLabel": "유형", "scopeLabel": "범위", "scopeOrg": "조직", "scopeTeam": "팀", "teamPicker": "팀",
+      "credentialsLabel": "자격 증명",
+      "credentialsApiKeyPlaceholder": "sk-proj-…",
+      "credentialsOauthPlaceholder": "OAuth JSON을 붙여넣기 …",
+      "credentialsOauthHint": "`claude auth login`이 반환한 OAuth JSON을 붙여넣습니다. `access_token`, `refresh_token`, `expires_at`이 포함되어야 합니다.",
+      "submit": "계정 만들기", "submitting": "만드는 중…",
+      "backToAccounts": "계정 목록으로"
+    }
+  },
+  "accountGroups": {
+    "title": "계정 그룹",
+    "subtitle": "동일한 플랫폼의 상위 계정을 공유 속도 한도 아래에 풀링합니다. gateway 스케줄러는 우선순위에 따라 멤버 간 부하를 분산합니다.",
+    "newGroup": "새 그룹",
+    "empty": "아직 그룹이 없습니다.",
+    "name": "이름", "platform": "플랫폼", "rateMultiplier": "속도 배수", "exclusive": "독점", "status": "상태",
+    "create": {
+      "title": "새 계정 그룹",
+      "subtitle": "계정을 그룹으로 묶어 공유 속도 한도 아래에서 스케줄러가 관리하도록 합니다.",
+      "namePlaceholder": "openai-pool",
+      "descriptionLabel": "설명",
+      "descriptionPlaceholder": "운영자용 메모(선택).",
+      "platformLabel": "플랫폼", "rateMultiplierLabel": "속도 배수",
+      "isExclusiveLabel": "독점 — 멤버가 다른 그룹에서 사용되지 않음",
+      "submit": "그룹 만들기"
+    },
+    "detail": {
+      "membersTitle": "멤버",
+      "membersDesc": "우선순위 값이 작을수록 먼저 선택됩니다.",
+      "memberAccount": "계정", "memberType": "유형", "memberStatus": "상태", "memberSchedulable": "스케줄 가능", "memberPriority": "우선순위",
+      "addMember": "멤버 추가",
+      "noEligibleAccounts": "사용 가능한 계정이 없습니다 — 이 조직의 모든 {platform} 계정이 이미 멤버이거나 {platform} 계정이 없습니다. 먼저 「계정」 탭에서 만들어 주세요.",
+      "settingsTitle": "설정",
+      "settingsDesc": "이름 변경, 속도 한도 조정, 또는 임시로 스케줄러 선택 비활성화.",
+      "platformFixed": "플랫폼이 {platform}으로 고정됩니다 — 변경하려면 그룹을 삭제하고 다시 만드세요(플랫폼 불일치는 거부되므로 어쨌든 멤버를 다시 추가해야 합니다).",
+      "remove": "제거", "save": "변경사항 저장"
+    }
+  },
+  "memberApiKeys": {
+    "ownTitle": "내 API 키",
+    "ownDescription": "내가 직접 발급하여 사용하는 키. 원본은 생성 시 한 번만 표시됩니다.",
+    "adminTitle": "API 키",
+    "adminDescription": "관리자가 이 조직 내에서 멤버에게 발급한 활성 API 키.",
+    "issueOwn": "새 키",
+    "issueForUser": "사용자 대신 키 발급",
+    "revoke": "취소",
+    "name": "이름", "prefix": "접두사", "status": "상태", "created": "생성 시각", "lastUsed": "마지막 사용",
+    "empty": "활성 API 키가 없습니다."
+  },
+  "usage": {
+    "title": "사용량",
+    "subtitle": "조직 전체의 요청 수, 토큰 사용량, 비용.",
+    "metrics": {"requests": "요청 수", "totalCost": "총 비용", "totalTokens": "총 토큰 수", "topModel": "가장 많이 사용한 모델"},
+    "topModels": "비용 순 모델",
+    "requestsTitle": "요청",
+    "requestsCount": "{count} 건의 요청",
+    "tableHeaders": {"created": "생성 시각", "model": "모델", "surface": "인터페이스", "status": "상태", "tokens": "토큰", "cost": "비용", "duration": "소요 시간"},
+    "ranges": {"7d": "최근 7일", "30d": "최근 30일", "90d": "최근 90일"}
+  },
+  "evaluator": {
+    "title": "Evaluator",
+    "subtitle": "캡처된 요청 본문 검토, 캡처와 LLM 평가 설정, 루브릭 관리, 비용 확인.",
+    "tabs": {"status": "상태", "settings": "설정", "rubrics": "루브릭", "costs": "비용"},
+    "status": {
+      "title": "Evaluator 상태",
+      "description": "현재 cron 상태와 커버리지.",
+      "monthlySpend": "이번 달 LLM 비용",
+      "viewCostDashboard": "비용 대시보드 보기 →",
+      "cronHealthTitle": "Cron 상태",
+      "cronHealthDesc": "평가의 현재 상태와 커버리지 통계.",
+      "refresh": "새로고침",
+      "lastCronRun": "마지막 실행", "never": "없음",
+      "nextCronScheduled": "다음 예정",
+      "cronDailyAt": "UTC 매일 {time}",
+      "members": "멤버", "reports24h": "보고서 (24시간)", "coverage": "커버리지"
+    },
+    "settings": {
+      "title": "Evaluator 설정",
+      "description": "이 조직의 콘텐츠 캡처와 평가를 설정합니다.",
+      "captureTitle": "캡처",
+      "enableCapture": "콘텐츠 캡처 활성화",
+      "enableCaptureDesc": "이 조직의 요청과 응답 본문을 기록합니다.",
+      "retentionPeriod": "보관 기간",
+      "retentionDefault": "기본(90일)",
+      "retention30": "30일", "retention60": "60일", "retention90": "90일",
+      "llmEvalTitle": "LLM 평가",
+      "enableLlm": "LLM 평가 활성화",
+      "enableLlmDesc": "캡처된 요청에 대해 LLM 심사관으로 자동 평가를 실행합니다.",
+      "llmAccount": "LLM 계정",
+      "llmAccountPlaceholder": "— 계정 선택 —",
+      "llmModel": "LLM 모델",
+      "captureThinking": "Thinking도 캡처"
+    },
+    "rubrics": {
+      "title": "루브릭",
+      "description": "조직이 AI 지원 개발을 어떻게 채점할지 사용자 지정합니다.",
+      "newRubric": "새 루브릭",
+      "name": "이름", "version": "버전", "source": "소스", "status": "상태",
+      "default": "기본", "platformBadge": "플랫폼"
+    },
+    "costs": {
+      "title": "LLM 비용 대시보드",
+      "description": "작업 유형과 모델별로 분류된 월별 Evaluator LLM 비용.",
+      "thisMonth": "이번 달 — {month}",
+      "remaining": "남음", "unlimited": "무제한",
+      "projected": "월말 예상",
+      "breakdownTitle": "내역", "byTask": "작업별", "byModel": "모델별",
+      "noUsageThisMonth": "이번 달 사용량이 없습니다.",
+      "last6Months": "최근 6개월",
+      "tableHeaders": {"item": "항목", "calls": "호출 수", "usd": "USD"},
+      "tasks": {"facetExtraction": "Facet 추출", "deepAnalysis": "심층 분석"}
+    }
+  },
+  "audit": {
+    "title": "감사",
+    "subtitle": "이 조직에서 발생한 작업.",
+    "empty": "감사 항목이 없습니다",
+    "emptyHint": "이 조직에서 발생한 작업이 여기에 표시됩니다.",
+    "headers": {"when": "시각", "actor": "작업자", "action": "동작", "target": "대상", "details": "상세"}
+  },
+  "signIn": {
+    "title": "aide에 로그인",
+    "subtitle": "공급자 계정으로 계속하세요.",
+    "google": "Google로 계속",
+    "github": "GitHub로 계속",
+    "emailMagicLink": "이메일 매직 링크"
+  },
+  "invitePage": {
+    "title": "{orgName}에 초대되었습니다",
+    "subtitle": "초대를 수락하려면 로그인하세요.",
+    "claim": "초대 수락",
+    "expired": "이 초대는 만료되었습니다.",
+    "alreadyClaimed": "이 초대는 이미 수락되었습니다.",
+    "wrongUser": "이 초대는 다른 이메일로 발송되었습니다."
+  },
+  "reveal": {
+    "title": "새 API 키",
+    "subtitle": "지금 즉시 복사하세요 — 다시 표시되지 않습니다.",
+    "copyHint": "복사"
+  }
+}
