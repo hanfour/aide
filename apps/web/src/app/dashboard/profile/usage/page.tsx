@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 import { trpc } from "@/lib/trpc/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -18,6 +19,8 @@ import { UsageTable } from "@/components/usage/UsageTable";
 export default function ProfileUsagePage() {
   const [range, setRange] = useState<RangePreset>("30d");
   const { from, to } = useMemo(() => rangeToDates(range), [range]);
+  const t = useTranslations("profileUsage");
+  const tOrgUsage = useTranslations("usage");
 
   const summaryQuery = trpc.usage.summary.useQuery({
     scope: { type: "own" },
@@ -29,9 +32,9 @@ export default function ProfileUsagePage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">My usage</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">{t("title")}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Your requests, token spend, and cost through the gateway.
+            {t("subtitle")}
           </p>
         </div>
         <TimeRangePicker value={range} onChange={setRange} />
@@ -51,7 +54,7 @@ export default function ProfileUsagePage() {
       <Card className="shadow-card">
         <CardHeader>
           <CardTitle className="text-sm font-medium">
-            Top models by cost
+            {tOrgUsage("topModels")}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -61,7 +64,7 @@ export default function ProfileUsagePage() {
 
       <Card className="shadow-card">
         <CardHeader>
-          <CardTitle className="text-sm font-medium">Requests</CardTitle>
+          <CardTitle className="text-sm font-medium">{tOrgUsage("requestsTitle")}</CardTitle>
         </CardHeader>
         <CardContent>
           <UsageTable scope={{ type: "own" }} from={from} to={to} />

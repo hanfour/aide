@@ -1,5 +1,6 @@
 'use client'
 import { ChevronsUpDown, Check } from 'lucide-react'
+import { useTranslations } from 'next-intl'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,6 +14,8 @@ import { trpc } from '@/lib/trpc/client'
 export function WorkspaceSwitcher() {
   const { data: orgs } = trpc.organizations.list.useQuery()
   const current = orgs?.[0]
+  const t = useTranslations('nav.topbar')
+  const tCommon = useTranslations('common')
 
   return (
     <DropdownMenu>
@@ -21,13 +24,15 @@ export function WorkspaceSwitcher() {
           <div className="flex h-5 w-5 items-center justify-center rounded bg-primary text-[11px] font-semibold text-primary-foreground">
             {current?.name.charAt(0).toUpperCase() ?? 'a'}
           </div>
-          <span className="max-w-[140px] truncate">{current?.name ?? 'No workspace'}</span>
+          <span className="max-w-[140px] truncate">
+            {current?.name ?? tCommon('noWorkspace')}
+          </span>
           <ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
         <DropdownMenuLabel className="text-xs text-muted-foreground">
-          Workspaces
+          {t('workspaces')}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         {orgs?.map((o) => (
@@ -40,7 +45,7 @@ export function WorkspaceSwitcher() {
           </DropdownMenuItem>
         ))}
         {orgs?.length === 0 && (
-          <DropdownMenuItem disabled>No organizations</DropdownMenuItem>
+          <DropdownMenuItem disabled>{t('noOrganizations')}</DropdownMenuItem>
         )}
       </DropdownMenuContent>
     </DropdownMenu>

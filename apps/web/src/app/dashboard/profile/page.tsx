@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -32,9 +33,13 @@ type FormValues = z.infer<typeof schema>;
 export default function ProfilePage() {
   const { data: session, refetch } = trpc.me.session.useQuery();
   const { data: disclosure } = trpc.me.captureDisclosure.useQuery();
+  const t = useTranslations("profile");
+  const tApiKeys = useTranslations("profile.apiKeys");
+  const tDashboard = useTranslations("dashboard");
+  const tCommon = useTranslations("common");
   const update = trpc.me.updateProfile.useMutation({
     onSuccess: () => {
-      toast.success("Profile updated");
+      toast.success(t("updatedToast"));
       refetch();
     },
     onError: (e) => toast.error(e.message),
@@ -59,7 +64,7 @@ export default function ProfilePage() {
   if (!session?.user) {
     return (
       <Card className="shadow-card p-6 text-sm text-muted-foreground">
-        Loading…
+        {tCommon("loading")}
       </Card>
     );
   }
@@ -69,9 +74,9 @@ export default function ProfilePage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Profile</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">{t("title")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Manage how you appear across the workspace.
+          {t("subtitle")}
         </p>
       </div>
 
@@ -81,18 +86,17 @@ export default function ProfilePage() {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-medium text-sky-900 dark:text-sky-100">
-                Evaluation is enabled
+                {t("evaluationEnabled")}
               </h3>
               <p className="text-sm text-sky-800 dark:text-sky-200 mt-1">
-                Your AI-assisted development activity is being evaluated. View
-                your transparency report below.
+                {t("evaluationEnabledDesc")}
               </p>
             </div>
             <Link
               href="/dashboard/profile/evaluation"
               className="shrink-0 text-sm font-medium text-sky-700 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-100 underline"
             >
-              View my reports →
+              {t("viewReports")}
             </Link>
           </div>
         </div>
@@ -107,7 +111,7 @@ export default function ProfilePage() {
           </Avatar>
           <div>
             <CardTitle>{session.user.email}</CardTitle>
-            <CardDescription>Signed in via OAuth provider</CardDescription>
+            <CardDescription>{t("signedInVia")}</CardDescription>
           </div>
         </CardHeader>
         <CardContent>
@@ -121,8 +125,8 @@ export default function ProfilePage() {
             className="space-y-4"
           >
             <div className="space-y-1.5">
-              <Label htmlFor="name">Display name</Label>
-              <Input id="name" {...register("name")} placeholder="Jane Doe" />
+              <Label htmlFor="name">{t("displayName")}</Label>
+              <Input id="name" {...register("name")} placeholder={t("displayNamePlaceholder")} />
               {errors.name && (
                 <p className="text-xs text-destructive">
                   {errors.name.message}
@@ -130,7 +134,7 @@ export default function ProfilePage() {
               )}
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="image">Profile picture URL</Label>
+              <Label htmlFor="image">{t("profilePictureUrl")}</Label>
               <Input
                 id="image"
                 {...register("image")}
@@ -144,7 +148,7 @@ export default function ProfilePage() {
             </div>
             <div className="flex justify-end">
               <Button type="submit" disabled={isSubmitting || update.isPending}>
-                {update.isPending ? "Saving…" : "Save changes"}
+                {update.isPending ? tCommon("saving") : tCommon("saveChanges")}
               </Button>
             </div>
           </form>
@@ -153,11 +157,11 @@ export default function ProfilePage() {
 
       <Card className="shadow-card">
         <CardHeader>
-          <CardTitle className="text-sm font-medium">Your roles</CardTitle>
+          <CardTitle className="text-sm font-medium">{tDashboard("yourRoles")}</CardTitle>
         </CardHeader>
         <CardContent>
           {session.assignments.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No active roles.</p>
+            <p className="text-sm text-muted-foreground">{tDashboard("noActiveRoles")}</p>
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {session.assignments.map(
@@ -185,15 +189,14 @@ export default function ProfilePage() {
 
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">
-          API keys authenticate your CLI / scripts to the gateway. Treat them
-          like passwords.
+          {tApiKeys("description")}
         </p>
         <Link
           href="/dashboard/profile/usage"
           className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
         >
           <BarChart3 className="h-3.5 w-3.5" />
-          View usage
+          {t("viewUsage")}
         </Link>
       </div>
       <ApiKeyList />

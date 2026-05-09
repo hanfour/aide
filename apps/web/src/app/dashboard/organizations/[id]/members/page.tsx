@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { KeyRound, ShieldAlert, Users } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
 import { Card } from "@/components/ui/card";
@@ -17,11 +18,14 @@ export default function MembersTab() {
     isLoading,
     error,
   } = trpc.users.list.useQuery({ orgId });
+  const t = useTranslations("members");
+  const tPage = useTranslations("membersPage");
+  const tCommon = useTranslations("common");
 
   if (isLoading) {
     return (
       <Card className="shadow-card p-6 text-sm text-muted-foreground">
-        Loading…
+        {tCommon("loading")}
       </Card>
     );
   }
@@ -30,7 +34,7 @@ export default function MembersTab() {
     return (
       <Card className="shadow-card flex flex-col items-center p-10 text-center">
         <ShieldAlert className="h-6 w-6 text-muted-foreground" />
-        <h3 className="mt-3 text-sm font-semibold">Unable to load members</h3>
+        <h3 className="mt-3 text-sm font-semibold">{tPage("unableToLoad")}</h3>
         <p className="mt-1 max-w-sm text-xs text-muted-foreground">
           {error.message}
         </p>
@@ -42,9 +46,9 @@ export default function MembersTab() {
     return (
       <Card className="shadow-card flex flex-col items-center p-10 text-center">
         <Users className="h-6 w-6 text-muted-foreground" />
-        <h3 className="mt-3 text-sm font-semibold">No members yet</h3>
+        <h3 className="mt-3 text-sm font-semibold">{tPage("emptyTitle")}</h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          Invite teammates from the Invites tab.
+          {tPage("emptyHint")}
         </p>
       </Card>
     );
@@ -53,16 +57,18 @@ export default function MembersTab() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        {members.length} {members.length === 1 ? "member" : "members"}
+        {members.length === 1
+          ? t("countSingular")
+          : t("countPlural", { count: members.length })}
       </p>
       <Card className="shadow-card overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground">
-              <th className="px-4 py-2 text-left font-medium">Member</th>
-              <th className="px-4 py-2 text-left font-medium">Joined</th>
+              <th className="px-4 py-2 text-left font-medium">{t("name")}</th>
+              <th className="px-4 py-2 text-left font-medium">{t("joined")}</th>
               <th className="px-4 py-2 text-center font-medium">
-                Latest score
+                {t("latestScore")}
               </th>
               <th className="px-4 py-2 text-right font-medium"></th>
             </tr>
@@ -107,7 +113,7 @@ export default function MembersTab() {
                       className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
                     >
                       <KeyRound className="h-3.5 w-3.5" />
-                      API keys
+                      {t("apiKeys")}
                     </Link>
                   </RequirePerm>
                 </td>

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useParams } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -34,6 +35,10 @@ export default function DepartmentsTab() {
   const utils = trpc.useUtils()
   const { data: depts, isLoading } = trpc.departments.list.useQuery({ orgId })
   const { data: session } = trpc.me.session.useQuery()
+  const t = useTranslations('departments')
+  const tDialog = useTranslations('departmentsDialog')
+  const tCommon = useTranslations('common')
+  const tOrgs = useTranslations('organizations')
 
   const canCreate =
     session?.assignments.some(
@@ -43,14 +48,14 @@ export default function DepartmentsTab() {
 
   const create = trpc.departments.create.useMutation({
     onSuccess: (dept) => {
-      toast.success(`Department "${dept?.name}" created`)
+      toast.success(tDialog('createdToast', { name: dept?.name ?? '' }))
       setOpen(false)
       reset()
       utils.departments.list.invalidate({ orgId })
     },
     onError: (e) => {
       const code = (e.data as { code?: string } | undefined)?.code
-      toast.error(code === 'FORBIDDEN' ? 'Insufficient permission' : e.message)
+      toast.error(code === 'FORBIDDEN' ? tCommon('insufficientPermission') : e.message)
     }
   })
 
@@ -62,21 +67,21 @@ export default function DepartmentsTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Departments group teams within this workspace.
+          {t('subtitle')}
         </p>
         {canCreate && (
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button size="sm" className="gap-1.5">
                 <Plus className="h-4 w-4" />
-                New department
+                {t('newDepartment')}
               </Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>New department</DialogTitle>
+                <DialogTitle>{t('newDepartment')}</DialogTitle>
                 <DialogDescription>
-                  Group related teams under one department.
+                  {tDialog('description')}
                 </DialogDescription>
               </DialogHeader>
               <form
@@ -84,25 +89,25 @@ export default function DepartmentsTab() {
                 className="space-y-4"
               >
                 <div className="space-y-1.5">
-                  <Label htmlFor="name">Name</Label>
-                  <Input id="name" {...register('name')} placeholder="Engineering" />
+                  <Label htmlFor="name">{tOrgs('name')}</Label>
+                  <Input id="name" {...register('name')} placeholder={tDialog('namePlaceholder')} />
                   {errors.name && (
                     <p className="text-xs text-destructive">{errors.name.message}</p>
                   )}
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="slug">Slug</Label>
-                  <Input id="slug" {...register('slug')} placeholder="engineering" />
+                  <Label htmlFor="slug">{tOrgs('slug')}</Label>
+                  <Input id="slug" {...register('slug')} placeholder={tDialog('slugPlaceholder')} />
                   {errors.slug && (
                     <p className="text-xs text-destructive">{errors.slug.message}</p>
                   )}
                 </div>
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={() => setOpen(false)}>
-                    Cancel
+                    {tCommon('cancel')}
                   </Button>
                   <Button type="submit" disabled={create.isPending}>
-                    {create.isPending ? 'Creating…' : 'Create'}
+                    {create.isPending ? tCommon('creating') : tCommon('create')}
                   </Button>
                 </DialogFooter>
               </form>
@@ -112,13 +117,13 @@ export default function DepartmentsTab() {
       </div>
 
       {isLoading ? (
-        <Card className="shadow-card p-6 text-sm text-muted-foreground">Loading…</Card>
+        <Card className="shadow-card p-6 text-sm text-muted-foreground">{tCommon('loading')}</Card>
       ) : !depts || depts.length === 0 ? (
         <Card className="shadow-card flex flex-col items-center p-10 text-center">
           <Network className="h-6 w-6 text-muted-foreground" />
-          <h3 className="mt-3 text-sm font-semibold">No departments yet</h3>
+          <h3 className="mt-3 text-sm font-semibold">{t('empty')}</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            Create one to start grouping teams.
+            {t('emptyHint')}
           </p>
         </Card>
       ) : (
@@ -126,9 +131,9 @@ export default function DepartmentsTab() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground">
-                <th className="px-4 py-2 text-left font-medium">Name</th>
-                <th className="px-4 py-2 text-left font-medium">Slug</th>
-                <th className="px-4 py-2 text-left font-medium">Created</th>
+                <th className="px-4 py-2 text-left font-medium">{t('name')}</th>
+                <th className="px-4 py-2 text-left font-medium">{tOrgs('slug')}</th>
+                <th className="px-4 py-2 text-left font-medium">{t('createdAt')}</th>
               </tr>
             </thead>
             <tbody>

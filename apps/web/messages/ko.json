@@ -33,7 +33,8 @@
     "comingSoon": "출시 예정",
     "copy": "복사",
     "copied": "복사됨",
-    "moreOptions": "추가 옵션"
+    "moreOptions": "추가 옵션",
+    "insufficientPermission": "권한이 부족합니다"
   },
   "nav": {
     "sections": {"overview": "개요", "workspace": "워크스페이스", "account": "계정"},
@@ -51,6 +52,7 @@
   "profile": {
     "title": "프로필",
     "subtitle": "워크스페이스에서 표시되는 방식을 관리합니다.",
+    "updatedToast": "프로필이 업데이트되었습니다",
     "displayName": "표시 이름",
     "displayNamePlaceholder": "홍길동",
     "profilePictureUrl": "프로필 사진 URL",
@@ -91,12 +93,17 @@
   "profileEvaluation": {
     "title": "내 평가",
     "subtitle": "AI 지원 개발 투명성 보고서.",
+    "pageSubtitle": "AI 지원 작업이 어떻게 평가되는지에 대한 투명성.",
     "noReports": "아직 평가 보고서가 없습니다",
     "noReportsHint": "첫 번째 평가는 야간 cron에서 생성됩니다. 내일 다시 확인하세요."
   },
   "organizations": {
     "title": "조직",
     "subtitle": "내가 속한 워크스페이스.",
+    "listSubtitle": "접근할 수 있는 워크스페이스.",
+    "emptyTitle": "아직 조직이 없습니다",
+    "emptyHintSuperAdmin": "첫 번째 조직을 만들어 시작하세요.",
+    "emptyHintMember": "관리자에게 초대를 요청하세요.",
     "newOrganization": "새 조직",
     "noOrganizations": "아직 조직이 없습니다.",
     "name": "이름", "namePlaceholder": "Acme Corp",
@@ -106,6 +113,63 @@
   "org": {
     "tabs": {"overview": "개요", "departments": "부서", "teams": "팀", "members": "멤버", "invites": "초대", "accounts": "계정", "accountGroups": "계정 그룹", "usage": "사용량", "evaluator": "Evaluator", "audit": "감사"},
     "overview": {"subtitle": "이 워크스페이스의 계정 스냅샷.", "upstreamAccounts": "상위 계정", "upstreamAccountsDesc": "이 조직의 요청을 라우팅하는 데 사용되는 Anthropic / OpenAI 자격 증명."}
+  },
+  "orgOverview": {
+    "notFound": "찾을 수 없습니다.",
+    "details": "상세 정보",
+    "createdLabel": "생성일",
+    "quickLinks": "빠른 링크",
+    "quickLinksDesc": "위 탭을 사용하여 부서, 팀, 멤버, 초대 및 감사 로그를 관리하세요."
+  },
+  "accountsPage": {
+    "subtitle": "이 워크스페이스의 요청을 라우팅하는 데 사용되는 Anthropic 자격 증명.",
+    "cantViewTitle": "여기에서 계정을 볼 수 없습니다",
+    "cantViewHint": "워크스페이스 관리자에게 <code>account.read</code> 권한을 요청하세요."
+  },
+  "accountGroupsPage": {
+    "cantViewTitle": "여기에서 그룹을 볼 수 없습니다",
+    "cantViewHint": "워크스페이스 관리자에게 <code>account_group.read</code> 권한을 요청하세요."
+  },
+  "membersPage": {
+    "unableToLoad": "멤버를 불러올 수 없습니다",
+    "emptyTitle": "아직 멤버가 없습니다",
+    "emptyHint": "초대 탭에서 팀원을 초대하세요."
+  },
+  "departmentsDialog": {
+    "description": "관련 팀을 하나의 부서로 묶습니다.",
+    "namePlaceholder": "엔지니어링",
+    "slugPlaceholder": "engineering",
+    "createdToast": "부서 「{name}」가 생성되었습니다"
+  },
+  "teamsDialog": {
+    "description": "이 워크스페이스에 팀을 생성합니다.",
+    "namePlaceholder": "플랫폼",
+    "slugPlaceholder": "platform",
+    "departmentOptional": "부서(선택)",
+    "noneOption": "— 없음 —",
+    "createdToast": "팀 「{name}」가 생성되었습니다",
+    "open": "열기"
+  },
+  "auditPage": {
+    "filterPlaceholder": "작업으로 필터링(예: invite.created)"
+  },
+  "usagePage": {
+    "noPermission": "이 조직의 사용량을 볼 수 있는 권한이 없습니다."
+  },
+  "invitesDialog": {
+    "description": "이 링크를 보내 사용자를 이 워크스페이스에 초대하세요.",
+    "emailPlaceholder": "user@example.com",
+    "roleMember": "멤버",
+    "roleTeamManager": "팀 매니저",
+    "roleDeptManager": "부서 매니저",
+    "roleOrgAdmin": "조직 관리자",
+    "createInvite": "초대 만들기",
+    "createdTitle": "초대가 생성되었습니다",
+    "createdDescription": "이 링크를 {email}와 공유하세요. 링크는 7일 후 만료됩니다.",
+    "emailDeliveryNote": "이메일 발송은 아직 연결되지 않았습니다 — 링크를 복사해 직접 전송하세요.",
+    "done": "완료",
+    "revoke": "취소",
+    "revokedToast": "초대가 취소되었습니다"
   },
   "departments": {
     "subtitle": "부서는 워크스페이스 내 팀을 그룹화합니다.",

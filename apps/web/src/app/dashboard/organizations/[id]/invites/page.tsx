@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useParams } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -39,6 +40,9 @@ export default function InvitesTab() {
   const [justCreated, setJustCreated] = useState<{ token: string; email: string } | null>(null)
   const [copied, setCopied] = useState(false)
   const utils = trpc.useUtils()
+  const t = useTranslations('invites')
+  const tDialog = useTranslations('invitesDialog')
+  const tCommon = useTranslations('common')
 
   const { data: invites, isLoading } = trpc.invites.list.useQuery({ orgId })
 
@@ -52,13 +56,13 @@ export default function InvitesTab() {
     },
     onError: (e) => {
       const code = (e.data as { code?: string } | undefined)?.code
-      toast.error(code === 'FORBIDDEN' ? 'Insufficient permission' : e.message)
+      toast.error(code === 'FORBIDDEN' ? tCommon('insufficientPermission') : e.message)
     }
   })
 
   const revoke = trpc.invites.revoke.useMutation({
     onSuccess: () => {
-      toast.success('Invite revoked')
+      toast.success(tDialog('revokedToast'))
       utils.invites.list.invalidate({ orgId })
     },
     onError: (e) => toast.error(e.message)
@@ -94,22 +98,22 @@ export default function InvitesTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Pending invites for this organization.
+          {t('subtitle')}
         </p>
         <Dialog open={open} onOpenChange={(v) => (v ? setOpen(true) : closeDialog())}>
           <DialogTrigger asChild>
             <Button size="sm" className="gap-1.5">
               <Plus className="h-4 w-4" />
-              New invite
+              {t('newInvite')}
             </Button>
           </DialogTrigger>
           <DialogContent>
             {!justCreated ? (
               <>
                 <DialogHeader>
-                  <DialogTitle>New invite</DialogTitle>
+                  <DialogTitle>{t('newInvite')}</DialogTitle>
                   <DialogDescription>
-                    Send this link to invite a user into this workspace.
+                    {tDialog('description')}
                   </DialogDescription>
                 </DialogHeader>
                 <form
@@ -125,36 +129,36 @@ export default function InvitesTab() {
                   className="space-y-4"
                 >
                   <div className="space-y-1.5">
-                    <Label htmlFor="email">Email</Label>
+                    <Label htmlFor="email">{t('email')}</Label>
                     <Input
                       id="email"
                       type="email"
                       {...register('email')}
-                      placeholder="user@example.com"
+                      placeholder={tDialog('emailPlaceholder')}
                     />
                     {errors.email && (
                       <p className="text-xs text-destructive">{errors.email.message}</p>
                     )}
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="role">Role</Label>
+                    <Label htmlFor="role">{t('role')}</Label>
                     <select
                       id="role"
                       {...register('role')}
                       className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                     >
-                      <option value="member">Member</option>
-                      <option value="team_manager">Team Manager</option>
-                      <option value="dept_manager">Department Manager</option>
-                      <option value="org_admin">Org Admin</option>
+                      <option value="member">{tDialog('roleMember')}</option>
+                      <option value="team_manager">{tDialog('roleTeamManager')}</option>
+                      <option value="dept_manager">{tDialog('roleDeptManager')}</option>
+                      <option value="org_admin">{tDialog('roleOrgAdmin')}</option>
                     </select>
                   </div>
                   <DialogFooter>
                     <Button type="button" variant="outline" onClick={closeDialog}>
-                      Cancel
+                      {tCommon('cancel')}
                     </Button>
                     <Button type="submit" disabled={create.isPending}>
-                      {create.isPending ? 'Creating…' : 'Create invite'}
+                      {create.isPending ? tCommon('creating') : tDialog('createInvite')}
                     </Button>
                   </DialogFooter>
                 </form>
@@ -162,9 +166,9 @@ export default function InvitesTab() {
             ) : (
               <>
                 <DialogHeader>
-                  <DialogTitle>Invite created</DialogTitle>
+                  <DialogTitle>{tDialog('createdTitle')}</DialogTitle>
                   <DialogDescription>
-                    Share this link with {justCreated.email}. Link expires in 7 days.
+                    {tDialog('createdDescription', { email: justCreated.email })}
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-3">
@@ -173,11 +177,11 @@ export default function InvitesTab() {
                     <Button onClick={copy} variant="outline" className="shrink-0 gap-1.5">
                       {copied ? (
                         <>
-                          <Check className="h-3.5 w-3.5" /> Copied
+                          <Check className="h-3.5 w-3.5" /> {tCommon('copied')}
                         </>
                       ) : (
                         <>
-                          <Copy className="h-3.5 w-3.5" /> Copy
+                          <Copy className="h-3.5 w-3.5" /> {tCommon('copy')}
                         </>
                       )}
                     </Button>
@@ -189,11 +193,11 @@ export default function InvitesTab() {
                     {inviteUrl}
                   </a>
                   <p className="text-xs text-muted-foreground">
-                    Email delivery is not wired yet — copy the link and send it manually.
+                    {tDialog('emailDeliveryNote')}
                   </p>
                 </div>
                 <DialogFooter>
-                  <Button onClick={closeDialog}>Done</Button>
+                  <Button onClick={closeDialog}>{tDialog('done')}</Button>
                 </DialogFooter>
               </>
             )}
@@ -202,13 +206,13 @@ export default function InvitesTab() {
       </div>
 
       {isLoading ? (
-        <Card className="shadow-card p-6 text-sm text-muted-foreground">Loading…</Card>
+        <Card className="shadow-card p-6 text-sm text-muted-foreground">{tCommon('loading')}</Card>
       ) : !invites || invites.length === 0 ? (
         <Card className="shadow-card flex flex-col items-center p-10 text-center">
           <Mail className="h-6 w-6 text-muted-foreground" />
-          <h3 className="mt-3 text-sm font-semibold">No pending invites</h3>
+          <h3 className="mt-3 text-sm font-semibold">{t('empty')}</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            Invite someone to start collaborating.
+            {t('emptyHint')}
           </p>
         </Card>
       ) : (
@@ -216,9 +220,9 @@ export default function InvitesTab() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground">
-                <th className="px-4 py-2 text-left font-medium">Email</th>
-                <th className="px-4 py-2 text-left font-medium">Role</th>
-                <th className="px-4 py-2 text-left font-medium">Expires</th>
+                <th className="px-4 py-2 text-left font-medium">{t('email')}</th>
+                <th className="px-4 py-2 text-left font-medium">{t('role')}</th>
+                <th className="px-4 py-2 text-left font-medium">{t('expiresAt')}</th>
                 <th className="px-4 py-2 text-right font-medium"></th>
               </tr>
             </thead>
@@ -245,7 +249,7 @@ export default function InvitesTab() {
                       className="gap-1 text-destructive hover:bg-destructive/10"
                     >
                       <X className="h-3.5 w-3.5" />
-                      Revoke
+                      {tDialog('revoke')}
                     </Button>
                   </td>
                 </tr>

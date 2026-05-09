@@ -33,7 +33,8 @@
     "comingSoon": "即將推出",
     "copy": "複製",
     "copied": "已複製",
-    "moreOptions": "更多選項"
+    "moreOptions": "更多選項",
+    "insufficientPermission": "權限不足"
   },
   "nav": {
     "sections": {"overview": "總覽", "workspace": "工作區", "account": "帳戶"},
@@ -51,6 +52,7 @@
   "profile": {
     "title": "個人檔案",
     "subtitle": "管理你在工作區中顯示的方式。",
+    "updatedToast": "個人檔案已更新",
     "displayName": "顯示名稱",
     "displayNamePlaceholder": "王小明",
     "profilePictureUrl": "頭像網址",
@@ -91,12 +93,17 @@
   "profileEvaluation": {
     "title": "我的評估",
     "subtitle": "你的 AI 輔助開發透明度報告。",
+    "pageSubtitle": "透明說明你的 AI 輔助工作如何被評分。",
     "noReports": "尚無評估報告",
     "noReportsHint": "你的第一份評估會在每晚的排程任務產生,請明天再回來查看。"
   },
   "organizations": {
     "title": "組織",
     "subtitle": "你所屬的工作區。",
+    "listSubtitle": "你可以存取的工作區。",
+    "emptyTitle": "尚無組織",
+    "emptyHintSuperAdmin": "建立第一個組織以開始使用。",
+    "emptyHintMember": "請聯繫管理員邀請你加入。",
     "newOrganization": "新增組織",
     "noOrganizations": "目前沒有任何組織。",
     "name": "名稱", "namePlaceholder": "Acme Corp",
@@ -106,6 +113,63 @@
   "org": {
     "tabs": {"overview": "總覽", "departments": "部門", "teams": "團隊", "members": "成員", "invites": "邀請", "accounts": "帳號", "accountGroups": "帳號群組", "usage": "用量", "evaluator": "評估器", "audit": "稽核"},
     "overview": {"subtitle": "此工作區的帳號快照。", "upstreamAccounts": "上游帳號", "upstreamAccountsDesc": "用來為此組織路由請求的 Anthropic / OpenAI 憑證。"}
+  },
+  "orgOverview": {
+    "notFound": "找不到資料。",
+    "details": "詳細資訊",
+    "createdLabel": "建立時間",
+    "quickLinks": "快速連結",
+    "quickLinksDesc": "使用上方的分頁管理部門、團隊、成員、邀請與稽核紀錄。"
+  },
+  "accountsPage": {
+    "subtitle": "用來為此工作區路由請求的 Anthropic 憑證。",
+    "cantViewTitle": "你無法在此檢視帳號",
+    "cantViewHint": "請向工作區管理員要求 <code>account.read</code> 權限。"
+  },
+  "accountGroupsPage": {
+    "cantViewTitle": "你無法在此檢視群組",
+    "cantViewHint": "請向工作區管理員要求 <code>account_group.read</code> 權限。"
+  },
+  "membersPage": {
+    "unableToLoad": "無法載入成員",
+    "emptyTitle": "尚無成員",
+    "emptyHint": "從「邀請」分頁邀請團隊成員。"
+  },
+  "departmentsDialog": {
+    "description": "將相關團隊歸入同一部門。",
+    "namePlaceholder": "工程部",
+    "slugPlaceholder": "engineering",
+    "createdToast": "部門「{name}」已建立"
+  },
+  "teamsDialog": {
+    "description": "在此工作區建立團隊。",
+    "namePlaceholder": "平台組",
+    "slugPlaceholder": "platform",
+    "departmentOptional": "部門(選填)",
+    "noneOption": "— 無 —",
+    "createdToast": "團隊「{name}」已建立",
+    "open": "開啟"
+  },
+  "auditPage": {
+    "filterPlaceholder": "依動作篩選(例如:invite.created)"
+  },
+  "usagePage": {
+    "noPermission": "你沒有權限檢視此組織的用量。"
+  },
+  "invitesDialog": {
+    "description": "傳送此連結以邀請使用者加入此工作區。",
+    "emailPlaceholder": "user@example.com",
+    "roleMember": "成員",
+    "roleTeamManager": "團隊管理員",
+    "roleDeptManager": "部門管理員",
+    "roleOrgAdmin": "組織管理員",
+    "createInvite": "建立邀請",
+    "createdTitle": "邀請已建立",
+    "createdDescription": "將此連結分享給 {email}。連結將於 7 天後失效。",
+    "emailDeliveryNote": "尚未啟用 Email 寄送 — 請複製連結並手動傳送。",
+    "done": "完成",
+    "revoke": "撤銷",
+    "revokedToast": "邀請已撤銷"
   },
   "departments": {
     "subtitle": "部門用於將工作區內的團隊分組。",

@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import { Building2, Plus, ArrowUpRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -10,6 +11,8 @@ import { trpc } from '@/lib/trpc/client'
 export default function OrganizationsListPage() {
   const { data: orgs, isLoading } = trpc.organizations.list.useQuery()
   const { data: session } = trpc.me.session.useQuery()
+  const t = useTranslations('organizations')
+  const tCommon = useTranslations('common')
   const isSuperAdmin =
     session?.assignments.some((a: { role: string }) => a.role === 'super_admin') ?? false
 
@@ -17,39 +20,39 @@ export default function OrganizationsListPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Organizations</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">{t('title')}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Workspaces you can access.
+            {t('listSubtitle')}
           </p>
         </div>
         {isSuperAdmin && (
           <Button asChild size="sm" className="gap-1.5">
             <Link href="/dashboard/organizations/new">
               <Plus className="h-4 w-4" />
-              New organization
+              {t('newOrganization')}
             </Link>
           </Button>
         )}
       </div>
 
       {isLoading ? (
-        <Card className="shadow-card p-8 text-sm text-muted-foreground">Loading…</Card>
+        <Card className="shadow-card p-8 text-sm text-muted-foreground">{tCommon('loading')}</Card>
       ) : !orgs || orgs.length === 0 ? (
         <Card className="shadow-card flex flex-col items-center justify-center p-12 text-center">
           <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-accent">
             <Building2 className="h-6 w-6 text-accent-foreground" />
           </div>
-          <h3 className="text-base font-semibold">No organizations yet</h3>
+          <h3 className="text-base font-semibold">{t('emptyTitle')}</h3>
           <p className="mt-1 max-w-sm text-sm text-muted-foreground">
             {isSuperAdmin
-              ? 'Create the first organization to get started.'
-              : 'Ask an administrator to invite you.'}
+              ? t('emptyHintSuperAdmin')
+              : t('emptyHintMember')}
           </p>
           {isSuperAdmin && (
             <Button asChild className="mt-4 gap-1.5" size="sm">
               <Link href="/dashboard/organizations/new">
                 <Plus className="h-4 w-4" />
-                New organization
+                {t('newOrganization')}
               </Link>
             </Button>
           )}
@@ -72,7 +75,7 @@ export default function OrganizationsListPage() {
               <p className="mt-0.5 text-xs text-muted-foreground">/{org.slug}</p>
               <div className="mt-3 flex items-center gap-2">
                 <Badge variant="secondary" className="rounded-md text-[10px] font-normal">
-                  Active
+                  {tCommon('active')}
                 </Badge>
               </div>
             </Link>
