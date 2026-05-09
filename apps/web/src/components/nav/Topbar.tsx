@@ -3,6 +3,7 @@ import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 import { SearchCommand } from './SearchCommand'
 import { NotificationBell } from './NotificationBell'
 import { ThemeToggle } from './ThemeToggle'
+import { LocaleSwitcher } from './LocaleSwitcher'
 import { UserMenu } from './UserMenu'
 
 export function Topbar() {
@@ -17,6 +18,7 @@ export function Topbar() {
       <div className="flex items-center gap-1.5">
         <SearchCommand />
         <NotificationBell />
+        <LocaleSwitcher />
         <ThemeToggle />
         <UserMenu />
       </div>

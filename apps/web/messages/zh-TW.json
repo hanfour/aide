@@ -1,0 +1,292 @@
+{
+  "common": {
+    "appName": "aide",
+    "loading": "載入中…",
+    "save": "儲存",
+    "saving": "儲存中…",
+    "saveChanges": "儲存變更",
+    "cancel": "取消",
+    "create": "建立",
+    "creating": "建立中…",
+    "delete": "刪除",
+    "deleting": "刪除中…",
+    "edit": "編輯",
+    "back": "返回",
+    "next": "下一頁",
+    "previous": "上一頁",
+    "search": "搜尋…",
+    "close": "關閉",
+    "yes": "是",
+    "no": "否",
+    "noWorkspace": "無工作區",
+    "active": "啟用中",
+    "disabled": "已停用",
+    "expired": "已過期",
+    "error": "錯誤",
+    "rateLimited": "已限流",
+    "overloaded": "過載",
+    "paused": "已暫停",
+    "page": "頁",
+    "pageOf": "第 {current} 頁,共 {total} 頁",
+    "rowsPerPage": "每頁筆數",
+    "noResults": "無結果",
+    "comingSoon": "即將推出",
+    "copy": "複製",
+    "copied": "已複製",
+    "moreOptions": "更多選項"
+  },
+  "nav": {
+    "sections": {"overview": "總覽", "workspace": "工作區", "account": "帳戶"},
+    "items": {"dashboard": "儀表板", "organizations": "組織", "teams": "團隊", "invites": "邀請", "auditLog": "稽核紀錄", "profile": "個人檔案"},
+    "topbar": {"switchTheme": "切換佈景主題", "notifications": "通知", "userMenu": "使用者選單", "language": "語言", "signOut": "登出", "workspaces": "工作區", "noOrganizations": "尚無組織"}
+  },
+  "dashboard": {
+    "welcome": "歡迎回來,{name}",
+    "subtitle": "以下是你工作區的概況。",
+    "stats": {"organizations": "組織", "departments": "部門", "teams": "團隊"},
+    "quickActions": {"title": "快捷操作", "createOrg": "建立組織", "createOrgDesc": "建立新的工作區", "invite": "邀請成員", "inviteDesc": "向新成員發送邀請", "audit": "查看稽核紀錄", "auditDesc": "查看最近的活動"},
+    "yourRoles": "你的角色",
+    "noActiveRoles": "目前沒有指派的角色。"
+  },
+  "profile": {
+    "title": "個人檔案",
+    "subtitle": "管理你在工作區中顯示的方式。",
+    "displayName": "顯示名稱",
+    "displayNamePlaceholder": "王小明",
+    "profilePictureUrl": "頭像網址",
+    "signedInVia": "透過 OAuth 提供者登入",
+    "evaluationEnabled": "已啟用評估",
+    "evaluationEnabledDesc": "你的 AI 輔助開發活動正在被評估。可在下方查看你的透明度報告。",
+    "viewReports": "查看我的報告 →",
+    "viewUsage": "查看用量",
+    "apiKeys": {
+      "title": "API 金鑰",
+      "description": "API 金鑰用於 CLI 與指令稿存取 gateway,請當作密碼妥善保管。",
+      "newKey": "新增金鑰",
+      "name": "名稱", "prefix": "前綴", "status": "狀態", "created": "建立時間", "lastUsed": "上次使用",
+      "noKeys": "尚未建立任何 API 金鑰。",
+      "revoke": "撤銷", "revoked": "已撤銷",
+      "createDialog": {
+        "title": "建立 API 金鑰",
+        "description": "為你的帳戶簽發新的金鑰。原始值僅在建立時顯示一次。",
+        "namePlaceholder": "筆電上的 Codex CLI",
+        "create": "建立金鑰",
+        "rawWarning": "請立即複製此金鑰 — 它不會再次顯示。",
+        "rawLabel": "API 金鑰"
+      }
+    }
+  },
+  "profileUsage": {
+    "title": "我的用量",
+    "subtitle": "你的請求數、Token 用量與費用。",
+    "ranges": {"7d": "最近 7 天", "30d": "最近 30 天", "90d": "最近 90 天"},
+    "metrics": {"requests": "請求數", "totalCost": "總費用", "totalTokens": "總 Token 數", "topModel": "使用最多的模型"},
+    "topModels": "依費用排序的模型",
+    "requestsTable": {
+      "title": "{count} 筆請求",
+      "empty": "此時間範圍內沒有任何請求。",
+      "created": "建立時間", "model": "模型", "surface": "介面", "status": "狀態", "tokens": "Token", "cost": "費用", "duration": "耗時"
+    }
+  },
+  "profileEvaluation": {
+    "title": "我的評估",
+    "subtitle": "你的 AI 輔助開發透明度報告。",
+    "noReports": "尚無評估報告",
+    "noReportsHint": "你的第一份評估會在每晚的排程任務產生,請明天再回來查看。"
+  },
+  "organizations": {
+    "title": "組織",
+    "subtitle": "你所屬的工作區。",
+    "newOrganization": "新增組織",
+    "noOrganizations": "目前沒有任何組織。",
+    "name": "名稱", "namePlaceholder": "Acme Corp",
+    "slug": "代稱", "slugPlaceholder": "acme",
+    "createNew": "建立", "creating": "建立中…"
+  },
+  "org": {
+    "tabs": {"overview": "總覽", "departments": "部門", "teams": "團隊", "members": "成員", "invites": "邀請", "accounts": "帳號", "accountGroups": "帳號群組", "usage": "用量", "evaluator": "評估器", "audit": "稽核"},
+    "overview": {"subtitle": "此工作區的帳號快照。", "upstreamAccounts": "上游帳號", "upstreamAccountsDesc": "用來為此組織路由請求的 Anthropic / OpenAI 憑證。"}
+  },
+  "departments": {
+    "subtitle": "部門用於將工作區內的團隊分組。",
+    "newDepartment": "新增部門",
+    "empty": "尚無部門",
+    "emptyHint": "建立第一個部門以開始整理團隊。",
+    "name": "名稱", "members": "成員", "createdAt": "建立時間"
+  },
+  "teams": {
+    "subtitle": "團隊是運作單位,成員從屬於團隊。",
+    "newTeam": "新增團隊",
+    "empty": "尚無團隊",
+    "emptyHint": "建立第一個團隊開始運作。",
+    "name": "名稱", "department": "部門", "members": "成員"
+  },
+  "members": {
+    "countSingular": "1 位成員", "countPlural": "{count} 位成員",
+    "name": "成員", "joined": "加入時間", "latestScore": "最新分數",
+    "apiKeys": "API 金鑰", "backToMembers": "返回成員列表"
+  },
+  "memberDetail": {
+    "loadingEvaluation": "載入評估資料中…",
+    "noEvaluations": "最近 30 天沒有評估報告。",
+    "rerun": "重新執行評估",
+    "rerunSuccess": "已將 {count} 個目標加入重跑佇列",
+    "rerunFailed": "加入重跑佇列失敗"
+  },
+  "invites": {
+    "subtitle": "此組織的待處理邀請。",
+    "newInvite": "新增邀請",
+    "empty": "沒有待處理的邀請",
+    "emptyHint": "邀請成員以開始協作。",
+    "email": "Email", "role": "角色", "scope": "範圍", "expiresAt": "到期時間"
+  },
+  "accounts": {
+    "subtitle": "用來為此組織路由請求的 Anthropic / OpenAI 憑證。",
+    "newAccount": "新增帳號",
+    "empty": "尚無帳號。",
+    "name": "名稱", "platform": "平台", "type": "類型", "status": "狀態", "priority": "優先順序", "concurrency": "並行數", "lastUsed": "上次使用",
+    "typeApiKey": "API 金鑰", "typeOauth": "OAuth",
+    "create": {
+      "title": "新增帳號",
+      "subtitle": "新增上游憑證,讓 gateway 能為此組織路由請求。",
+      "namePlaceholder": "例如:Production Anthropic key",
+      "platformLabel": "平台", "typeLabel": "類型", "scopeLabel": "範圍", "scopeOrg": "組織", "scopeTeam": "團隊", "teamPicker": "團隊",
+      "credentialsLabel": "憑證",
+      "credentialsApiKeyPlaceholder": "sk-proj-…",
+      "credentialsOauthPlaceholder": "貼上 OAuth JSON …",
+      "credentialsOauthHint": "貼上 `claude auth login` 回傳的 OAuth JSON,須包含 `access_token`、`refresh_token`、`expires_at`。",
+      "submit": "建立帳號", "submitting": "建立中…",
+      "backToAccounts": "返回帳號列表"
+    }
+  },
+  "accountGroups": {
+    "title": "帳號群組",
+    "subtitle": "將相同平台的上游帳號集中於一個共享速率上限,gateway 排程器會依優先順序在成員間做負載平衡。",
+    "newGroup": "新增群組",
+    "empty": "尚無群組。",
+    "name": "名稱", "platform": "平台", "rateMultiplier": "速率倍數", "exclusive": "獨佔", "status": "狀態",
+    "create": {
+      "title": "新增帳號群組",
+      "subtitle": "把帳號集中為一個群組,讓排程器以共享速率上限統一管理。",
+      "namePlaceholder": "openai-pool",
+      "descriptionLabel": "描述",
+      "descriptionPlaceholder": "給營運人員的備註(選填)。",
+      "platformLabel": "平台", "rateMultiplierLabel": "速率倍數",
+      "isExclusiveLabel": "獨佔 — 成員不被其他群組使用",
+      "submit": "建立群組"
+    },
+    "detail": {
+      "membersTitle": "成員",
+      "membersDesc": "優先順序值越小越先被選用。",
+      "memberAccount": "帳號", "memberType": "類型", "memberStatus": "狀態", "memberSchedulable": "可排程", "memberPriority": "優先順序",
+      "addMember": "加入成員",
+      "noEligibleAccounts": "沒有符合條件的帳號 — 此組織內所有 {platform} 帳號都已是成員,或還沒有任何 {platform} 帳號。請先到「帳號」頁建立。",
+      "settingsTitle": "設定",
+      "settingsDesc": "重新命名、調整速率上限,或暫時停用排程器選用。",
+      "platformFixed": "平台已鎖定為 {platform} — 若要變更,請刪除並重新建立群組(成員無論如何都得重新加入,因為平台不符會被拒絕)。",
+      "remove": "移除", "save": "儲存變更"
+    }
+  },
+  "memberApiKeys": {
+    "ownTitle": "你的 API 金鑰",
+    "ownDescription": "由你自行簽發、自行使用。原始值僅在建立時顯示一次。",
+    "adminTitle": "API 金鑰",
+    "adminDescription": "管理員在此組織下為成員簽發的有效 API 金鑰。",
+    "issueOwn": "新增金鑰",
+    "issueForUser": "代成員簽發金鑰",
+    "revoke": "撤銷",
+    "name": "名稱", "prefix": "前綴", "status": "狀態", "created": "建立時間", "lastUsed": "上次使用",
+    "empty": "目前沒有有效的 API 金鑰。"
+  },
+  "usage": {
+    "title": "用量",
+    "subtitle": "整個組織的請求數、Token 用量與費用。",
+    "metrics": {"requests": "請求數", "totalCost": "總費用", "totalTokens": "總 Token 數", "topModel": "使用最多的模型"},
+    "topModels": "依費用排序的模型",
+    "requestsTitle": "請求",
+    "requestsCount": "{count} 筆請求",
+    "tableHeaders": {"created": "建立時間", "model": "模型", "surface": "介面", "status": "狀態", "tokens": "Token", "cost": "費用", "duration": "耗時"},
+    "ranges": {"7d": "最近 7 天", "30d": "最近 30 天", "90d": "最近 90 天"}
+  },
+  "evaluator": {
+    "title": "評估器",
+    "subtitle": "檢視已擷取的請求內容、設定擷取與 LLM 評估、管理評核標準,並查看費用。",
+    "tabs": {"status": "狀態", "settings": "設定", "rubrics": "評核標準", "costs": "費用"},
+    "status": {
+      "title": "評估器狀態",
+      "description": "目前的排程任務健康度與覆蓋率。",
+      "monthlySpend": "本月 LLM 費用",
+      "viewCostDashboard": "查看費用儀表板 →",
+      "cronHealthTitle": "排程任務健康度",
+      "cronHealthDesc": "評估的目前健康狀態與覆蓋率統計。",
+      "refresh": "重新整理",
+      "lastCronRun": "上次執行", "never": "從未",
+      "nextCronScheduled": "下次排程",
+      "cronDailyAt": "UTC 每日 {time}",
+      "members": "成員", "reports24h": "報告 (24 小時)", "coverage": "覆蓋率"
+    },
+    "settings": {
+      "title": "評估器設定",
+      "description": "為此組織設定內容擷取與評估。",
+      "captureTitle": "擷取",
+      "enableCapture": "啟用內容擷取",
+      "enableCaptureDesc": "為此組織記錄請求與回應內容。",
+      "retentionPeriod": "保留期間",
+      "retentionDefault": "預設(90 天)",
+      "retention30": "30 天", "retention60": "60 天", "retention90": "90 天",
+      "llmEvalTitle": "LLM 評估",
+      "enableLlm": "啟用 LLM 評估",
+      "enableLlmDesc": "對已擷取的請求以 LLM 評審員自動執行評估。",
+      "llmAccount": "LLM 帳號",
+      "llmAccountPlaceholder": "— 選擇帳號 —",
+      "llmModel": "LLM 模型",
+      "captureThinking": "擷取思考過程"
+    },
+    "rubrics": {
+      "title": "評核標準",
+      "description": "自訂組織如何評分 AI 輔助開發。",
+      "newRubric": "新增評核標準",
+      "name": "名稱", "version": "版本", "source": "來源", "status": "狀態",
+      "default": "預設", "platformBadge": "平台"
+    },
+    "costs": {
+      "title": "LLM 費用儀表板",
+      "description": "依任務類型與模型細分的每月評估器 LLM 費用。",
+      "thisMonth": "本月 — {month}",
+      "remaining": "剩餘", "unlimited": "無上限",
+      "projected": "月底預估",
+      "breakdownTitle": "細項", "byTask": "依任務", "byModel": "依模型",
+      "noUsageThisMonth": "本月尚無用量。",
+      "last6Months": "最近 6 個月",
+      "tableHeaders": {"item": "項目", "calls": "呼叫數", "usd": "USD"},
+      "tasks": {"facetExtraction": "Facet 擷取", "deepAnalysis": "深度分析"}
+    }
+  },
+  "audit": {
+    "title": "稽核",
+    "subtitle": "此組織內發生的操作。",
+    "empty": "尚無稽核紀錄",
+    "emptyHint": "此組織內發生的操作會顯示於此。",
+    "headers": {"when": "時間", "actor": "操作人", "action": "動作", "target": "目標", "details": "詳情"}
+  },
+  "signIn": {
+    "title": "登入 aide",
+    "subtitle": "使用你的提供者帳戶登入。",
+    "google": "使用 Google 登入",
+    "github": "使用 GitHub 登入",
+    "emailMagicLink": "使用 Email 魔術連結"
+  },
+  "invitePage": {
+    "title": "你被邀請加入 {orgName}",
+    "subtitle": "登入以接受邀請。",
+    "claim": "接受邀請",
+    "expired": "此邀請已過期。",
+    "alreadyClaimed": "此邀請已被接受。",
+    "wrongUser": "此邀請寄送給其他 Email。"
+  },
+  "reveal": {
+    "title": "你的新 API 金鑰",
+    "subtitle": "請立即複製此金鑰 — 它不會再次顯示。",
+    "copyHint": "複製"
+  }
+}

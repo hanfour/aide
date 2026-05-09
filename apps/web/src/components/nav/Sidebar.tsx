@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import {
   LayoutDashboard,
   Building2,
@@ -24,15 +25,21 @@ interface SessionLike {
   coveredOrgs: string[]
 }
 
+type NavItemKey =
+  | 'dashboard' | 'organizations' | 'teams' | 'invites' | 'auditLog' | 'profile'
+
 interface NavItem {
   href: string | ((p: Perm, session: SessionLike | undefined) => string | null)
-  label: string
+  // Translation key under `nav.items.*` — resolved at render time so the
+  // label updates when the user switches locales.
+  labelKey: NavItemKey
   icon: React.ComponentType<{ className?: string }>
   visible: (p: Perm) => boolean
 }
 
 interface NavSection {
-  title: string
+  // Translation key under `nav.sections.*`.
+  titleKey: 'overview' | 'workspace' | 'account'
   items: NavItem[]
 }
 
@@ -50,24 +57,24 @@ function firstOrgHref(suffix: string) {
 
 const SECTIONS: NavSection[] = [
   {
-    title: 'Overview',
+    titleKey: 'overview',
     items: [
-      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, visible: () => true }
+      { href: '/dashboard', labelKey: 'dashboard', icon: LayoutDashboard, visible: () => true }
     ]
   },
   {
-    title: 'Workspace',
+    titleKey: 'workspace',
     items: [
-      { href: '/dashboard/organizations', label: 'Organizations', icon: Building2, visible: (p) => p.hasOrg },
-      { href: '/dashboard/teams', label: 'Teams', icon: Users, visible: (p) => p.hasTeam },
-      { href: firstOrgHref('invites'), label: 'Invites', icon: UserPlus, visible: (p) => p.hasOrgAdmin },
-      { href: firstOrgHref('audit'), label: 'Audit Log', icon: FileText, visible: (p) => p.hasOrgAdmin }
+      { href: '/dashboard/organizations', labelKey: 'organizations', icon: Building2, visible: (p) => p.hasOrg },
+      { href: '/dashboard/teams', labelKey: 'teams', icon: Users, visible: (p) => p.hasTeam },
+      { href: firstOrgHref('invites'), labelKey: 'invites', icon: UserPlus, visible: (p) => p.hasOrgAdmin },
+      { href: firstOrgHref('audit'), labelKey: 'auditLog', icon: FileText, visible: (p) => p.hasOrgAdmin }
     ]
   },
   {
-    title: 'Account',
+    titleKey: 'account',
     items: [
-      { href: '/dashboard/profile', label: 'Profile', icon: UserCircle, visible: () => true }
+      { href: '/dashboard/profile', labelKey: 'profile', icon: UserCircle, visible: () => true }
     ]
   }
 ]
@@ -75,6 +82,8 @@ const SECTIONS: NavSection[] = [
 export function Sidebar() {
   const pathname = usePathname()
   const { data: session } = trpc.me.session.useQuery()
+  const tSections = useTranslations('nav.sections')
+  const tItems = useTranslations('nav.items')
 
   const perm: Perm = {
     hasOrg: (session?.coveredOrgs.length ?? 0) > 0,
@@ -112,9 +121,9 @@ export function Sidebar() {
               .filter((x): x is NavItem & { href: string } => x !== null)
             if (resolved.length === 0) return null
             return (
-              <div key={section.title} className="mb-4">
+              <div key={section.titleKey} className="mb-4">
                 <div className="mb-1.5 px-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  {section.title}
+                  {tSections(section.titleKey)}
                 </div>
                 <div className="space-y-0.5">
                   {resolved.map((item) => {
@@ -125,7 +134,7 @@ export function Sidebar() {
                       false
                     return (
                       <Link
-                        key={item.label}
+                        key={item.labelKey}
                         href={item.href}
                         className={cn(
                           'flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm transition-colors',
@@ -135,7 +144,7 @@ export function Sidebar() {
                         )}
                       >
                         <Icon className="h-4 w-4" />
-                        {item.label}
+                        {tItems(item.labelKey)}
                       </Link>
                     )
                   })}
