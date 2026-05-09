@@ -33,7 +33,8 @@
     "comingSoon": "近日公開",
     "copy": "コピー",
     "copied": "コピーしました",
-    "moreOptions": "その他のオプション"
+    "moreOptions": "その他のオプション",
+    "insufficientPermission": "権限が不足しています"
   },
   "nav": {
     "sections": {"overview": "概要", "workspace": "ワークスペース", "account": "アカウント"},
@@ -51,6 +52,7 @@
   "profile": {
     "title": "プロフィール",
     "subtitle": "ワークスペースでの表示方法を管理します。",
+    "updatedToast": "プロフィールを更新しました",
     "displayName": "表示名",
     "displayNamePlaceholder": "山田 太郎",
     "profilePictureUrl": "プロフィール画像 URL",
@@ -91,12 +93,17 @@
   "profileEvaluation": {
     "title": "私の評価",
     "subtitle": "AI 支援開発の透明性レポート。",
+    "pageSubtitle": "AI 支援作業がどのように評価されるかの透明性。",
     "noReports": "評価レポートがまだありません",
     "noReportsHint": "最初の評価は夜間の cron で生成されます。明日また確認してください。"
   },
   "organizations": {
     "title": "組織",
     "subtitle": "あなたが所属するワークスペース。",
+    "listSubtitle": "アクセス可能なワークスペース。",
+    "emptyTitle": "組織がまだありません",
+    "emptyHintSuperAdmin": "最初の組織を作成して開始しましょう。",
+    "emptyHintMember": "管理者に招待を依頼してください。",
     "newOrganization": "新しい組織",
     "noOrganizations": "組織がまだありません。",
     "name": "名前", "namePlaceholder": "Acme Corp",
@@ -106,6 +113,63 @@
   "org": {
     "tabs": {"overview": "概要", "departments": "部署", "teams": "チーム", "members": "メンバー", "invites": "招待", "accounts": "アカウント", "accountGroups": "アカウントグループ", "usage": "使用量", "evaluator": "Evaluator", "audit": "監査"},
     "overview": {"subtitle": "このワークスペースのアカウントスナップショット。", "upstreamAccounts": "上流アカウント", "upstreamAccountsDesc": "この組織のリクエストをルーティングするための Anthropic / OpenAI 認証情報。"}
+  },
+  "orgOverview": {
+    "notFound": "見つかりません。",
+    "details": "詳細",
+    "createdLabel": "作成日",
+    "quickLinks": "クイックリンク",
+    "quickLinksDesc": "上のタブから部署、チーム、メンバー、招待、監査ログを管理できます。"
+  },
+  "accountsPage": {
+    "subtitle": "このワークスペースのリクエストをルーティングするための Anthropic 認証情報。",
+    "cantViewTitle": "ここではアカウントを表示できません",
+    "cantViewHint": "ワークスペース管理者に <code>account.read</code> 権限を依頼してください。"
+  },
+  "accountGroupsPage": {
+    "cantViewTitle": "ここではグループを表示できません",
+    "cantViewHint": "ワークスペース管理者に <code>account_group.read</code> 権限を依頼してください。"
+  },
+  "membersPage": {
+    "unableToLoad": "メンバーを読み込めません",
+    "emptyTitle": "メンバーがまだいません",
+    "emptyHint": "「招待」タブからチームメンバーを招待してください。"
+  },
+  "departmentsDialog": {
+    "description": "関連するチームを 1 つの部署にまとめます。",
+    "namePlaceholder": "エンジニアリング",
+    "slugPlaceholder": "engineering",
+    "createdToast": "部署「{name}」を作成しました"
+  },
+  "teamsDialog": {
+    "description": "このワークスペースにチームを作成します。",
+    "namePlaceholder": "プラットフォーム",
+    "slugPlaceholder": "platform",
+    "departmentOptional": "部署(任意)",
+    "noneOption": "— なし —",
+    "createdToast": "チーム「{name}」を作成しました",
+    "open": "開く"
+  },
+  "auditPage": {
+    "filterPlaceholder": "アクションで絞り込み(例:invite.created)"
+  },
+  "usagePage": {
+    "noPermission": "この組織の使用量を表示する権限がありません。"
+  },
+  "invitesDialog": {
+    "description": "このリンクを送信してこのワークスペースにユーザーを招待します。",
+    "emailPlaceholder": "user@example.com",
+    "roleMember": "メンバー",
+    "roleTeamManager": "チームマネージャー",
+    "roleDeptManager": "部署マネージャー",
+    "roleOrgAdmin": "組織管理者",
+    "createInvite": "招待を作成",
+    "createdTitle": "招待を作成しました",
+    "createdDescription": "このリンクを {email} と共有してください。リンクは 7 日後に失効します。",
+    "emailDeliveryNote": "メール配信はまだ未対応です — リンクをコピーして手動で送信してください。",
+    "done": "完了",
+    "revoke": "取り消し",
+    "revokedToast": "招待を取り消しました"
   },
   "departments": {
     "subtitle": "部署はワークスペース内のチームをグループ化します。",

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { trpc } from "@/lib/trpc/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RequirePerm } from "@/components/RequirePerm";
@@ -22,6 +23,8 @@ export default function OrgUsagePage() {
   const orgId = params?.id as string;
   const [range, setRange] = useState<RangePreset>("30d");
   const { from, to } = useMemo(() => rangeToDates(range), [range]);
+  const t = useTranslations("usage");
+  const tPage = useTranslations("usagePage");
 
   const summaryQuery = trpc.usage.summary.useQuery({
     scope: { type: "org", orgId },
@@ -34,16 +37,16 @@ export default function OrgUsagePage() {
       action={{ type: "usage.read_org", orgId }}
       fallback={
         <Card className="shadow-card p-6 text-sm text-muted-foreground">
-          You do not have permission to view usage for this organization.
+          {tPage("noPermission")}
         </Card>
       }
     >
       <div className="space-y-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-2xl font-semibold tracking-tight">Usage</h2>
+            <h2 className="text-2xl font-semibold tracking-tight">{t("title")}</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Requests, token spend, and cost across the organization.
+              {t("subtitle")}
             </p>
           </div>
           <TimeRangePicker value={range} onChange={setRange} />
@@ -63,7 +66,7 @@ export default function OrgUsagePage() {
         <Card className="shadow-card">
           <CardHeader>
             <CardTitle className="text-sm font-medium">
-              Top models by cost
+              {t("topModels")}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -73,7 +76,7 @@ export default function OrgUsagePage() {
 
         <Card className="shadow-card">
           <CardHeader>
-            <CardTitle className="text-sm font-medium">Requests</CardTitle>
+            <CardTitle className="text-sm font-medium">{t("requestsTitle")}</CardTitle>
           </CardHeader>
           <CardContent>
             <UsageTable
