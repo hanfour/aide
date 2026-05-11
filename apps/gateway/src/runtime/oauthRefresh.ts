@@ -452,6 +452,7 @@ export async function persistRefresh(
       nonce: sealed.nonce,
       ciphertext: sealed.ciphertext,
       authTag: sealed.authTag,
+      cipherVersion: sealed.version,
       oauthExpiresAt: credential.expiresAt,
       rotatedAt: new Date(now()),
     })
@@ -719,6 +720,7 @@ export async function readCredential(
       nonce: credentialVault.nonce,
       ciphertext: credentialVault.ciphertext,
       authTag: credentialVault.authTag,
+      cipherVersion: credentialVault.cipherVersion,
     })
     .from(credentialVault)
     .where(eq(credentialVault.accountId, accountId))
@@ -737,6 +739,7 @@ export async function readCredential(
       ciphertext: row.ciphertext,
       authTag: row.authTag,
     },
+    version: row.cipherVersion as 1 | 2,
   });
   const parsed = JSON.parse(plaintext) as Record<string, unknown>;
   if (parsed.type !== "oauth") {
