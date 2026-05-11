@@ -19,23 +19,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # arm64 dropped from `web` and `api` images: QEMU cross-build hangs
-        # indefinitely (>40min) on the next-auth / Next.js standalone
-        # toolchains under emulation. Closes #98 (recurring v0.4.4/v0.4.5
-        # behaviour where the api job was the lone laggard while web/gateway
-        # finished in ~5min).
+        # arm64 dropped from every image: QEMU cross-build hangs
+        # indefinitely (>2h) on GitHub Actions runners. Closes #98 (api,
+        # v0.4.4/v0.4.5) and the v0.4.9 gateway hang (2h+ stuck on the
+        # gateway job while api/web completed in ~3min).
         #
-        # `gateway` keeps multi-arch — its dep tree is leaner (no
-        # next-auth, no Next.js standalone) and arm64 builds reliably in
-        # ~5min like the amd64 pass.
-        #
-        # arm64 hosts run the api/web tiers under amd64 emulation. Same
-        # workaround was already documented for web; api now joins.
+        # Earlier the workflow kept gateway multi-arch on the assumption
+        # its dep tree was lean enough for QEMU to handle. That stopped
+        # being true; the gateway image now hangs the same way api / web
+        # did. arm64 hosts run all three tiers under amd64 emulation,
+        # which is what mac-mini/h4 already do.
         include:
           - image: api
             platforms: linux/amd64
           - image: gateway
-            platforms: linux/amd64,linux/arm64
+            platforms: linux/amd64
           - image: web
             platforms: linux/amd64
     steps:
