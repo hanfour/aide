@@ -45,24 +45,37 @@ echo "==> Backup dir: $BACKUP_DIR"
 
 echo "==> Step 1/9: snapshot before changing anything"
 
-# Detect current DB name (rename-resilient: may already be 'caliber'
-# if we're re-running after a partial migration).
+# The postgres container was bootstrapped with POSTGRES_USER=aide, so
+# 'aide' IS the superuser — there is no 'postgres' role. Detect which
+# bootstrap superuser is currently active (rename-resilient: post-
+# rename the role is 'caliber').
+detect_superuser() {
+  for role in aide caliber; do
+    if docker compose -f docker/docker-compose.yml exec -T postgres \
+         psql -U "$role" -d postgres -tAc \
+         "SELECT 1;" >/dev/null 2>&1; then
+      echo "$role"
+      return
+    fi
+  done
+}
+
+CURRENT_USER="$(detect_superuser)"
+if [ -z "$CURRENT_USER" ]; then
+  echo "ERROR: cannot connect as 'aide' or 'caliber' to postgres. Is postgres up?"
+  exit 1
+fi
+echo "    detected current superuser: $CURRENT_USER"
+
 CURRENT_DB="$(docker compose -f docker/docker-compose.yml exec -T postgres \
-  psql -U postgres -tA -c \
+  psql -U "$CURRENT_USER" -d postgres -tAc \
   "SELECT datname FROM pg_database WHERE datname IN ('aide','caliber') LIMIT 1;" \
-  2>/dev/null | tr -d '[:space:]' || true)"
+  | tr -d '[:space:]')"
 if [ -z "$CURRENT_DB" ]; then
-  echo "ERROR: cannot find 'aide' or 'caliber' DB. Is postgres up?"
+  echo "ERROR: cannot find 'aide' or 'caliber' DB"
   exit 1
 fi
 echo "    detected current DB: $CURRENT_DB"
-
-# Detect current DB role.
-CURRENT_USER="$(docker compose -f docker/docker-compose.yml exec -T postgres \
-  psql -U postgres -tA -c \
-  "SELECT rolname FROM pg_roles WHERE rolname IN ('aide','caliber') LIMIT 1;" \
-  | tr -d '[:space:]')"
-echo "    detected current role: $CURRENT_USER"
 
 if [ "$CURRENT_DB" = "aide" ]; then
   docker compose -f docker/docker-compose.yml exec -T postgres \
@@ -92,7 +105,21 @@ docker compose -f docker/docker-compose.yml --profile gateway stop gateway web a
 # ────────────────────────────────────────────────────────────────────
 
 echo "==> Step 3/9: rename Postgres DB + role"
-docker compose -f docker/docker-compose.yml exec -T postgres psql -U postgres <<'SQL'
+
+# You cannot ALTER ROLE on the role you're currently connected as.
+# 'aide'/'caliber' IS the only superuser, so we bootstrap a temporary
+# superuser, reconnect as it, do the rename, then drop the temp role
+# from the renamed bootstrap account.
+if [ "$CURRENT_DB" = "aide" ] || [ "$CURRENT_USER" = "aide" ]; then
+  TMP_PWD="$(openssl rand -hex 16)"
+  docker compose -f docker/docker-compose.yml exec -T postgres \
+    psql -U "$CURRENT_USER" -d postgres -v ON_ERROR_STOP=1 <<SQL
+CREATE ROLE __caliber_migration WITH LOGIN SUPERUSER PASSWORD '$TMP_PWD';
+SQL
+
+  docker compose -f docker/docker-compose.yml exec -T \
+      -e PGPASSWORD="$TMP_PWD" postgres \
+      psql -U __caliber_migration -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 SELECT pg_terminate_backend(pid) FROM pg_stat_activity
  WHERE datname IN ('aide','caliber') AND pid <> pg_backend_pid();
 DO $$BEGIN
@@ -104,7 +131,14 @@ DO $$BEGIN
   END IF;
 END$$;
 SQL
-echo "    DB + role renamed (or already-caliber, no-op)"
+
+  docker compose -f docker/docker-compose.yml exec -T postgres \
+    psql -U caliber -d caliber -v ON_ERROR_STOP=1 \
+    -c "DROP ROLE __caliber_migration;"
+  echo "    DB + role renamed (via temp superuser)"
+else
+  echo "    DB + role already 'caliber'; nothing to rename"
+fi
 
 # ────────────────────────────────────────────────────────────────────
 # 4. Flush Redis (queues + caches rebuild on first use)
@@ -212,7 +246,11 @@ echo "Rollback (if needed):"
 echo "  1. docker compose down"
 echo "  2. cp $BACKUP_DIR/.env.before docker/.env"
 echo "  3. docker compose up -d postgres redis"
-echo "  4. docker compose exec postgres psql -U postgres -c 'ALTER DATABASE caliber RENAME TO aide; ALTER ROLE caliber RENAME TO aide;'"
+echo "  4. # Rollback DB rename (uses temp superuser since caliber owns itself):"
+echo "     docker compose exec postgres psql -U caliber -d postgres -c \"CREATE ROLE __rollback WITH LOGIN SUPERUSER PASSWORD 'tmp';\""
+echo "     docker compose exec -e PGPASSWORD=tmp postgres psql -U __rollback -d postgres -c \\"
+echo "       \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='caliber' AND pid <> pg_backend_pid(); ALTER DATABASE caliber RENAME TO aide; ALTER ROLE caliber RENAME TO aide;\""
+echo "     docker compose exec postgres psql -U aide -d aide -c \"DROP ROLE __rollback;\""
 echo "  5. mv ~/.caliber ~/.aide"
 echo "  6. bash scripts/keychain-helper/install.sh --uninstall"
 echo "  7. cp $BACKUP_DIR/$OLD_LABEL.plist ~/Library/LaunchAgents/ && launchctl load \$_"
