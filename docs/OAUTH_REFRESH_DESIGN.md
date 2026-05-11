@@ -5,7 +5,7 @@
 
 ## Problem statement
 
-caliber gateway runs in a Docker container on a host machine. The same
+Caliber gateway runs in a Docker container on a host machine. The same
 host typically also runs the anthropic Claude Code desktop app or CLI,
 authenticated against the same Claude Max subscription. Both processes
 share a single OAuth grant that lives in macOS Keychain under the
@@ -19,9 +19,9 @@ the previous refresh_token immediately.
 
 This produces a hard race:
 
-1. caliber reads the bundle from Keychain at onboard time and stores it
+1. Caliber reads the bundle from Keychain at onboard time and stores it
    in `credential_vault` (encrypted with `CREDENTIAL_ENCRYPTION_KEY`).
-2. caliber's background cron + inline refresh path (in
+2. Caliber's background cron + inline refresh path (in
    `apps/gateway/src/runtime/oauthRefresh.ts` and
    `apps/gateway/src/workers/oauthRefreshCron.ts`) refresh
    independently of Keychain.
@@ -49,7 +49,7 @@ self-hosted use. Neither is safe to ship to other operators.
 - Anthropic OAuth refresh tokens **rotate on every use** — not
   configurable.
 - Anthropic OAuth refresh window is short (~hours, not days).
-- caliber runs in Docker, not on the host directly — direct Keychain
+- Caliber runs in Docker, not on the host directly — direct Keychain
   write requires either a host-side helper, a volume mount of an
   exported keychain item, or some IPC bridge.
 - macOS Keychain is macOS-only. Linux operators use libsecret or
@@ -64,7 +64,7 @@ self-hosted use. Neither is safe to ship to other operators.
 
 ## Options
 
-### A. caliber refreshes, writes new bundle back to Keychain
+### A. Caliber refreshes, writes new bundle back to Keychain
 
 When caliber successfully refreshes, persist the new bundle to **both**
 DB and Keychain. Claude Code app reads Keychain on every start and
@@ -76,7 +76,7 @@ will pick up the rotated token transparently.
 - Zero behavior change for Claude Code app on host.
 
 **Cons**
-- caliber runs in Docker; writing to host Keychain requires a host-side
+- Caliber runs in Docker; writing to host Keychain requires a host-side
   helper (e.g. unix socket + small daemon doing `security
   add-generic-password -U` on caliber's behalf), OR running caliber outside
   Docker on the host.
@@ -157,16 +157,16 @@ shared-grant accounts.
 
 ### D. Keychain as the only source of truth (no DB cache)
 
-caliber reads the bundle from Keychain on every request via a host
+Caliber reads the bundle from Keychain on every request via a host
 volume mount + a tiny FUSE-style read helper, OR via a host-side
-unix-socket daemon. caliber never stores the bundle in `credential_vault`
+unix-socket daemon. Caliber never stores the bundle in `credential_vault`
 for type=keychain; the column would be a `path` reference rather than
 encrypted ciphertext.
 
 **Pros**
-- caliber and Claude Code app are guaranteed to see the same token —
+- Caliber and Claude Code app are guaranteed to see the same token —
   no possible race.
-- caliber doesn't need to refresh at all (only reads).
+- Caliber doesn't need to refresh at all (only reads).
 - Tokens never get persisted unencrypted in caliber's DB.
 
 **Cons**
