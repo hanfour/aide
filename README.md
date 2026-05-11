@@ -4,8 +4,6 @@
 
 **精準衡量你的 AI 工程力。** 自架的 gateway / 稽核 / 評核平台，讓團隊清楚知道 AI 助理到底在做什麼、做得多好。
 
-> Original codename: `aide`. The GHCR image names (`ghcr.io/hanfour/aide-*`), Docker build context, the Postgres DB / user `aide`, the `aide-keychain-helper` launchd job, and the Redis key prefix `aide:gw:` still use the original codename. Phase 3 of the rebrand renames those infra-level identifiers behind a maintenance window.
-
 ---
 
 ## Why / 為什麼需要這個工具
