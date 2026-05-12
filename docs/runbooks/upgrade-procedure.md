@@ -7,7 +7,7 @@ procedural (not an alert; ran every release)
 ## When to use
 
 - A new `aide` release is published on
-  [GitHub Releases](https://github.com/hanfour/aide/releases) and you
+  [GitHub Releases](https://github.com/hanfour/caliber/releases) and you
   want to roll forward.
 - You're unsure whether the release contains breaking schema changes
   or new required env vars.

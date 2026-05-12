@@ -48,7 +48,7 @@ your Claude Max subscription handles the inference.
 ### 1.1 Clone the repo
 
 ```bash
-git clone https://github.com/hanfour/aide.git caliber
+git clone https://github.com/hanfour/caliber.git caliber
 cd caliber
 ```
 
@@ -130,7 +130,7 @@ as `super_admin`. Otherwise you'll get an "access denied" page.
 
 ### 1.5 Apply the issue-#71 workaround (necessary for admin onboarding)
 
-Until [#71](https://github.com/hanfour/aide/issues/71) is fixed
+Until [#71](https://github.com/hanfour/caliber/issues/71) is fixed
 upstream, the api service needs `ENABLE_GATEWAY=true` plus four
 gateway-related env vars whenever you intend to add upstream accounts
 via the admin UI. Edit `docker/docker-compose.yml`, find the `api:`
@@ -247,14 +247,14 @@ You'll see something like:
 `claudeAiOauth`, with `expiresAt` as a unix-millisecond integer. The
 caliber form needs flat snake_case + ISO 8601 expires_at. The Python
 one-liner does both jobs. (See
-[#73](https://github.com/hanfour/aide/issues/73) for why this is
+[#73](https://github.com/hanfour/caliber/issues/73) for why this is
 necessary today.)
 
 ### 2.3 Find your org's UUID
 
 The admin form passes `orgId` as a UUID, but dashboard URLs use the
 slug (`local`). Today they don't auto-translate — see
-[#70](https://github.com/hanfour/aide/issues/70). Pull the UUID
+[#70](https://github.com/hanfour/caliber/issues/70). Pull the UUID
 manually:
 
 ```bash
@@ -279,7 +279,7 @@ this UUID handy.
    - **Credentials**: paste the JSON from `/tmp/caliber-anthropic-oauth.json`
 3. Click **Create account**.
 
-> **OAuth-radio gotcha** ([#72](https://github.com/hanfour/aide/issues/72)):
+> **OAuth-radio gotcha** ([#72](https://github.com/hanfour/caliber/issues/72)):
 > the OAuth radio sometimes visually toggles but the form state stays on
 > `api_key`, silently saving with the wrong type. After submit, look at
 > the row's **Type** column — if it shows `API key` instead of `OAuth`,
@@ -553,7 +553,7 @@ org, OAuth account, and `ak_…` keys all stay intact — no re-onboarding.
 |---|---|---|
 | `Invalid uuid` toast on **Accounts → New** | URL uses slug not UUID | Use the UUID from §2.3 in the URL |
 | `NOT_FOUND` toast on Accounts CRUD | api missing `ENABLE_GATEWAY=true` | Apply the §1.5 workaround, recreate api: `docker compose up -d --force-recreate api` |
-| Created account shows `Type: API key` despite picking OAuth | Issue [#72](https://github.com/hanfour/aide/issues/72) — radio click flake | Delete and recreate; force-toggle with the JS one-liner in §2.4's gotcha |
+| Created account shows `Type: API key` despite picking OAuth | Issue [#72](https://github.com/hanfour/caliber/issues/72) — radio click flake | Delete and recreate; force-toggle with the JS one-liner in §2.4's gotcha |
 
 ### Gateway request issues
 
@@ -643,10 +643,10 @@ fixes filed but not yet shipped:
 
 | Issue | Impact | Workaround |
 |---|---|---|
-| [#70](https://github.com/hanfour/aide/issues/70) — slug→UUID mismatch | `Invalid uuid` on admin form submits | Use UUID URL (§2.3) |
-| [#71](https://github.com/hanfour/aide/issues/71) — api ENABLE_GATEWAY missing | `NOT_FOUND` on accounts CRUD | compose env additions (§1.5) |
-| [#72](https://github.com/hanfour/aide/issues/72) — OAuth radio click flake | Account silently saved as wrong type | Verify Type column; force JS click |
-| [#73](https://github.com/hanfour/aide/issues/73) — `expires_at` ISO required | Gateway 503 if you paste unix-ms | Use the §2.2 Python transform |
+| [#70](https://github.com/hanfour/caliber/issues/70) — slug→UUID mismatch | `Invalid uuid` on admin form submits | Use UUID URL (§2.3) |
+| [#71](https://github.com/hanfour/caliber/issues/71) — api ENABLE_GATEWAY missing | `NOT_FOUND` on accounts CRUD | compose env additions (§1.5) |
+| [#72](https://github.com/hanfour/caliber/issues/72) — OAuth radio click flake | Account silently saved as wrong type | Verify Type column; force JS click |
+| [#73](https://github.com/hanfour/caliber/issues/73) — `expires_at` ISO required | Gateway 503 if you paste unix-ms | Use the §2.2 Python transform |
 
 When these land in v0.4.3+, the corresponding workarounds in this doc
 become unnecessary. Until then, follow the workaround inline at each

@@ -128,9 +128,9 @@ Images are published on every `v*` tag to:
 
 | Image | amd64 | arm64 |
 |-------|-------|-------|
-| `ghcr.io/hanfour/aide-api` | ✅ | ✅ |
-| `ghcr.io/hanfour/aide-gateway` (new in v0.3.0) | ✅ | ✅ |
-| `ghcr.io/hanfour/aide-web` | ✅ | ❌ (dropped in v0.5.0; QEMU cross-build was unstable) |
+| `ghcr.io/hanfour/caliber-api` | ✅ | ✅ |
+| `ghcr.io/hanfour/caliber-gateway` (new in v0.3.0) | ✅ | ✅ |
+| `ghcr.io/hanfour/caliber-web` | ✅ | ❌ (dropped in v0.5.0; QEMU cross-build was unstable) |
 
 Operator guides:
 
@@ -218,7 +218,7 @@ npm install -g @hanfour.huang/caliber@latest
 ### Development mode / 開發模式
 
 ```bash
-git clone https://github.com/hanfour/aide.git ~/aide
+git clone https://github.com/hanfour/caliber.git ~/aide
 cd ~/aide
 npm install
 npx tsx src/cli.ts --help
