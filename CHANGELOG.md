@@ -3,7 +3,7 @@
 All notable changes to aide are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Platform mode
 releases are tagged `vX.Y.Z`; each tag publishes multi-arch images to
-`ghcr.io/hanfour/aide-{api,web,gateway}`.
+`ghcr.io/hanfour/caliber-{api,web,gateway}`.
 
 ## Unreleased — pending v0.4.3
 
@@ -108,7 +108,7 @@ rollback (drizzle-kit doesn't generate down migrations).
 
 ### Breaking changes
 
-- **Web Docker image drops `linux/arm64`** (`ghcr.io/hanfour/aide-web` is
+- **Web Docker image drops `linux/arm64`** (`ghcr.io/hanfour/caliber-web` is
   now amd64-only). The QEMU-based cross-build was unstable. `aide-api`
   and `aide-gateway` continue to publish both architectures. Self-build
   the web image for arm64 with
@@ -300,7 +300,7 @@ unless they explicitly want the refreshed docs.
 
 Self-hostable web platform: Next.js UI + Fastify API, OAuth sign-in,
 org-scoped RBAC, invites, audit log. First images published to
-`ghcr.io/hanfour/aide-{api,web}`.
+`ghcr.io/hanfour/caliber-{api,web}`.
 
 ## v0.1.0 — CLI initial release
 

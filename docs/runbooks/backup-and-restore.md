@@ -147,13 +147,13 @@ You need:
 1. The latest Postgres backup file.
 2. The `.env` file (or its content from your secret manager).
 3. The `docker-compose.yml` and `.env.example` from
-   [hanfour/aide](https://github.com/hanfour/aide) at the right
+   [hanfour/caliber](https://github.com/hanfour/caliber) at the right
    `VERSION` tag.
 
 Then:
 
 ```sh
-git clone https://github.com/hanfour/aide.git /opt/caliber
+git clone https://github.com/hanfour/caliber.git /opt/caliber
 cd /opt/caliber/docker
 # Drop in your saved .env (with VERSION pinned to the backup era).
 cp /secure/caliber.env .env

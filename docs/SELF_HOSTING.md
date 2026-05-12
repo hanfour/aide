@@ -45,7 +45,7 @@ TLS termination. The compose stack itself only exposes web on port 3000.
 ## 2. Grab the compose files
 
 ```sh
-git clone https://github.com/hanfour/aide.git caliber
+git clone https://github.com/hanfour/caliber.git caliber
 cd caliber/docker
 cp .env.example .env
 ```
@@ -54,7 +54,7 @@ Then edit `.env` and fill in:
 
 | Var | Meaning |
 |---|---|
-| `VERSION` | The image tag to pull (e.g. `v0.2.0`). See [releases](https://github.com/hanfour/aide/releases). |
+| `VERSION` | The image tag to pull (e.g. `v0.2.0`). See [releases](https://github.com/hanfour/caliber/releases). |
 | `DB_USER` / `DB_PASSWORD` / `DB_NAME` | Postgres credentials (stay internal to the compose network). |
 | `AUTH_SECRET` | **≥32 bytes** of randomness. Generate with `openssl rand -base64 48`. |
 | `NEXTAUTH_URL` | Public URL users sign in from. Must match the OAuth redirect host. |
@@ -134,7 +134,7 @@ full operator + user guide, see [`GATEWAY.md`](./GATEWAY.md).
 - **`gateway`** service — a Fastify server on port 3002 gated behind the
   `gateway` docker-compose profile. Not started unless you pass
   `--profile gateway`.
-- Public image: `ghcr.io/hanfour/aide-gateway:${VERSION}` (multi-arch
+- Public image: `ghcr.io/hanfour/caliber-gateway:${VERSION}` (multi-arch
   `linux/amd64,linux/arm64`, published on every `v*` tag).
 
 ### 6.2 New env vars
@@ -356,4 +356,4 @@ docker compose down --volumes
 
 - Production compose: [`docker/docker-compose.yml`](../docker/docker-compose.yml)
 - Env schema: [`packages/config/src/env.ts`](../packages/config/src/env.ts)
-- Releases / image tags: <https://github.com/hanfour/aide/releases>
+- Releases / image tags: <https://github.com/hanfour/caliber/releases>

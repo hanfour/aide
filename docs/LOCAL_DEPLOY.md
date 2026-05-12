@@ -42,7 +42,7 @@ no tunneling required.
 ### 1. Clone + configure
 
 ```bash
-git clone https://github.com/hanfour/aide.git
+git clone https://github.com/hanfour/caliber.git
 cd aide/docker
 cp .env.example .env
 ```
@@ -233,7 +233,7 @@ internal users (not your laptop). Build on Mode 2 first.
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER
 newgrp docker
-git clone https://github.com/hanfour/aide.git /opt/aide
+git clone https://github.com/hanfour/caliber.git /opt/aide
 cd /opt/aide/docker
 ```
 

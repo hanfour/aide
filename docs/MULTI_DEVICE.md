@@ -66,11 +66,11 @@ print(json.dumps(out))
 | Keychain stores | Caliber form wants | Reason |
 |---|---|---|
 | `claudeAiOauth.accessToken` (camelCase, nested) | `access_token` (snake_case, flat) | Form schema |
-| `expiresAt: 1777976972522` (unix-ms) | `"2026-05-05T10:29:32.522Z"` (ISO) | Gateway runtime requires ISO — see [#73](https://github.com/hanfour/aide/issues/73) |
+| `expiresAt: 1777976972522` (unix-ms) | `"2026-05-05T10:29:32.522Z"` (ISO) | Gateway runtime requires ISO — see [#73](https://github.com/hanfour/caliber/issues/73) |
 
 Operator confusion on the `expires_at` format alone burns ~10 minutes
 the first time; this section exists so the next person doesn't repeat
-that. Until [#73](https://github.com/hanfour/aide/issues/73) lands, the
+that. Until [#73](https://github.com/hanfour/caliber/issues/73) lands, the
 ISO transform above is mandatory.
 
 ### 1.2 Onboard via the admin UI
@@ -84,7 +84,7 @@ In the dashboard:
 
 **Known UI gotcha**: the OAuth radio button can occasionally fail to
 register a click (it visually flips but the form state stays on
-`api_key`) — see [#72](https://github.com/hanfour/aide/issues/72). If
+`api_key`) — see [#72](https://github.com/hanfour/caliber/issues/72). If
 the saved row shows `Type: API key` after submit, delete it and re-create
 making sure the OAuth radio is checked before clicking Submit.
 
@@ -317,10 +317,10 @@ v0.4.2 — fix candidates filed but not yet shipped:
 
 | Issue | Symptom | Workaround |
 |---|---|---|
-| [#70](https://github.com/hanfour/aide/issues/70) | `Invalid uuid` on **Accounts → New** submit | Navigate to `/dashboard/organizations/<UUID>/accounts/new` (UUID, not slug) — pull the UUID from `SELECT id FROM organizations WHERE slug='<your-slug>'` |
-| [#71](https://github.com/hanfour/aide/issues/71) | `NOT_FOUND` on accounts CRUD when running `--profile gateway` | Add `ENABLE_GATEWAY: "true"` + the four gateway env vars to the api service in `docker-compose.yml` until the upstream fix lands |
-| [#72](https://github.com/hanfour/aide/issues/72) | Account saved with `Type: API key` despite picking OAuth | Delete and recreate; re-verify OAuth radio is selected immediately before clicking Submit |
-| [#73](https://github.com/hanfour/aide/issues/73) | Gateway `503 all_upstreams_failed` after creating an OAuth account | The `expires_at` field must be ISO 8601, not a unix timestamp — use the transform in §1.1 |
+| [#70](https://github.com/hanfour/caliber/issues/70) | `Invalid uuid` on **Accounts → New** submit | Navigate to `/dashboard/organizations/<UUID>/accounts/new` (UUID, not slug) — pull the UUID from `SELECT id FROM organizations WHERE slug='<your-slug>'` |
+| [#71](https://github.com/hanfour/caliber/issues/71) | `NOT_FOUND` on accounts CRUD when running `--profile gateway` | Add `ENABLE_GATEWAY: "true"` + the four gateway env vars to the api service in `docker-compose.yml` until the upstream fix lands |
+| [#72](https://github.com/hanfour/caliber/issues/72) | Account saved with `Type: API key` despite picking OAuth | Delete and recreate; re-verify OAuth radio is selected immediately before clicking Submit |
+| [#73](https://github.com/hanfour/caliber/issues/73) | Gateway `503 all_upstreams_failed` after creating an OAuth account | The `expires_at` field must be ISO 8601, not a unix timestamp — use the transform in §1.1 |
 
 If any new pitfall surfaces that isn't covered above, file an issue
 referencing this doc so the next operator's path is shorter.
