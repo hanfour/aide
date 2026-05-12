@@ -85,6 +85,13 @@
       "when": 1777377580612,
       "tag": "0011_empty_dust",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1778545163505,
+      "tag": "0012_cipher_version",
+      "breakpoints": true
     }
   ]
 }
