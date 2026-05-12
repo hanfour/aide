@@ -18,7 +18,7 @@
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "description": "Evaluator LLM call rate by result. gw_eval_job_completed_total is not emitted; we proxy via gw_eval_llm_called_total{result=\"ok\"} (success) vs gw_eval_llm_failed_total (failure).",
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
@@ -26,13 +26,13 @@
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "sum(rate(gw_eval_llm_called_total{result=\"ok\"}[5m]))",
           "legendFormat": "completed",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "sum(rate(gw_eval_llm_failed_total[5m]))",
           "legendFormat": "failed",
           "refId": "B"
@@ -42,7 +42,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "description": "Parse failures and retries. gw_eval_llm_parse_failed_total fires when the LLM JSON response does not validate.",
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
@@ -50,13 +50,13 @@
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "sum(rate(gw_eval_llm_parse_failed_total[5m]))",
           "legendFormat": "parse_failed",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "sum by (reason) (rate(gw_eval_llm_failed_total[5m]))",
           "legendFormat": "failed:{{reason}}",
           "refId": "B"
@@ -74,7 +74,7 @@
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "description": "Evaluator BullMQ DLQ depth (failed after all retries). Gauge.",
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
@@ -82,7 +82,7 @@
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "gw_eval_dlq_count",
           "legendFormat": "dlq",
           "refId": "A"
@@ -92,7 +92,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "description": "Cumulative LLM cost (USD) across all evaluator deep-analysis calls.",
       "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
@@ -100,7 +100,7 @@
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "increase(gw_eval_llm_cost_usd[1h])",
           "legendFormat": "USD/hour",
           "refId": "A"
@@ -118,7 +118,7 @@
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "description": "Facet extraction by result. Metric is registered but not yet emitted; will populate when emission is wired in Phase 2.",
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
@@ -126,7 +126,7 @@
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "sum by (result) (rate(gw_facet_extract_total{org_id=~\"$org_id\"}[5m]))",
           "legendFormat": "{{result}}",
           "refId": "A"
@@ -136,7 +136,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "description": "Facet extraction latency heatmap. Metric is registered but not yet emitted; will populate when emission is wired in Phase 2.",
       "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
@@ -144,7 +144,7 @@
       "options": { "calculate": false, "yAxis": { "unit": "ms" } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "sum by (le) (rate(gw_facet_extract_duration_ms_bucket{org_id=~\"$org_id\"}[5m]))",
           "format": "heatmap",
           "legendFormat": "{{le}}",
@@ -155,7 +155,7 @@
       "type": "heatmap"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "description": "Facet cache hit ratio over the last hour. Metric is registered but not yet emitted; will populate when emission is wired in Phase 2.",
       "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1, "min": 0 }, "overrides": [] },
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 27 },
@@ -163,8 +163,8 @@
       "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(gw_facet_cache_hit_total[1h])) / (sum(rate(gw_facet_cache_hit_total[1h])) + sum(rate(gw_facet_extract_total[1h])))",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum(rate(gw_facet_cache_hit_total{org_id=~\"$org_id\"}[1h])) / (sum(rate(gw_facet_cache_hit_total{org_id=~\"$org_id\"}[1h])) + sum(rate(gw_facet_extract_total{org_id=~\"$org_id\"}[1h])))",
           "legendFormat": "hit rate",
           "refId": "A"
         }
@@ -181,7 +181,7 @@
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "description": "30-day month-to-date LLM spend per org from the cost ledger.",
       "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
@@ -189,7 +189,7 @@
       "options": { "displayMode": "gradient", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] }, "showUnfilled": true },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "sum by (org_id) (increase(gw_llm_cost_usd_total[30d]))",
           "legendFormat": "{{org_id}}",
           "refId": "A"
@@ -199,7 +199,7 @@
       "type": "bargauge"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "description": "Top 5 spending orgs over the last 30 days.",
       "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
@@ -207,7 +207,7 @@
       "options": { "showHeader": true },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "topk(5, sum by (org_id) (increase(gw_llm_cost_usd_total[30d])))",
           "format": "table",
           "instant": true,
@@ -219,7 +219,7 @@
       "type": "table"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "description": "Rate of soft budget warnings (org crossed 80% of monthly budget).",
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 44 },
@@ -227,7 +227,7 @@
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "sum(rate(gw_llm_budget_warn_total[15m]))",
           "legendFormat": "warn rate",
           "refId": "A"
@@ -237,7 +237,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "description": "Hard budget breaches by overage behavior (degrade vs halt).",
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 44 },
@@ -245,7 +245,7 @@
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "sum by (behavior) (rate(gw_llm_budget_exceeded_total[15m]))",
           "legendFormat": "{{behavior}}",
           "refId": "A"
@@ -258,13 +258,26 @@
   "refresh": "1m",
   "schemaVersion": 39,
   "style": "dark",
-  "tags": ["aide", "evaluator", "plan-4c"],
+  "tags": ["caliber", "gateway", "evaluator"],
+  "folderUid": "caliber",
+  "folderTitle": "Caliber",
   "templating": {
     "list": [
       {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "selected": false, "text": "default", "value": "default" },
+        "hide": 0,
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false
+      },
+      {
         "name": "org_id",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
         "query": "label_values(gw_llm_cost_usd_total, org_id)",
         "includeAll": true,
         "allValue": ".*",
@@ -278,8 +291,8 @@
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
   "timezone": "utc",
-  "title": "AIDE — Evaluator",
-  "uid": "aide-evaluator",
-  "version": 1,
+  "title": "Caliber — Evaluator",
+  "uid": "caliber-evaluator",
+  "version": 2,
   "weekStart": ""
 }
