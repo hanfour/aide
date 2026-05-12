@@ -224,6 +224,9 @@ importers:
       '@caliber/evaluator':
         specifier: workspace:*
         version: link:../../packages/evaluator
+      '@caliber/i18n-validation':
+        specifier: workspace:*
+        version: link:../../packages/i18n-validation
       '@hookform/resolvers':
         specifier: ^5.2.2
         version: 5.2.2(react-hook-form@7.72.1(react@19.2.5))
