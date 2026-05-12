@@ -66,27 +66,16 @@ The `default` value uses Grafana's built-in alias that resolves to whichever Pro
 
 6. **Panel datasource refs**: every `"datasource": { "type": "prometheus", "uid": "prometheus" }` (~ 30 occurrences across 3 files) → `"datasource": { "type": "prometheus", "uid": "${datasource}" }`.
 
-7. **`org_id` template variable** (add to `body-capture.json` and `gdpr.json`; `evaluator.json` already has it). Append to `templating.list[]`:
+7. **`org_id` template variable** — only on `evaluator.json` (where it already exists). Verified against `apps/gateway/src/plugins/metrics.ts`:
+   - `gw_llm_cost_usd_total`, `gw_facet_extract_total`, `gw_facet_extract_duration_ms`, `gw_facet_cache_hit_total` carry `org_id`
+   - `gw_body_*`, `gw_eval_llm_{called,cost_usd,failed,parse_failed}_total`, `gw_eval_dlq_count`, `gw_gdpr_*` do NOT carry `org_id`
 
-```json
-{
-  "name": "org_id",
-  "label": "Org ID",
-  "type": "query",
-  "datasource": { "type": "prometheus", "uid": "${datasource}" },
-  "query": "label_values(<seed_metric>, org_id)",
-  "includeAll": true,
-  "allValue": ".*",
-  "current": { "text": "All", "value": "$__all" },
-  "multi": true,
-  "refresh": 2,
-  "sort": 1
-}
-```
+   Therefore the spec's earlier proposal to add `org_id` to `body-capture.json` and `gdpr.json` is dropped — there is no metric in those dashboards that supports the filter. Adding the variable would render a non-functional empty dropdown. If a future change adds `org_id` to gateway / GDPR metrics, the variable can be added then.
 
-Where `<seed_metric>` is one metric in the dashboard that is known to carry the `org_id` label — for `body-capture` use `gw_body_purge_lag_hours`; for `gdpr` use `gw_gdpr_failures_total`. At implementation time grep the gateway metrics module to confirm the chosen seed carries `org_id`; if not, pick another metric in the same dashboard that does.
-
-8. **Panel PromQL `{org_id=~"$org_id"}` filter**: applied per panel only to metrics that emit the `org_id` label. Metrics without that label (e.g. `gw_body_purge_lag_hours` if it turns out to be a global gauge) are NOT filtered — Grafana's `=~"$org_id"` against a metric without the label would yield no series. Implementation will check each metric's label set before deciding.
+8. **Panel PromQL `{org_id=~"$org_id"}` filter**: applied only to panels in `caliber-evaluator.json` whose metric carries `org_id`. Specifically:
+   - "Facet extraction by result", "Facet duration heatmap", "Facet cache hit rate" → add filter
+   - "LLM spend this month by org", "Top 5 spenders (30d)" → already filter via `sum by (org_id) (...)`; preserve existing exprs
+   - "Job rate completed/failed", "Parse failures", "Failed by reason", "DLQ depth", "Evaluator LLM cost (USD/hour)" → no `org_id` label on those metrics, do NOT add filter
 
 9. **`version` field**: bump from `1` to `2` on each rewritten file.
 
