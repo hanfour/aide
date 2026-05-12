@@ -244,6 +244,7 @@ async function seedAccount(
     nonce: sealed.nonce,
     ciphertext: sealed.ciphertext,
     authTag: sealed.authTag,
+    cipherVersion: sealed.version,
   });
 
   if (groupId) {
