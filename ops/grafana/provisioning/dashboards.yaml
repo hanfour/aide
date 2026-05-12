@@ -1,0 +1,19 @@
+# Grafana dashboard provisioning manifest for the Caliber Observability Pack.
+# Mount this at /etc/grafana/provisioning/dashboards/caliber.yaml and the JSON
+# dashboards at /etc/grafana/provisioning/dashboards/caliber/.
+# See ../README.md for full setup.
+
+apiVersion: 1
+
+providers:
+  - name: caliber
+    orgId: 1
+    folder: Caliber
+    folderUid: caliber
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/caliber
+      foldersFromFilesStructure: false
