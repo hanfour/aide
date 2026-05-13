@@ -163,10 +163,10 @@ export function createErrorMap(messages: ValidationMessages): ZodErrorMap {
         };
       }
       case z.ZodIssueCode.custom: {
-        // PR A back-compat: keep the literal message Zod was given so
-        // inline `.refine(..., { message: "foo" })` still surfaces "foo".
-        // PR B extends this branch to look up keys with the
-        // `"validation."` prefix.
+        const raw = issue.message ?? ctx.defaultError;
+        if (typeof raw === "string" && raw.startsWith("validation.")) {
+          return { message: lookup(messages, raw) };
+        }
         return { message: ctx.defaultError };
       }
       default:

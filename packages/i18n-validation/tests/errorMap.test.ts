@@ -195,4 +195,38 @@ describe("createErrorMap", () => {
       expect(out.message).toBe("請輸入有效的電子郵件地址");
     });
   });
+
+  describe("custom code with validation.* prefix", () => {
+    it("looks up the key when message starts with 'validation.'", async () => {
+      const messages = await loadValidationMessages("en");
+      // Inject a key for the test (production keys populated in Task B3+).
+      (messages.validation.custom as Record<string, Record<string, string>>).demo = {
+        helloWorld: "hello world",
+      };
+      const map = createErrorMap(messages);
+      const out = map(
+        {
+          code: z.ZodIssueCode.custom,
+          path: ["x"],
+          message: "validation.custom.demo.helloWorld",
+        },
+        { defaultError: "validation.custom.demo.helloWorld", data: undefined },
+      );
+      expect(out.message).toBe("hello world");
+    });
+
+    it("falls back to ctx.defaultError when prefix doesn't match", async () => {
+      const messages = await loadValidationMessages("en");
+      const map = createErrorMap(messages);
+      const out = map(
+        {
+          code: z.ZodIssueCode.custom,
+          path: ["x"],
+          message: "literal english",
+        },
+        { defaultError: "literal english", data: undefined },
+      );
+      expect(out.message).toBe("literal english");
+    });
+  });
 });
