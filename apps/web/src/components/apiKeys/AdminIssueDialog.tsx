@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { useTranslatedZodResolver } from "@/lib/i18n/useTranslatedZodResolver";
 import { z } from "zod";
 import { AlertTriangle, Copy } from "lucide-react";
 import { toast } from "sonner";
@@ -71,7 +71,7 @@ export function AdminIssueDialog({
     reset,
     formState: { errors },
   } = useForm<FormValues>({
-    resolver: zodResolver(schema),
+    resolver: useTranslatedZodResolver(schema),
     defaultValues: { name: "", teamId: "" },
   });
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { useTranslatedZodResolver } from "@/lib/i18n/useTranslatedZodResolver";
 import { z } from "zod";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
@@ -78,7 +78,7 @@ export function AccountGroupEditForm({ orgId, group }: Props) {
     formState: { errors, isSubmitting, isDirty },
     reset,
   } = useForm<FormValues>({
-    resolver: zodResolver(schema),
+    resolver: useTranslatedZodResolver(schema),
     defaultValues: groupToValues(group),
   });
 

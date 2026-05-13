@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { useTranslatedZodResolver } from "@/lib/i18n/useTranslatedZodResolver";
 import { z } from "zod";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
@@ -64,7 +64,7 @@ export function AccountGroupCreateForm({ orgId }: Props) {
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
-    resolver: zodResolver(schema),
+    resolver: useTranslatedZodResolver(schema),
     defaultValues: {
       platform: "openai",
       rateMultiplier: 1,
