@@ -9,6 +9,7 @@ import {
   setGlobalLocaleErrorMap,
   getValidationMessagesSync,
   translateValidationKey,
+  DEFAULT_LOCALE,
   type Locale,
 } from "@caliber/i18n-validation/server";
 import { healthRoutes } from "./rest/health.js";
@@ -152,7 +153,7 @@ export async function buildServer() {
             };
             ctx?: { locale?: Locale } | undefined;
           }) => {
-            const locale = ctx?.locale ?? "en";
+            const locale = ctx?.locale ?? DEFAULT_LOCALE;
             const messages = getValidationMessagesSync(locale);
             if (!messages) return shape;
 

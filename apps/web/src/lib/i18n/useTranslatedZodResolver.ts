@@ -24,6 +24,12 @@ import type { Resolver } from "react-hook-form";
  * Until the messages JSON loads, the wrapper short-circuits to the bare
  * zodResolver (initial render shows raw keys for ~1 paint — acceptable
  * transitional state mirroring the ValidationErrorMapProvider design).
+ *
+ * Performance: the wrapped resolver is memoised against `[schema, messages]`.
+ * If callers construct the Zod schema inline on each render (i.e. the schema
+ * reference changes every render), the inner `zodResolver(schema)` rebuilds
+ * each time — same overhead as bare `zodResolver(schema)` would have. For
+ * best performance, memoise the schema at module scope or via `useMemo`.
  */
 export function useTranslatedZodResolver<TSchema extends z.ZodTypeAny>(
   schema: TSchema,

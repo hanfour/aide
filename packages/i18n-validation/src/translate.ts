@@ -12,6 +12,13 @@ import type { ValidationMessages } from "./messages.js";
  * `makeIssue()` bypasses the global errorMap and the raw key surfaces.
  * Client (react-hook-form resolver) and server (tRPC errorFormatter) both
  * use this helper to translate at the rendering boundary.
+ *
+ * Loud-vs-quiet contract vs `lookup()`: `lookup()` (inside errorMap) WARNS
+ * on miss because it runs during schema authoring time when a missing key
+ * is almost certainly a developer bug worth surfacing. This helper runs at
+ * the rendering boundary AFTER the schema has already accepted the key, so
+ * a miss here is a deployment skew (catalogue lagging behind code) — we
+ * pass through silently rather than spam every form-submit with warnings.
  */
 export function translateValidationKey(
   messages: ValidationMessages,
