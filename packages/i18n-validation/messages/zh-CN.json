@@ -71,12 +71,17 @@
         "definitionRequired": "定义为必填",
         "rubricMustBeValidJson": "必须为有效的 JSON",
         "facetExtractionRequiresLlm": "面向提取需先启用 LLM 评估",
-        "chooseFacetModel": "请选择面向模型"
+        "chooseFacetModel": "请选择面向模型",
+        "rubricInvalidDefinition": "无效的评分标准定义：{detail}"
       },
       "accounts": {
         "credentialsRequired": "凭证为必填",
         "teamRequired": "请选择团队",
         "oauthJsonInvalid": "OAuth 凭证必须为有效的 JSON"
+      },
+      "accountGroups": {
+        "accountOrgMismatch": "账号不属于此群组所在的组织",
+        "accountPlatformMismatch": "账号平台“{accountPlatform}”与群组平台“{groupPlatform}”不一致"
       }
     }
   }

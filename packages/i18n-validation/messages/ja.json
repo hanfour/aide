@@ -71,12 +71,17 @@
         "definitionRequired": "定義は必須項目です",
         "rubricMustBeValidJson": "有効な JSON である必要があります",
         "facetExtractionRequiresLlm": "ファセット抽出には LLM 評価の有効化が先に必要です",
-        "chooseFacetModel": "ファセットモデルを選択してください"
+        "chooseFacetModel": "ファセットモデルを選択してください",
+        "rubricInvalidDefinition": "ルーブリック定義が無効です：{detail}"
       },
       "accounts": {
         "credentialsRequired": "認証情報は必須項目です",
         "teamRequired": "チームを選択してください",
         "oauthJsonInvalid": "OAuth 認証情報は有効な JSON である必要があります"
+      },
+      "accountGroups": {
+        "accountOrgMismatch": "アカウントはこのグループの組織に属していません",
+        "accountPlatformMismatch": "アカウントのプラットフォーム「{accountPlatform}」はグループのプラットフォーム「{groupPlatform}」と一致しません"
       }
     }
   }
