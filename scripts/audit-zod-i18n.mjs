@@ -50,6 +50,14 @@ const PATTERNS = [
     re: /addIssue\(\s*\{[\s\S]*?message:\s*"([^"]+)"/g,
     msgGroup: 1,
   },
+  // message: `...` — backtick template literal in addIssue or TRPCError.
+  // After PR C all 4 known callsites migrate to formatValidationKey(...); this
+  // pattern catches any future template-literal regression.
+  {
+    kind: "template",
+    re: /message:\s*`([^`]+)`/g,
+    msgGroup: 1,
+  },
 ];
 
 function slugify(s) {
