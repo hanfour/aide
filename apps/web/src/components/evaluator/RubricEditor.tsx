@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslatedZodResolver } from "@/lib/i18n/useTranslatedZodResolver";
+import { formatValidationKey } from "@caliber/i18n-validation";
 import { z } from "zod";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
@@ -55,7 +56,10 @@ const formSchema = z.object({
       if (!result.success) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: `Invalid rubric definition: ${result.error.issues.map((i) => i.message).join("; ")}`,
+          message: formatValidationKey(
+            "validation.custom.evaluator.rubricInvalidDefinition",
+            { detail: result.error.issues.map((i) => i.message).join("; ") },
+          ),
         });
       }
     }),
