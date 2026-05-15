@@ -519,13 +519,7 @@ describe("accountGroups.addMember", () => {
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
       message:
-        "validation.custom.accountGroups.accountPlatformMismatch#" +
-        encodeURIComponent(
-          JSON.stringify({
-            accountPlatform: "anthropic",
-            groupPlatform: "openai",
-          }),
-        ),
+        'Account platform "anthropic" does not match group platform "openai"',
     });
   });
 

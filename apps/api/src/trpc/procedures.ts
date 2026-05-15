@@ -8,12 +8,72 @@ import type { z } from "zod";
 import type { Redis } from "ioredis";
 import { can, type Action } from "@caliber/auth";
 import type { ServerEnv } from "@caliber/config";
-import { runWithLocale } from "@caliber/i18n-validation/server";
-import type { Locale } from "@caliber/i18n-validation";
+import {
+  runWithLocale,
+  getValidationMessagesSync,
+  translateValidationKey,
+} from "@caliber/i18n-validation/server";
+import { DEFAULT_LOCALE, type Locale } from "@caliber/i18n-validation";
 import type { TrpcContext, TrpcLogger } from "./context.js";
 import type { EvaluatorQueue } from "./routers/reports.js";
 
-const t = initTRPC.context<TrpcContext>().create();
+// errorFormatter must be passed to initTRPC.create() so it's woven into the
+// router shape — passing it via the fastify adapter's trpcOptions is silently
+// ignored. Translates `validation.*`-prefixed key messages (including
+// `<key>#<urlencoded-json>` produced by `formatValidationKey()`) at the
+// rendering boundary, since Zod's `makeIssue()` short-circuits the global
+// errorMap whenever a schema supplies an explicit message and the raw key
+// would otherwise reach the wire.
+const t = initTRPC.context<TrpcContext>().create({
+  errorFormatter: ({ shape, ctx }) => {
+    const locale = (ctx as TrpcContext | undefined)?.locale ?? DEFAULT_LOCALE;
+    const messages = getValidationMessagesSync(locale);
+    if (!messages) return shape;
+
+    const flattened = shape.data as
+      | {
+          zodError?: {
+            fieldErrors?: Record<string, string[] | undefined>;
+            formErrors?: string[];
+          };
+          [k: string]: unknown;
+        }
+      | undefined;
+
+    let translatedData: unknown = shape.data;
+    if (flattened?.zodError) {
+      const fe = flattened.zodError.fieldErrors ?? {};
+      const newFieldErrors: Record<string, string[]> = {};
+      for (const [field, errs] of Object.entries(fe)) {
+        newFieldErrors[field] = (errs ?? []).map((m) =>
+          translateValidationKey(messages, m),
+        );
+      }
+      const newFormErrors = (flattened.zodError.formErrors ?? []).map((m) =>
+        translateValidationKey(messages, m),
+      );
+      translatedData = {
+        ...flattened,
+        zodError: {
+          ...flattened.zodError,
+          fieldErrors: newFieldErrors,
+          formErrors: newFormErrors,
+        },
+      };
+    }
+
+    const translatedMessage =
+      typeof shape.message === "string"
+        ? translateValidationKey(messages, shape.message)
+        : shape.message;
+
+    return {
+      ...shape,
+      message: translatedMessage,
+      data: translatedData,
+    };
+  },
+});
 
 // Wrap the entire procedure pipeline (including Zod input parsing) in the
 // AsyncLocalStorage scope so the global Zod errorMap reads the right locale
