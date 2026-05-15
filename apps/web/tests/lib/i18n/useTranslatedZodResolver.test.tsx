@@ -11,7 +11,7 @@ vi.unmock("next-intl");
 
 import { NextIntlClientProvider } from "next-intl";
 import { useTranslatedZodResolver } from "@/lib/i18n/useTranslatedZodResolver";
-import { loadValidationMessages } from "@caliber/i18n-validation";
+import { loadValidationMessages, formatValidationKey } from "@caliber/i18n-validation";
 import enMessages from "../../../messages/en.json";
 import zhTWMessages from "../../../messages/zh-TW.json";
 
@@ -110,5 +110,72 @@ describe("useTranslatedZodResolver", () => {
       },
     );
     await pollUntilTranslated(() => captured, onSubmitRef, "名稱為必填");
+  });
+});
+
+// Schema that mirrors the RubricEditor.tsx:58 superRefine shape — emits a
+// custom issue whose message carries a runtime-interpolated `{detail}`.
+const rubricSchema = z.object({
+  definitionJson: z.string().superRefine((_val, ctx) => {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: formatValidationKey(
+        "validation.custom.evaluator.rubricInvalidDefinition",
+        { detail: "必須為有效的 JSON" },
+      ),
+    });
+  }),
+});
+type RubricValues = z.infer<typeof rubricSchema>;
+
+interface RubricProbeProps {
+  onError: (msg: string | undefined) => void;
+  onSubmitRef: { current: (() => void) | null };
+}
+
+function RubricProbe({ onError, onSubmitRef }: RubricProbeProps) {
+  const resolver = useTranslatedZodResolver(rubricSchema);
+  const { handleSubmit } = useForm<RubricValues>({
+    resolver,
+    defaultValues: { definitionJson: "" },
+  });
+  const submit = useRef<() => void>(() => undefined);
+  submit.current = () => {
+    void handleSubmit(
+      () => undefined,
+      (errs) => {
+        onError(errs.definitionJson?.message as string | undefined);
+      },
+    )();
+  };
+  useEffect(() => {
+    onSubmitRef.current = () => submit.current?.();
+  }, [onSubmitRef]);
+  return <span data-testid="rubric-ready">1</span>;
+}
+
+describe("useTranslatedZodResolver with runtime params", () => {
+  it("translates a key carrying {detail} into zh-TW with interpolation", async () => {
+    await loadValidationMessages("zh-TW");
+    let captured: string | undefined;
+    const onSubmitRef: { current: (() => void) | null } = { current: null };
+    render(
+      <NextIntlClientProvider
+        locale="zh-TW"
+        messages={zhTWMessages as Record<string, unknown>}
+      >
+        <RubricProbe
+          onError={(m) => {
+            captured = m;
+          }}
+          onSubmitRef={onSubmitRef}
+        />
+      </NextIntlClientProvider>,
+    );
+    await pollUntilTranslated(
+      () => captured,
+      onSubmitRef,
+      "無效的 rubric 定義：必須為有效的 JSON",
+    );
   });
 });

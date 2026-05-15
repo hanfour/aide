@@ -71,12 +71,17 @@
         "definitionRequired": "Definition is required",
         "rubricMustBeValidJson": "Must be valid JSON",
         "facetExtractionRequiresLlm": "Facet extraction requires LLM evaluation to be enabled first",
-        "chooseFacetModel": "Choose a facet model"
+        "chooseFacetModel": "Choose a facet model",
+        "rubricInvalidDefinition": "Invalid rubric definition: {detail}"
       },
       "accounts": {
         "credentialsRequired": "Credentials are required",
         "teamRequired": "Pick a team",
         "oauthJsonInvalid": "OAuth credentials must be valid JSON"
+      },
+      "accountGroups": {
+        "accountOrgMismatch": "Account does not belong to this group's org",
+        "accountPlatformMismatch": "Account platform \"{accountPlatform}\" does not match group platform \"{groupPlatform}\""
       }
     }
   }
