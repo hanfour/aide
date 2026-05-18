@@ -1,7 +1,7 @@
 # Multi-Source Ingest — Gateway + Transcript Daemon for Performance Review
 
 **Date:** 2026-05-18
-**Status:** Draft (reality-checked against on-disk transcripts; pre-implementation)
+**Status:** Draft (reality-checked against on-disk transcripts + O3 spiked 2026-05-18; pre-implementation)
 **Predecessors:** caliber gateway body-capture + evaluator (already shipped); aide → caliber rebrand (PR #127–#133, #138–#145)
 **Scope:** New ingestion path B (daemon → API) running parallel to existing path A (gateway proxy); shared schema + evaluator pipeline; multi-device, multi-user, multi-org isolation.
 
@@ -278,20 +278,22 @@ WHERE ce.source = 'transcript'  -- gateway captures join through request_bodies 
 
 UNION ALL
 
--- gateway captures join through request_bodies.client_session_id when known,
--- else surface as orphan events keyed by request_id
+-- gateway captures surface as standalone events; in v1 we do NOT join to
+-- client_sessions (Resolved O3: official CLIs don't send X-Session-Id).
+-- A synthetic session id = 'gw-' || request_id keeps the view shape uniform.
 SELECT
-  rb.client_session_id AS session_id,
-  rb.id::text AS event_id,
+  ('gw-' || rb.request_id) AS session_id,
+  rb.request_id AS event_id,
   'gateway_capture' AS event_type,
   'tool' AS role,
-  rb.created_at AS timestamp,
-  rb.input_tokens, rb.output_tokens, rb.cache_read_tokens,
-  rb.cache_creation_tokens, NULL AS reasoning_tokens, rb.payload AS content,
-  rb.org_id, rb.user_id, rb.device_id, 'gateway-capture' AS source_client,
+  rb.captured_at AS timestamp,
+  ul.input_tokens, ul.output_tokens, ul.cache_read_tokens,
+  ul.cache_creation_tokens, NULL AS reasoning_tokens,
+  jsonb_build_object('request_id', rb.request_id, 'note', 'gateway-side capture; body in request_bodies') AS content,
+  rb.org_id, ul.user_id, ul.device_id, 'gateway-capture' AS source_client,
   NULL AS cwd, NULL AS git_commit_hash, NULL AS git_branch
 FROM request_bodies rb
-WHERE rb.client_session_id IS NOT NULL;
+JOIN usage_logs ul ON ul.request_id = rb.request_id;
 ```
 
 (View shape illustrative; final SQL adjusted to existing `request_bodies` columns.)
@@ -538,7 +540,7 @@ Billing model is design-time open (per-device subscription, per-million-events i
 
 **Open O2 — codex `event_msg.token_count` cadence**: it emits both `total_token_usage` and `last_token_usage`. Verify that `last_token_usage` always corresponds to the *previous* `response_item` (= single turn). If it can lag or coalesce, we need a different way to attribute tokens to a turn.
 
-**Open O3 — gateway path's `client_session_id` populating**: when path A sees a request, it currently doesn't know the client's local session UUID. Either (a) `claude code` / `codex` sends a header we can capture, or (b) we don't link gateway captures to client_sessions and they only join through `(user, timestamp ± window)`. (a) requires upstream CLI cooperation; (b) is fine for v1.
+**Resolved O3 — gateway path's `client_session_id` populating (spiked 2026-05-18)**: caliber gateway already has `request_bodies.client_session_id` column and `extractSessionId(req)` middleware reading `X-Session-Id` header (`apps/gateway/src/runtime/bodyCapture.ts:111-114`), but **291 historical request_bodies rows have 0 populated `client_session_id`**. User-Agent distribution: 241× `codex-tui/0.130.0`, 36× `claude-cli/2.1.x` — neither official CLI sends an `X-Session-Id` header. Server-side strong join (option a) is not achievable without upstream CLI cooperation. **Decision: v1 does not join.** Gateway capture and transcript ingest are two independent streams in `evaluator_events`; the merged view does not perform `(user, timestamp ± window)` fuzzy matching either (cheap to add later if proven necessary). Users running both A and B simultaneously (e.g. self-dogfood) will see the same conversation as two source rows — accepted, surfaced in the reviewer UI with a `source_breakdown` chip. Realistically, 99% of users will choose only one path (B for zero-touch teams, A for power-user solo operators wanting real-time cost), so double-counting is a corner case, not a default. Future option if friction matters: a `caliber-claude` / `caliber-codex` wrapper script that injects `X-Session-Id` from the active CLI session into the gateway request — but that's Phase 5+ scope.
 
 **Open O4 — billing model.** Subscription vs metered vs hybrid is a product question we defer past Phase 4. Schema does not force a choice.
 
