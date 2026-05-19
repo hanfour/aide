@@ -1,6 +1,6 @@
 {
-  "id": "e35079bc-575e-4d61-bbde-b40442cabf03",
-  "prevId": "74a65978-7d65-4cbe-9e66-cd5e3779b37e",
+  "id": "6f702f90-6be3-413c-b768-4afca6d8ab4f",
+  "prevId": "e35079bc-575e-4d61-bbde-b40442cabf03",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3064,6 +3064,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "source_breakdown": {
+          "name": "source_breakdown",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -3595,6 +3601,30 @@
         "codex_errors_count": {
           "name": "codex_errors_count",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "subagent_call_count": {
+          "name": "subagent_call_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reasoning_token_ratio": {
+          "name": "reasoning_token_ratio",
+          "type": "numeric(5, 4)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tool_use_diversity": {
+          "name": "tool_use_diversity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "session_topology": {
+          "name": "session_topology",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
