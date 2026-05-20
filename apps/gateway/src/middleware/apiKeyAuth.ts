@@ -111,9 +111,11 @@ async function pluginBody(
       return reply;
     }
 
-    // TODO(part-4+): wire GATEWAY_TRUSTED_PROXIES into Fastify trustProxy
-    // (currently req.ip resolves from socket; all production traffic behind L7
-    // proxies will appear to come from the proxy IP until this is hooked up).
+    // req.ip is Fastify-resolved: when GATEWAY_TRUSTED_PROXIES is non-empty
+    // and the socket peer matches the configured CIDR(s), Fastify pulls the
+    // client IP from X-Forwarded-For. Operators behind an L7 proxy must
+    // configure that env or per-key IP allow/deny lists silently fall back
+    // to gating on the proxy's IP.
     const ip = req.ip;
     const blacklist = row.apiKey.ipBlacklist ?? [];
     const whitelist = row.apiKey.ipWhitelist ?? [];
