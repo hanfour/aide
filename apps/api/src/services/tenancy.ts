@@ -8,8 +8,15 @@ import { ServiceError } from "../trpc/errors.js";
 // organization boundaries. role_assignments has no org_id column, so the
 // invariant is service-layer enforced rather than schema-enforced.
 
+// Match the AuditDb union from services/audit.ts so callers can pass either
+// the root Database or a transaction handle (the narrower type drizzle hands
+// to transaction callbacks). Without this, acceptInvite cannot validate
+// inside its `db.transaction(...)` block.
+type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
+export type TenancyDb = Database | Tx;
+
 export async function assertUserMemberOfOrg(
-  db: Database,
+  db: TenancyDb,
   userId: string,
   orgId: string,
 ): Promise<void> {
@@ -32,7 +39,7 @@ export async function assertUserMemberOfOrg(
 }
 
 export async function assertDepartmentBelongsToOrg(
-  db: Database,
+  db: TenancyDb,
   departmentId: string,
   orgId: string,
 ): Promise<void> {
@@ -56,7 +63,7 @@ export async function assertDepartmentBelongsToOrg(
 }
 
 export async function assertTeamBelongsToOrg(
-  db: Database,
+  db: TenancyDb,
   teamId: string,
   orgId: string,
 ): Promise<void> {
@@ -83,7 +90,7 @@ export async function assertTeamBelongsToOrg(
 // 'global' is a no-op (org-agnostic). 'organization' requires scopeId === orgId.
 // 'department' / 'team' delegate to the corresponding belongs-to check.
 export async function assertScopeBelongsToOrg(
-  db: Database,
+  db: TenancyDb,
   scopeType: ScopeType,
   scopeId: string | null,
   orgId: string,
@@ -127,7 +134,7 @@ export async function assertScopeBelongsToOrg(
 // global scope (org-agnostic). Throws if the underlying row is missing or
 // a non-global scope is missing its scopeId.
 export async function resolveScopeOrgId(
-  db: Database,
+  db: TenancyDb,
   scopeType: ScopeType,
   scopeId: string | null,
 ): Promise<string | null> {
