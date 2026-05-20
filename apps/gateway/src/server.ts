@@ -96,6 +96,18 @@ export interface BuildOpts {
   redis?: Redis;
 }
 
+// Parse a comma-separated GATEWAY_TRUSTED_PROXIES env value into a Fastify
+// `trustProxy` argument. Empty → `false` (do not trust X-Forwarded-*),
+// non-empty → list of CIDRs / IPs (Fastify trusts XFF only from these
+// peers). Exported for the api server to reuse the same parser.
+export function parseTrustedProxies(raw: string): false | string[] {
+  const list = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return list.length === 0 ? false : list;
+}
+
 export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
   const enabled = opts.env.ENABLE_GATEWAY;
   const app = Fastify({
@@ -108,6 +120,14 @@ export async function buildServer(opts: BuildOpts): Promise<FastifyInstance> {
       redact: { paths: [...LOG_REDACT_PATHS], censor: "[REDACTED]" },
     },
     bodyLimit: opts.env.GATEWAY_MAX_BODY_BYTES,
+    // Trust X-Forwarded-For only from configured proxy CIDRs. Without this
+    // (or with the prior `false` default) Fastify uses the socket peer IP,
+    // which is the reverse proxy itself — breaking per-key IP allow/deny
+    // lists at apiKeyAuthPlugin:117. Operators behind any L7 proxy MUST
+    // set GATEWAY_TRUSTED_PROXIES to their proxy's CIDR, otherwise IP
+    // enforcement stays broken. Empty default means "no proxy" — safe
+    // for direct-internet deploys.
+    trustProxy: parseTrustedProxies(opts.env.GATEWAY_TRUSTED_PROXIES),
   });
   await app.register(metricsPlugin);
   app.get("/health", async () =>

@@ -42,6 +42,12 @@ function makeDisabledRedis(): Redis {
 export async function buildServer() {
   const env = parseServerEnv();
   await setGlobalLocaleErrorMap();
+  // Trust X-Forwarded-For only from configured proxy CIDRs. Without this,
+  // req.ip resolves to the reverse proxy's address — rate limiting fall
+  // back keyed on req.ip would collapse all traffic to a single bucket.
+  const trustedProxies = env.GATEWAY_TRUSTED_PROXIES.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   const app = Fastify({
     logger: {
       level: env.LOG_LEVEL,
@@ -54,6 +60,7 @@ export async function buildServer() {
     },
     disableRequestLogging: false,
     genReqId: () => crypto.randomUUID(),
+    trustProxy: trustedProxies.length === 0 ? false : trustedProxies,
   });
 
   await app.register(cookiesPlugin);
