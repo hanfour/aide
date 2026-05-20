@@ -14,6 +14,7 @@ import { cookiesPlugin } from "./plugins/cookies.js";
 import { authPlugin } from "./plugins/auth.js";
 import { appRouter } from "./trpc/router.js";
 import { createContextFactory } from "./trpc/context.js";
+import { buildTrpcErrorLogPayload } from "./trpc/onErrorLog.js";
 import {
   EVALUATOR_QUEUE_NAME,
   EVALUATOR_QUEUE_PREFIX,
@@ -162,19 +163,12 @@ export async function buildServer() {
             input?: unknown;
           }) => {
             // Surface tRPC errors (esp. Zod input validation) at WARN in api.log
-            // so CI failures have diagnosable context. Safe to keep: does not
-            // expose anything a caller couldn't already infer from the 4xx.
+            // so CI failures have diagnosable context. In production we omit
+            // `input` entirely — pino redact paths catch known secret keys but
+            // a new procedure can introduce a token-shaped field name the
+            // redact list does not yet cover. See trpc/onErrorLog.ts.
             app.log.warn(
-              {
-                path,
-                code: error.code,
-                message: error.message,
-                cause:
-                  error.cause instanceof Error
-                    ? error.cause.message
-                    : undefined,
-                input,
-              },
+              buildTrpcErrorLogPayload({ error, path, input }, env),
               "trpc error",
             );
           },

@@ -140,4 +140,17 @@ describe("LOG_REDACT_PATHS", () => {
     expect(LOG_REDACT_PATHS).toContain("*.credentials");
     expect(LOG_REDACT_PATHS).toContain("*.masterKeyHex");
   });
+
+  it("covers generic token-shaped keys carried through tRPC inputs", () => {
+    // These were added after the 2026-05-20 audit so an invite-accept or
+    // device-enroll failure whose input is logged via the tRPC onError path
+    // never spills the bearer to api.log.
+    expect(LOG_REDACT_PATHS).toContain("*.token");
+    expect(LOG_REDACT_PATHS).toContain("*.revealToken");
+    expect(LOG_REDACT_PATHS).toContain("*.inviteToken");
+    expect(LOG_REDACT_PATHS).toContain("*.enrollmentToken");
+    expect(LOG_REDACT_PATHS).toContain("*.bearer");
+    expect(LOG_REDACT_PATHS).toContain("*.signingKey");
+    expect(LOG_REDACT_PATHS).toContain("*.privateKey");
+  });
 });

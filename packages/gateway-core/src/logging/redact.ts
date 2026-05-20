@@ -55,6 +55,18 @@ export const LOG_REDACT_PATHS: readonly string[] = [
   "*.masterKeyHex",
   "*.encryptionKey",
   "*.pepper",
+  // Generic token-shaped keys carried through tRPC inputs and similar
+  // structured logs (invite accept, device enroll, API-key reveal).
+  // Adding these prevents leaks when a procedure surfaces input on the
+  // failure path (zod validation, FK violation, etc).
+  "*.token",
+  "*.revealToken",
+  "*.inviteToken",
+  "*.enrollmentToken",
+  "*.bearer",
+  "*.signingKey",
+  "*.privateKey",
+  "*.totpSecret",
 ];
 
 const REDACT_PLACEHOLDER = "[REDACTED]";
