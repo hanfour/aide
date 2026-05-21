@@ -3,6 +3,7 @@ package wizard
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hanfour/ai-dev-eval/agent/internal/api"
@@ -108,5 +109,16 @@ func TestRunEnrollWizard_KeychainFailsAfterAPI(t *testing.T) {
 	}
 	if _, lerr := config.Load(); !errors.Is(lerr, config.ErrNotEnrolled) {
 		t.Errorf("config must not be written on Failure C, got: %v", lerr)
+	}
+}
+
+func TestLostKeyErrorImplementsErrorAndUnwrap(t *testing.T) {
+	cause := errors.New("disk full")
+	lk := &LostKeyError{DeviceID: "d-1", RawKey: "cda_x", Cause: cause}
+	if !strings.Contains(lk.Error(), "disk full") {
+		t.Errorf("Error() = %q, missing cause text", lk.Error())
+	}
+	if !errors.Is(lk, cause) {
+		t.Errorf("errors.Is should find the wrapped cause")
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/hanfour/ai-dev-eval/agent/internal/config"
 	"github.com/hanfour/ai-dev-eval/agent/internal/keychain"
+	"github.com/hanfour/ai-dev-eval/agent/internal/wizard"
 )
 
 // withFakeSecurity rewrites keychain.SecurityBin to a stub that records argv.
@@ -122,5 +124,56 @@ func TestEnrollMissingBaseURL_ReturnsExit1(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "api base url") && !strings.Contains(err.Error(), "API base URL") {
 		t.Errorf("error should mention API base URL, got: %v", err)
+	}
+}
+
+func TestTranslateEnrollErr_LostKey_EmitsRawKeyToStderr(t *testing.T) {
+	// Redirect os.Stderr to a pipe so we can capture the Failure-C output.
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = origStderr })
+
+	lk := &wizard.LostKeyError{DeviceID: "d-XYZ", RawKey: "cda_visible_secret", Cause: errors.New("permission denied")}
+	out := translateEnrollErr(lk)
+	if out != lk {
+		t.Errorf("translateEnrollErr should pass the error through, got %v", out)
+	}
+
+	w.Close()
+	captured, _ := io.ReadAll(r)
+	got := string(captured)
+	for _, want := range []string{"cda_visible_secret", "d-XYZ", "revoke", "CANNOT be retrieved"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestTranslateEnrollErr_NonLostKey_PassesThrough(t *testing.T) {
+	plain := errors.New("some other error")
+	out := translateEnrollErr(plain)
+	if out != plain {
+		t.Errorf("non-LostKeyError should pass through unchanged, got %v", out)
+	}
+}
+
+func TestClaudeProjectsRoot_HonoursOverride(t *testing.T) {
+	t.Setenv("CALIBER_CLAUDE_PROJECTS", "/custom/claude")
+	if got := claudeProjectsRoot(); got != "/custom/claude" {
+		t.Errorf("claudeProjectsRoot = %q, want /custom/claude", got)
+	}
+}
+
+func TestClaudeProjectsRoot_DefaultsToHomeClaudeProjects(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("CALIBER_CLAUDE_PROJECTS", "")
+	t.Setenv("HOME", tmp)
+	want := tmp + "/.claude/projects"
+	if got := claudeProjectsRoot(); got != want {
+		t.Errorf("claudeProjectsRoot = %q, want %q", got, want)
 	}
 }

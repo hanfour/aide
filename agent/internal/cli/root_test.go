@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
@@ -34,8 +35,23 @@ func TestUnknownSubcommandReturnsExitError(t *testing.T) {
 	}
 }
 
-func TestExecuteReturns0OnSuccess(t *testing.T) {
-	// Smoke: Execute wraps the cobra command and returns an int.
-	// Compile-time check that the function exists with the right signature.
-	_ = Execute
+func TestExecuteWithVersionArgs(t *testing.T) {
+	// Stash os.Args, restore on exit.
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+	os.Args = []string{"caliber-agent", "version"}
+	code := Execute(context.Background())
+	if code != 0 {
+		t.Errorf("Execute returned %d, want 0", code)
+	}
+}
+
+func TestExecuteWithUnknownCommandReturns1(t *testing.T) {
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+	os.Args = []string{"caliber-agent", "totally-not-a-command"}
+	code := Execute(context.Background())
+	if code != 1 {
+		t.Errorf("Execute returned %d, want 1", code)
+	}
 }

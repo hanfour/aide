@@ -104,3 +104,34 @@ func TestGetReturnsPasswordFromStdout(t *testing.T) {
 		t.Fatalf("Get = %q, want %q", got, "cda_returned_secret")
 	}
 }
+
+func TestDeleteInvokesSecurityWithExpectedArgs(t *testing.T) {
+	dir := t.TempDir()
+	writeFakeSecurity(t, dir, 0, "")
+	orig := SecurityBin
+	SecurityBin = filepath.Join(dir, "security")
+	t.Cleanup(func() { SecurityBin = orig })
+
+	if err := Delete("dev-abc"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	bs, _ := os.ReadFile(filepath.Join(dir, "argv.log"))
+	got := string(bs)
+	for _, want := range []string{"delete-generic-password", "-s", ServiceName, "-a", "dev-abc"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("argv missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestDeleteReturnsErrNotFoundOnExit44(t *testing.T) {
+	dir := t.TempDir()
+	writeFakeSecurity(t, dir, 44, "")
+	orig := SecurityBin
+	SecurityBin = filepath.Join(dir, "security")
+	t.Cleanup(func() { SecurityBin = orig })
+
+	if err := Delete("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
