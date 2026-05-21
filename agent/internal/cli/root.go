@@ -31,6 +31,13 @@ func New() *cobra.Command {
 	cmd.PersistentFlags().BoolVarP(&flags.Verbose, "verbose", "v", false, "print extra error context")
 
 	cmd.AddCommand(newVersionCmd())
+	cmd.AddCommand(newStatusCmd())
+	cmd.AddCommand(newAddPathCmd())
+	cmd.AddCommand(newRemovePathCmd())
+	cmd.AddCommand(newPauseCmd())
+	cmd.AddCommand(newResumeCmd())
+	cmd.AddCommand(newSetModeCmd())
+	cmd.AddCommand(newUninstallCmd())
 	return cmd
 }
 
