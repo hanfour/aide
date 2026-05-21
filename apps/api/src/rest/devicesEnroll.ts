@@ -104,10 +104,12 @@ export function devicesEnrollRoutes(env: ServerEnv): FastifyPluginAsync {
                 isNull(deviceEnrollmentTokens.usedAt),
               ),
             );
-          if (updateResult.rowCount !== 1) {
-            // Should be unreachable because the row is locked via FOR UPDATE above.
-            // If it ever fires, our invariant has been broken — abort and force the
-            // caller to retry-or-investigate via TOKEN_USED.
+          if ((updateResult.rowCount ?? 0) !== 1) {
+            // Defence-in-depth: the FOR UPDATE lock serialises concurrent
+            // redemptions, so this guard should be rare in normal operation.
+            // It can still fire if usedAt was set outside this transaction
+            // (admin write, bulk expiry, token-cancellation path, etc.).
+            // Return TOKEN_USED so the caller gets a clean 410 rather than a 500.
             throw { code: "TOKEN_USED" as const };
           }
 

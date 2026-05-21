@@ -276,6 +276,7 @@ describe("POST /v1/devices/enroll", () => {
     const gone = statuses.filter((s) => s === 410).length;
     expect(ok).toBe(1);
     expect(gone).toBe(concurrency - 1);
+    expect(ok + gone).toBe(concurrency);
 
     // Exactly one device + one device_api_key row for this token.
     const deviceRows = await testDb.db
