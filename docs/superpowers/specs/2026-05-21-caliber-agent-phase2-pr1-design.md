@@ -288,29 +288,37 @@ for each dir under <root>:
 
     # Primary: scan JSONL files newest-first, bounded by total bytes read.
     # We stop at the first valid cwd that stats as a directory.
-    bytesBudget   = 256 * 1024            # per-dir cap, total across files
-    perLineCap    = 4 * 1024 * 1024       # 4 MiB; drop oversize lines unparsed
+    #
+    # Memory bound: a 20 MB single-line tool output must NOT be loaded into
+    # memory just to be skipped. ReadString allocates the whole line before
+    # the caller can check its length, so we cannot use it on a raw file
+    # reader. Wrap the file in io.LimitReader sized to the *remaining*
+    # per-dir budget; once that many bytes are consumed it returns io.EOF.
+    # The worst-case allocation by ReadString is therefore exactly the
+    # remaining budget — never more.
+    bytesBudget = 256 * 1024              # per-dir cap, total across files
     for each *.jsonl in dir, newest mtime first:
         if bytesBudget <= 0: break
-        open file with bufio.NewReaderSize(f, 64*1024)
+        f = open file
+        lr = io.LimitReader(f, int64(bytesBudget))
+        reader = bufio.NewReaderSize(lr, 64*1024)   # NOT bufio.Scanner: its
+                                                    # default MaxScanTokenSize
+                                                    # is 64 KiB and would fail
+                                                    # on multi-MB tool-output
+                                                    # lines that fit within
+                                                    # bytesBudget.
         loop:
-            if bytesBudget <= 0: break
-            line, err = reader.ReadString('\n')   # NOT bufio.Scanner: its default
-                                                  # MaxScanTokenSize is 64 KiB and
-                                                  # would fail on multi-MB tool-
-                                                  # output lines. ReadString handles
-                                                  # arbitrarily long lines.
-            bytesBudget -= len(line)              # charge full length even if we
-                                                  # skip parsing
-            if len(line) > perLineCap:
-                continue                          # malformed / giant tool output;
-                                                  # don't pay to JSON-parse it
-            try: parse line as JSON
-                  if obj has string field "cwd" and os.Stat(cwd) is dir:
-                      cwd = obj.cwd
-                      break out of all loops
+            line, err = reader.ReadString('\n')
+            bytesBudget -= len(line)                # may include a final
+                                                    # truncated line at EOF
+            if len(line) > 0:
+                try: parse line as JSON
+                      if obj has string field "cwd" and os.Stat(cwd) is dir:
+                          cwd = obj.cwd
+                          break out of all loops
+                # truncated last line that won't parse → silently move on
             if err == io.EOF: break
-            ignore JSON parse errors
+            if bytesBudget <= 0: break              # exact-budget hit between lines
         close file
         if cwd != "": break
 
@@ -334,7 +342,7 @@ for each dir under <root>:
 dedupe by CWD; sort by LastSeen desc.
 ```
 
-Rationale for **bytes** rather than line count: JSONL lines vary from ~80 bytes (simple events) to several MB (rare large tool outputs). 256 KB is plenty to find a cwd-bearing event in a healthy transcript and bounds worst-case scan cost. A pathologically misformed transcript skips silently.
+Rationale for **bytes** rather than line count: JSONL lines vary from ~80 bytes (simple events) to several MB (rare large tool outputs). 256 KiB is plenty to find a cwd-bearing event in a healthy transcript and bounds worst-case scan cost. A pathologically misformed transcript skips silently. Because the `io.LimitReader` truncates at the byte budget, the maximum in-flight memory allocation per file is exactly that budget — a 20 MB single-line tool output gets cut to 256 KiB and fails JSON parsing, costing one bounded allocation rather than swelling the heap.
 
 **Edge cases the test fixture must exercise**:
 1. Dashed-real-cwd: project `/tmp/test/dashed-real-name` — JSONL primary path must resolve correctly even though dirname decode would yield `/tmp/test/dashed/real/name`.
@@ -607,14 +615,15 @@ Target: 80%+ coverage on `agent/internal/...` (entry `main.go` and Cobra glue ex
 - Assert 30s timeout fires (server `Hang` handler).
 
 **`internal/wizard`** —
-- `projects_test.go`: build a fixture tree inside `t.TempDir()` covering all 6 edge cases from §4.5:
-  1. **dashed-real-cwd**: real dir `<tmp>/test/dashed-real-name` + claude dir `-tmp-<tempdir-suffix>-test-dashed-real-name/` containing a JSONL whose first event has `"cwd":"<tmp>/test/dashed-real-name"`. Dirname decode would mis-resolve; JSONL primary must win. **This is the case the previous design failed on.**
+- `projects_test.go`: build a fixture tree inside `t.TempDir()` covering all 8 edge cases from §4.5. To make case 6 + 7 testable, `ScanClaudeProjects` accepts an opener function (`func(path string) (io.ReadCloser, error)`) — production passes `os.Open`; tests inject a wrapper that counts bytes read.
+  1. **dashed-real-cwd**: real dir `<tmp>/test/dashed-real-name` + claude dir `-tmp-<tempdir-suffix>-test-dashed-real-name/` containing a JSONL whose first event has `"cwd":"<tmp>/test/dashed-real-name"`. Dirname decode would mis-resolve; JSONL primary must win. **This is the case the round-2 review caught.**
   2. **clean cwd**: real dir `<tmp>/test/plain` + matching claude dir + JSONL with the matching cwd. Both primary and fallback would resolve; primary should fire first.
   3. **stale cwd in JSONL**: claude dir with JSONL pointing to a non-existent path. Must skip (no candidate emitted).
   4. **corrupt JSONL + valid dirname fallback**: claude dir `-tmp-<tempdir-suffix>-test-fb/` with one unparseable JSONL; the decoded dirname `<tmp>/test/fb` is a real dir. Must emit candidate via fallback.
-  5. **no JSONL files**: claude dir with no `*.jsonl`; dirname decode is valid. Must emit via fallback.
-  6. **byte budget exhausted**: claude dir with a large JSONL (>256 KB) of lines that contain no `cwd` field. Must fall through to dirname decode.
-  7. **no leading `-`**: dir `not-a-claude-project/`. Must be silently skipped.
+  5. **no JSONL files**: claude dir with no `*.jsonl`; dirname decode is valid. Must emit via fallback. `LastSeen` must equal the dir's mtime (per §4.5 empty-dir rule).
+  6. **byte budget exhausted, many small lines**: claude dir with a JSONL of >256 KiB worth of short lines, none containing `cwd`. Must fall through to dirname decode. Assert counted `bytesRead ≤ 256 KiB`.
+  7. **giant single line**: claude dir with one 20 MiB JSONL that is a single line with no newline. Must fall through to dirname decode. Assert counted `bytesRead ≤ 256 KiB`. **This is the case the round-4 review caught — `io.LimitReader` is what makes this bound hold.**
+  8. **no leading `-`**: dir `not-a-claude-project/`. Must be silently skipped.
   Assert exact list and ordering (LastSeen desc). Each case is its own `t.Run` sub-test so failures pinpoint the broken path.
 - `prompt_test.go`: fake Prompter implementations exercise default values for Confirm / SelectMulti. The huh library's own UI is not tested.
 - `enroll_test.go`: fake Prompter feeds pre-recorded answers. Spy-wrap `Enroll`/`SetSecret` to verify call order, final config content, and `include_paths=[]` when user picks `None`.
