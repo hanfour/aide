@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"runtime"
-	"testing"
 
 	"github.com/spf13/cobra"
 
@@ -16,20 +15,11 @@ import (
 	"github.com/hanfour/ai-dev-eval/agent/internal/wizard"
 )
 
-// testPrompterHook lets enroll_test.go inject a FakePrompter without
-// touching the production path. Production sets this to nil and we fall
-// through to the real stdin prompter.
+// testPrompterHook lets tests inject a FakePrompter without touching the
+// production path. Production leaves this nil and falls through to the real
+// stdin prompter. The useFakePrompter setter lives in export_test.go so that
+// the "testing" package is never linked into the production binary.
 var testPrompterHook wizard.Prompter
-
-// useFakePrompter is a test helper imported by enroll_test.go.
-func useFakePrompter(t *testing.T, confirms []bool, selections [][]int) {
-	t.Helper()
-	fp := wizard.NewFakePrompter()
-	fp.Answers.Confirms = confirms
-	fp.Answers.Selections = selections
-	testPrompterHook = fp
-	t.Cleanup(func() { testPrompterHook = nil })
-}
 
 func newEnrollCmd() *cobra.Command {
 	var force bool
