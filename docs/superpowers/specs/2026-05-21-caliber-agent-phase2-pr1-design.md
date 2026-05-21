@@ -257,10 +257,18 @@ No retry. Enrollment is one-shot and 4xx/5xx propagate to user. Body is small; n
 // projects.go
 type ProjectCandidate struct {
     CWD       string    // absolute, stat-verified directory
-    LastSeen  time.Time // mtime of newest *.jsonl seen under this candidate
+    LastSeen  time.Time // mtime of newest *.jsonl, or dir mtime when SessionCt == 0
     SessionCt int       // count of *.jsonl files under this candidate
 }
+
+// Production entry — used by wizard.Deps.Scan. Internally calls the unexported
+// scanClaudeProjects with os.Open as the opener.
 func ScanClaudeProjects(root string) ([]ProjectCandidate, error)
+
+// Unexported test seam — accepts an injectable opener so tests can wrap reads
+// with a byte-counter to verify the io.LimitReader bound in §4.5.
+type opener func(path string) (io.ReadCloser, error)
+func scanClaudeProjects(root string, open opener) ([]ProjectCandidate, error)
 ```
 
 **How Claude encodes cwd in the directory tree** (verified 2026-05-21 against `~/.claude/projects/`):
@@ -615,7 +623,7 @@ Target: 80%+ coverage on `agent/internal/...` (entry `main.go` and Cobra glue ex
 - Assert 30s timeout fires (server `Hang` handler).
 
 **`internal/wizard`** —
-- `projects_test.go`: build a fixture tree inside `t.TempDir()` covering all 8 edge cases from §4.5. To make case 6 + 7 testable, `ScanClaudeProjects` accepts an opener function (`func(path string) (io.ReadCloser, error)`) — production passes `os.Open`; tests inject a wrapper that counts bytes read.
+- `projects_test.go`: build a fixture tree inside `t.TempDir()` covering all 8 edge cases from §4.5. Cases 1–5, 8 exercise the exported `ScanClaudeProjects(root)` directly. Cases 6 + 7 go through the unexported `scanClaudeProjects(root, opener)` test seam (§4.5) — tests pass a wrapper opener that counts bytes read so we can assert the `io.LimitReader` bound holds.
   1. **dashed-real-cwd**: real dir `<tmp>/test/dashed-real-name` + claude dir `-tmp-<tempdir-suffix>-test-dashed-real-name/` containing a JSONL whose first event has `"cwd":"<tmp>/test/dashed-real-name"`. Dirname decode would mis-resolve; JSONL primary must win. **This is the case the round-2 review caught.**
   2. **clean cwd**: real dir `<tmp>/test/plain` + matching claude dir + JSONL with the matching cwd. Both primary and fallback would resolve; primary should fire first.
   3. **stale cwd in JSONL**: claude dir with JSONL pointing to a non-existent path. Must skip (no candidate emitted).
