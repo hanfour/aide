@@ -26,9 +26,27 @@ func TestFakePrompterSelectMulti(t *testing.T) {
 	}
 }
 
+func TestFakePrompterInputLine(t *testing.T) {
+	fp := NewFakePrompter()
+	fp.Answers.Inputs = []string{"hello"}
+	got, err := fp.InputLine("enter text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "hello" {
+		t.Errorf("InputLine returned %q, want %q", got, "hello")
+	}
+}
+
 func TestFakePrompterExhaustedReturnsError(t *testing.T) {
 	fp := NewFakePrompter()
 	if _, err := fp.Confirm("q", false); err == nil {
-		t.Fatal("expected error when answers exhausted")
+		t.Fatal("expected error for Confirm when answers exhausted")
+	}
+	if _, err := fp.SelectMulti("q", []string{"a"}); err == nil {
+		t.Fatal("expected error for SelectMulti when answers exhausted")
+	}
+	if _, err := fp.InputLine("q"); err == nil {
+		t.Fatal("expected error for InputLine when answers exhausted")
 	}
 }

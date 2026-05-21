@@ -51,32 +51,3 @@ func (p *FakePrompter) InputLine(_ string) (string, error) {
 	p.inputIdx++
 	return v, nil
 }
-
-// StdinPrompter wraps huh. Real interactive flow.
-type StdinPrompter struct{}
-
-func NewStdinPrompter() *StdinPrompter { return &StdinPrompter{} }
-
-func (StdinPrompter) Confirm(question string, def bool) (bool, error) {
-	out := def
-	if err := huhConfirm(question, def, &out); err != nil {
-		return def, err
-	}
-	return out, nil
-}
-
-func (StdinPrompter) SelectMulti(question string, options []string) ([]int, error) {
-	var selected []int
-	if err := huhMultiSelect(question, options, &selected); err != nil {
-		return nil, err
-	}
-	return selected, nil
-}
-
-func (StdinPrompter) InputLine(question string) (string, error) {
-	var out string
-	if err := huhInput(question, &out); err != nil {
-		return "", err
-	}
-	return out, nil
-}
