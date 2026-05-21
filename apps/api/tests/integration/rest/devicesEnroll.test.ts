@@ -246,6 +246,50 @@ describe("POST /v1/devices/enroll", () => {
     expect(row!.userId).toBe(user.id);
     expect(row!.orgId).toBe(org.id);
   });
+
+  it("rejects concurrent redemptions of the same token (one 201, rest 410)", async () => {
+    const org = await makeOrg(testDb.db);
+    const user = await makeUser(testDb.db, { orgId: org.id });
+    const { token } = await seedEnrollmentToken({
+      userId: user.id,
+      orgId: org.id,
+    });
+
+    const concurrency = 10;
+    const responses = await Promise.all(
+      Array.from({ length: concurrency }, (_, i) =>
+        app.inject({
+          method: "POST",
+          url: "/v1/devices/enroll",
+          payload: {
+            token,
+            hostname: `host-${i}`,
+            os: "darwin 25.3.0",
+            agentVersion: "dev",
+          },
+        }),
+      ),
+    );
+
+    const statuses = responses.map((r) => r.statusCode).sort((a, b) => a - b);
+    const ok = statuses.filter((s) => s === 201).length;
+    const gone = statuses.filter((s) => s === 410).length;
+    expect(ok).toBe(1);
+    expect(gone).toBe(concurrency - 1);
+
+    // Exactly one device + one device_api_key row for this token.
+    const deviceRows = await testDb.db
+      .select({ id: devices.id })
+      .from(devices)
+      .where(eq(devices.orgId, org.id));
+    expect(deviceRows).toHaveLength(1);
+
+    const keyRows = await testDb.db
+      .select({ deviceId: deviceApiKeys.deviceId })
+      .from(deviceApiKeys)
+      .where(eq(deviceApiKeys.deviceId, deviceRows[0]!.id));
+    expect(keyRows).toHaveLength(1);
+  });
 });
 
 void sql;

@@ -57,7 +57,8 @@ export function devicesEnrollRoutes(env: ServerEnv): FastifyPluginAsync {
             })
             .from(deviceEnrollmentTokens)
             .where(eq(deviceEnrollmentTokens.tokenHash, tokenHash))
-            .limit(1);
+            .limit(1)
+            .for('update');
 
           if (!tokenRow) {
             throw { code: "INVALID_TOKEN" as const };
@@ -91,7 +92,7 @@ export function devicesEnrollRoutes(env: ServerEnv): FastifyPluginAsync {
             keyPrefix: prefix,
           });
 
-          await tx
+          const updateResult = await tx
             .update(deviceEnrollmentTokens)
             .set({
               usedAt: sql`NOW()`,
@@ -103,6 +104,12 @@ export function devicesEnrollRoutes(env: ServerEnv): FastifyPluginAsync {
                 isNull(deviceEnrollmentTokens.usedAt),
               ),
             );
+          if (updateResult.rowCount !== 1) {
+            // Should be unreachable because the row is locked via FOR UPDATE above.
+            // If it ever fires, our invariant has been broken — abort and force the
+            // caller to retry-or-investigate via TOKEN_USED.
+            throw { code: "TOKEN_USED" as const };
+          }
 
           await writeAudit(tx, {
             actorUserId: tokenRow.userId,
