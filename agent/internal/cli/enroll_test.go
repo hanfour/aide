@@ -177,3 +177,76 @@ func TestClaudeProjectsRoot_DefaultsToHomeClaudeProjects(t *testing.T) {
 		t.Errorf("claudeProjectsRoot = %q, want %q", got, want)
 	}
 }
+
+func TestEnrollServerReturns401_ReturnsExit1_NoLocalState(t *testing.T) {
+	t.Setenv("CALIBER_AGENT_HOME", t.TempDir())
+	withFakeSecurity(t, 0, "")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(401)
+		w.Write([]byte(`{"error":"invalid_token"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("CALIBER_API_BASE_URL", srv.URL)
+
+	useFakePrompter(t, []bool{true}, [][]int{{}})
+
+	cmd := New()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"enroll", "bad-token"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected error on 401")
+	}
+	var ee *ExitError
+	if !errors.As(err, &ee) {
+		t.Fatalf("err = %v, want *ExitError", err)
+	}
+	if ee.Code != 1 {
+		t.Errorf("Code = %d, want 1", ee.Code)
+	}
+
+	// No config should have been written.
+	if _, lerr := config.Load(); !errors.Is(lerr, config.ErrNotEnrolled) {
+		t.Errorf("config must not exist after 401, got: %v", lerr)
+	}
+}
+
+func TestEnrollHuhAbort_ReturnsExit130(t *testing.T) {
+	t.Setenv("CALIBER_AGENT_HOME", t.TempDir())
+	withFakeSecurity(t, 0, "")
+
+	// The server never gets hit because the wizard cancels at first Confirm.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("server should not be hit when user aborts before API call")
+		w.WriteHeader(500)
+	}))
+	defer srv.Close()
+	t.Setenv("CALIBER_API_BASE_URL", srv.URL)
+
+	// Inject a Prompter that returns huh.ErrUserAborted on the first Confirm.
+	// We need a fresh fake type rather than FakePrompter (which can't simulate
+	// the user-aborted error), so build one inline.
+	useAbortingPrompter(t)
+
+	cmd := New()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"enroll", "any-token"})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected error on huh abort")
+	}
+	var ee *ExitError
+	if !errors.As(err, &ee) {
+		t.Fatalf("err = %v, want *ExitError", err)
+	}
+	if ee.Code != 130 {
+		t.Errorf("Code = %d, want 130 (SIGINT/huh-abort contract)", ee.Code)
+	}
+}
