@@ -218,21 +218,36 @@ type APIError struct {
     ErrorTag   string  // parsed from JSON `error` field, e.g. "invalid_token"
     Body       string  // first 200 chars of raw response body
 }
-func (e *APIError) Error() string
+func (e *APIError) Error() string { ... }
+
+// Is implements errors.Is for sentinel comparison. This is the canonical
+// pattern for "one concrete error type that can match multiple sentinels":
+// the client returns *APIError directly (no fmt.Errorf wrapping), so both
+// errors.Is(err, ErrInvalidToken) AND errors.As(err, &apiErr) succeed on
+// the SAME returned value.
+func (e *APIError) Is(target error) bool {
+    switch target {
+    case ErrInvalidToken:  return e.StatusCode == 401 && e.ErrorTag == "invalid_token"
+    case ErrTokenUsed:     return e.StatusCode == 410 && e.ErrorTag == "token_already_used"
+    case ErrTokenExpired:  return e.StatusCode == 410 && e.ErrorTag == "token_expired"
+    case ErrServerMisconf: return e.StatusCode == 500 && e.ErrorTag == "server_misconfigured"
+    }
+    return false
+}
 ```
 
 **Response-body parsing**: server replies for failure paths have the shape `{ "error": "<tag>", "details"?: ... }` (see `apps/api/src/rest/devicesEnroll.ts:39,134-149`). The client decodes the `error` field into `APIError.ErrorTag`. Mapping table:
 
-| HTTP | `error` value | mapped sentinel |
-|---|---|---|
-| 400 | `invalid_body` | `*APIError` only (no sentinel — operator error) |
-| 401 | `invalid_token` | `ErrInvalidToken` |
-| 410 | `token_already_used` | `ErrTokenUsed` |
-| 410 | `token_expired` | `ErrTokenExpired` |
-| 500 | `server_misconfigured` | `ErrServerMisconf` |
-| 500 | `internal_error` | `*APIError` only |
+| HTTP | `error` value | mapped sentinel | exposed via |
+|---|---|---|---|
+| 400 | `invalid_body` | (no sentinel) | `errors.As(err, &apiErr)` |
+| 401 | `invalid_token` | `ErrInvalidToken` | both `errors.Is` and `errors.As` |
+| 410 | `token_already_used` | `ErrTokenUsed` | both |
+| 410 | `token_expired` | `ErrTokenExpired` | both |
+| 500 | `server_misconfigured` | `ErrServerMisconf` | both |
+| 500 | `internal_error` | (no sentinel) | `errors.As(err, &apiErr)` |
 
-`errors.Is(err, ErrInvalidToken)` works because the API client returns the sentinel wrapped (`fmt.Errorf("%w: %+v", ErrInvalidToken, apiErr)`) so both `errors.Is` and `errors.As` succeed.
+**Why the custom `Is` instead of `fmt.Errorf("%w", sentinel)` wrapping**: `fmt.Errorf("%w: %+v", sentinel, apiErr)` chains the sentinel but renders `apiErr` only as a string — `errors.As(err, &*APIError{})` returns false because the struct is not in the chain. Returning `*APIError` directly with a custom `Is` keeps both lookup methods working on a single value, which is what callers like `cli.ExitFromErr` rely on.
 
 No retry. Enrollment is one-shot and 4xx/5xx propagate to user. Body is small; no gzip on request.
 
@@ -252,7 +267,7 @@ func ScanClaudeProjects(root string) ([]ProjectCandidate, error)
 
 ```
 ~/.claude/projects/
-  -Users-hanfourhuang-ai-dev-eval/                  ← dirname encodes cwd
+  -Users-hanfourhuang-ai-dev-eval/                  ← dirname encodes cwd, lossy
     0fd98d81-29f6-4ba5-ba1d-ba04ee4158db.jsonl      ← session transcript
     151b3408-3109-4c53-83f4-697de71a00cd.jsonl
     ...
@@ -260,28 +275,58 @@ func ScanClaudeProjects(root string) ([]ProjectCandidate, error)
     a633460f-3426-4e55-98a4-de1b923afffa.jsonl
 ```
 
-The directory name is the absolute cwd with `/` replaced by `-`, leading slash kept (so `/Users/h/foo` → `-Users-h-foo`). The transcript JSONL itself has heterogeneous first-line shapes (`queue-operation`, user messages, etc.) — `cwd` does appear inside later lines but is **not** reliably present on line 1. Relying on JSONL parsing would miss most candidates.
+The directory name is the absolute cwd with `/` replaced by `-`. **This encoding is lossy whenever the real cwd contains a literal hyphen**: both `/Users/h/ai/dev/eval` and `/Users/h/ai-dev-eval` collapse to the same `-Users-h-ai-dev-eval` dirname. Real-world examples that hit this case constantly: `ai-dev-eval`, `pm-workspace-kit-apps-desktop`, `next-forge`, `react-router-dom`. The dirname is therefore at best a hint.
 
-**Resolution algorithm**:
+JSONL content is the authoritative source. The transcript shapes are heterogeneous (first line is often `queue-operation` with no cwd), but `cwd` appears verbatim in most user/assistant event lines and the parent spec (`docs/superpowers/specs/2026-05-18-multi-source-ingest-design.md:38`) lists it as part of the per-session static metadata that Claude itself records.
+
+**Resolution algorithm** — JSONL primary, dirname fallback:
 
 ```
 for each dir under <root>:
     if dirname doesn't start with "-": skip
-    candidate = strings.ReplaceAll(dirname, "-", "/")     // "/Users/h/ai-dev-eval"
-    if os.Stat(candidate) is dir: use candidate as CWD
-    else:
-        # ambiguous: candidate contains a native "-" in its real path.
-        # Fallback: open the newest *.jsonl in this dir and grep first 50 lines
-        # for `"cwd": "<abs path>"`. Use that if found.
-        # If still unresolved: skip this directory (and log a debug message).
+    cwd = ""
+
+    # Primary: scan JSONL files newest-first, bounded by total bytes read.
+    # We stop at the first valid cwd that stats as a directory.
+    bytesBudget = 256 * 1024              # per-dir cap, total across files
+    for each *.jsonl in dir, newest mtime first:
+        if bytesBudget <= 0: break
+        open file; scan line-by-line:
+            if bytesBudget <= 0: break
+            bytesBudget -= len(line)
+            try: parse line as JSON
+                  if obj has string field "cwd" and os.Stat(cwd) is dir:
+                      cwd = obj.cwd
+                      break out of both loops
+            ignore parse errors
+        close file
+        if cwd != "": break
+
+    # Fallback: dirname decode. Only used when JSONL gave us nothing.
+    if cwd == "":
+        candidate = strings.ReplaceAll(strings.TrimPrefix(dirname, "-"), "-", "/")
+        candidate = "/" + candidate                      # restore leading slash
+        if os.Stat(candidate) is dir: cwd = candidate
+
+    if cwd == "":
+        log debug "could not resolve cwd for <dir>"; skip this directory
+
     SessionCt = count of *.jsonl in dir
     LastSeen  = max mtime of *.jsonl in dir
-    emit ProjectCandidate{CWD, LastSeen, SessionCt}
+    emit ProjectCandidate{CWD: cwd, LastSeen, SessionCt}
 
 dedupe by CWD; sort by LastSeen desc.
 ```
 
-This gives the wizard a reliable candidate list without baking in a fragile transcript-shape assumption. The JSONL fallback only fires for the unambiguous-dirname edge case.
+Rationale for **bytes** rather than line count: JSONL lines vary from ~80 bytes (simple events) to several MB (rare large tool outputs). 256 KB is plenty to find a cwd-bearing event in a healthy transcript and bounds worst-case scan cost. A pathologically misformed transcript skips silently.
+
+**Edge cases the test fixture must exercise**:
+1. Dashed-real-cwd: project `/tmp/test/dashed-real-name` — JSONL primary path must resolve correctly even though dirname decode would yield `/tmp/test/dashed/real/name`.
+2. Clean cwd: project `/tmp/test/plain` — JSONL primary still wins; dirname fallback is not invoked.
+3. JSONL has cwd that no longer exists on disk: must skip (don't trust stale paths).
+4. JSONL empty/corrupt: must fall back to dirname decode and only emit candidate if that path stats as a dir.
+5. Directory contains zero JSONL: must emit a candidate using dirname-decode fallback when that stats as a dir, else skip.
+6. Total bytes budget hit before any cwd found: must fall back to dirname decode.
 
 ```go
 // prompt.go
@@ -546,12 +591,15 @@ Target: 80%+ coverage on `agent/internal/...` (entry `main.go` and Cobra glue ex
 - Assert 30s timeout fires (server `Hang` handler).
 
 **`internal/wizard`** —
-- `projects_test.go`: build a `testdata/claude-projects/` fixture inside `t.TempDir()` with:
-  - dir `-tmp-<tempdir-suffix>-projA` containing two empty `*.jsonl` files (the temp-dir suffix is decoded to a real dir that `os.Stat` will accept)
-  - dir `-tmp-<tempdir-suffix>-projB` containing one `*.jsonl`
-  - a dir `-this-path-does-not-exist` whose decode points nowhere → must trigger the JSONL fallback; seed one line `{"type":"user","cwd":"/tmp/<...>/fallback","..."}` so it resolves
-  - a dir without leading `-` → must be skipped
-  Assert: 3 candidates returned, sorted by `LastSeen` desc, no error.
+- `projects_test.go`: build a fixture tree inside `t.TempDir()` covering all 6 edge cases from §4.5:
+  1. **dashed-real-cwd**: real dir `<tmp>/test/dashed-real-name` + claude dir `-tmp-<tempdir-suffix>-test-dashed-real-name/` containing a JSONL whose first event has `"cwd":"<tmp>/test/dashed-real-name"`. Dirname decode would mis-resolve; JSONL primary must win. **This is the case the previous design failed on.**
+  2. **clean cwd**: real dir `<tmp>/test/plain` + matching claude dir + JSONL with the matching cwd. Both primary and fallback would resolve; primary should fire first.
+  3. **stale cwd in JSONL**: claude dir with JSONL pointing to a non-existent path. Must skip (no candidate emitted).
+  4. **corrupt JSONL + valid dirname fallback**: claude dir `-tmp-<tempdir-suffix>-test-fb/` with one unparseable JSONL; the decoded dirname `<tmp>/test/fb` is a real dir. Must emit candidate via fallback.
+  5. **no JSONL files**: claude dir with no `*.jsonl`; dirname decode is valid. Must emit via fallback.
+  6. **byte budget exhausted**: claude dir with a large JSONL (>256 KB) of lines that contain no `cwd` field. Must fall through to dirname decode.
+  7. **no leading `-`**: dir `not-a-claude-project/`. Must be silently skipped.
+  Assert exact list and ordering (LastSeen desc). Each case is its own `t.Run` sub-test so failures pinpoint the broken path.
 - `prompt_test.go`: fake Prompter implementations exercise default values for Confirm / SelectMulti. The huh library's own UI is not tested.
 - `enroll_test.go`: fake Prompter feeds pre-recorded answers. Spy-wrap `Enroll`/`SetSecret` to verify call order, final config content, and `include_paths=[]` when user picks `None`.
 
@@ -732,30 +780,51 @@ Audit of `apps/api/src/rest/devicesEnroll.ts:48–127` shows the current impleme
 
 Under READ COMMITTED, two concurrent requests can both pass the `SELECT` (both see `used_at = NULL`), both insert their own device+key rows, both attempt the UPDATE. Postgres serialises the row-level write lock; the second UPDATE re-evaluates its `WHERE` clause and silently matches zero rows. Both transactions commit. The token has effectively been redeemed twice.
 
-This is independent of PR1 but is a **prerequisite** that must land first as its own small server PR. Fix shape:
+This is independent of PR1 but is a **prerequisite** that must land first as its own small server PR.
+
+**Recommended fix: SELECT ... FOR UPDATE on the token row.** Smallest diff to current code, preserves the existing transaction shape, easy to verify in review, and Postgres semantics are unambiguous — the row-level lock serialises competing redemptions, and the second waiter re-reads the row after the first commits (READ COMMITTED behaviour on a locked update) so its existing `usedAt !== null` check fires and rejects with `TOKEN_USED`.
 
 ```ts
-// Option A (preferred): SELECT ... FOR UPDATE locks the row up front
-const [tokenRow] = await tx.select({...}).from(deviceEnrollmentTokens)
-  .where(eq(deviceEnrollmentTokens.tokenHash, tokenHash))
-  .for("update")            // drizzle: .for({ strength: "update" })
-  .limit(1);
-// rest of flow unchanged
+// apps/api/src/rest/devicesEnroll.ts — inside tx.transaction(async (tx) => {...})
 
-// Option B: atomic UPDATE-then-INSERT, check rowsAffected
-const updated = await tx.update(deviceEnrollmentTokens)
-  .set({ usedAt: sql`NOW()`, usedByDeviceId: ... })
-  .where(and(
-    eq(deviceEnrollmentTokens.tokenHash, tokenHash),
-    isNull(deviceEnrollmentTokens.usedAt),
-    gt(deviceEnrollmentTokens.expiresAt, sql`NOW()`),
-  ))
-  .returning({ id: deviceEnrollmentTokens.id, userId: ..., orgId: ... });
-if (updated.length === 0) throw INVALID_TOKEN; // or TOKEN_USED / TOKEN_EXPIRED
-// then insert device+key with returned tokenRow context
+// CHANGE 1: lock the token row before reading.
+const [tokenRow] = await tx
+  .select({
+    id: deviceEnrollmentTokens.id,
+    userId: deviceEnrollmentTokens.userId,
+    orgId: deviceEnrollmentTokens.orgId,
+    expiresAt: deviceEnrollmentTokens.expiresAt,
+    usedAt: deviceEnrollmentTokens.usedAt,
+  })
+  .from(deviceEnrollmentTokens)
+  .where(eq(deviceEnrollmentTokens.tokenHash, tokenHash))
+  .for("update")            // drizzle: .for("update"); compiles to SELECT ... FOR UPDATE
+  .limit(1);
+
+// (validation block unchanged — checks tokenRow null / usedAt / expiresAt)
+
+// (device + deviceApiKey inserts unchanged)
+
+// CHANGE 2: defence-in-depth — also check the UPDATE actually marked one row.
+const result = await tx
+  .update(deviceEnrollmentTokens)
+  .set({ usedAt: sql`NOW()`, usedByDeviceId: deviceRow.id })
+  .where(
+    and(
+      eq(deviceEnrollmentTokens.id, tokenRow.id),
+      isNull(deviceEnrollmentTokens.usedAt),
+    ),
+  );
+if (result.rowCount !== 1) {
+  // Should be impossible given the row is locked, but a non-1 here means our
+  // invariant has been broken; abort and force the operator to investigate.
+  throw { code: "TOKEN_USED" as const };
+}
 ```
 
-Recommendation: Option B. It collapses the read/write into one statement, makes "token marked used" the atomic act, and removes the per-tenant-pepper transaction-ordering subtlety. Adds an integration test that fires N concurrent requests for the same token and asserts exactly one 201 + (N-1) 410s.
+**Why not the UPDATE-RETURNING alternative**: collapsing into a single `UPDATE ... WHERE used_at IS NULL ... RETURNING` reduces statement count but creates a new ordering problem — `usedByDeviceId` cannot be set in that UPDATE because the device row doesn't exist yet. The cleanest UPDATE-RETURNING version would need either a pre-generated device UUID before the UPDATE, or a follow-up UPDATE to stamp `usedByDeviceId` (defeating the "atomic" pitch). `SELECT ... FOR UPDATE` is a tighter fit for this transaction shape.
+
+**Test addition**: a new integration test in `apps/api/tests/integration/rest/devicesEnroll.test.ts` that fires N=10 concurrent `POST /v1/devices/enroll` calls with the same token via `Promise.all` and asserts exactly one 201 plus nine 410 responses, plus exactly one row each in `devices` and `device_api_keys` for that token.
 
 **This prerequisite PR is tracked separately, must merge before PR1.**
 
