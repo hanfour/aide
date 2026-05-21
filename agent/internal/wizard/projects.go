@@ -200,8 +200,10 @@ func tryExtractCWD(line string) string {
 // an absolute path. Claude encodes a project directory by replacing every
 // "/" with "-", so the name begins with "-". This decode is ambiguous when
 // the original path contained native hyphens; we resolve the ambiguity by
-// greedily statting each prefix, preferring to extend the current path
-// component before treating a dash as a separator.
+// greedily statting each prefix, preferring to treat a dash as a path
+// separator (deeper interpretation) and only treating it as a literal
+// hyphen in a component name when the separator interpretation does not
+// lead to an existing path on disk.
 func dirnameFallback(name string) string {
 	if !strings.HasPrefix(name, "-") {
 		return ""
@@ -222,10 +224,12 @@ func dirnameFallback(name string) string {
 
 // greedyDecode attempts to reconstruct an absolute path from a dash-encoded
 // string. It walks the encoded string left-to-right; at each "-" it first
-// tries treating the accumulated segment as part of the current directory
-// component (i.e., the dash is a literal hyphen), and only falls back to
-// treating it as a path separator if that leads to an existing path on disk.
-// This is a depth-first search bounded by actual filesystem stat calls.
+// tries treating the dash as a path separator (Option A — stats the
+// accumulated prefix as a candidate directory and recurses if it exists),
+// and only falls back to treating it as a literal hyphen in the current
+// component name (Option B — `greedyDecode2`) if Option A's subtree does
+// not yield a stat-valid path. This is a depth-first search bounded by
+// actual filesystem stat calls.
 func greedyDecode(current, remaining string) string {
 	if remaining == "" {
 		return current
