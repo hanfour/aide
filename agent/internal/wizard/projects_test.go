@@ -174,6 +174,51 @@ func TestScan_ByteBudgetExhaustedManySmallLines(t *testing.T) {
 	}
 }
 
+// TestScan_DeepDashedComponent exercises greedyDecode2 — the helper that
+// keeps building a component when the dash-as-separator interpretation
+// fails. The fixture path has multiple dashes in one final component, so
+// the decoder must walk through several "dash is literal" decisions.
+func TestScan_DeepDashedComponent(t *testing.T) {
+	tmp := t.TempDir()
+	// /<tmp>/test/multi-dash-component-name — 3 native hyphens in the final segment
+	realDir := filepath.Join(tmp, "test", "multi-dash-component-name")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	claudeRoot := filepath.Join(tmp, "claude-projects")
+	claudeDir := filepath.Join(claudeRoot, encodeClaudeDir(realDir))
+	// Force the dirname-fallback path: directory exists but has no JSONL.
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cands, err := ScanClaudeProjects(claudeRoot)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(cands) != 1 {
+		t.Fatalf("expected 1 candidate, got %+v", cands)
+	}
+	if cands[0].CWD != realDir {
+		t.Errorf("CWD = %q, want %q", cands[0].CWD, realDir)
+	}
+}
+
+// TestScan_NoValidDecodingReturnsNothing exercises the all-options-fail
+// path: a dirname that doesn't decode to ANY existing directory, neither
+// via separator nor via literal-hyphen interpretations.
+func TestScan_NoValidDecodingReturnsNothing(t *testing.T) {
+	tmp := t.TempDir()
+	claudeRoot := filepath.Join(tmp, "claude-projects")
+	claudeDir := filepath.Join(claudeRoot, "-this-decodes-to-nowhere-real")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cands, _ := ScanClaudeProjects(claudeRoot)
+	if len(cands) != 0 {
+		t.Errorf("expected 0 candidates, got %+v", cands)
+	}
+}
+
 func TestScan_GiantSingleLineBounded(t *testing.T) {
 	tmp := t.TempDir()
 	claudeRoot := filepath.Join(tmp, "claude-projects")

@@ -112,6 +112,64 @@ func TestRunEnrollWizard_KeychainFailsAfterAPI(t *testing.T) {
 	}
 }
 
+func TestRunEnrollWizard_UserCancelsInitialConfirm(t *testing.T) {
+	t.Setenv("CALIBER_AGENT_HOME", t.TempDir())
+	fp := NewFakePrompter()
+	fp.Answers.Confirms = []bool{false} // user declines at first confirm
+	deps := Deps{
+		Prompter: fp,
+		Scan:     func(string) ([]ProjectCandidate, error) { return nil, nil },
+		Enroll: func(_ context.Context, _ api.EnrollRequest) (*api.EnrollResponse, error) {
+			t.Fatal("Enroll must NOT be called when user declines at initial confirm")
+			return nil, nil
+		},
+		SetSecret: func(_, _ string) error {
+			t.Fatal("SetSecret must NOT be called")
+			return nil
+		},
+	}
+	err := RunEnrollWizard(context.Background(), deps, "t")
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	if !strings.Contains(err.Error(), "cancelled") {
+		t.Errorf("err = %v, want 'cancelled by user'", err)
+	}
+	if _, lerr := config.Load(); !errors.Is(lerr, config.ErrNotEnrolled) {
+		t.Errorf("config must not exist after cancel, got: %v", lerr)
+	}
+}
+
+func TestRunEnrollWizard_UserCancelsFinalConfirm_KeepsKeychainAndInitialConfig(t *testing.T) {
+	t.Setenv("CALIBER_AGENT_HOME", t.TempDir())
+	fp := NewFakePrompter()
+	fp.Answers.Confirms = []bool{true, false} // begin yes, final-save no
+	fp.Answers.Selections = [][]int{{0}}      // pick "None"
+	deps := Deps{
+		Prompter: fp,
+		Scan:     func(string) ([]ProjectCandidate, error) { return nil, nil },
+		Enroll: func(_ context.Context, _ api.EnrollRequest) (*api.EnrollResponse, error) {
+			return &api.EnrollResponse{DeviceID: "d-2", Key: "cda_s", KeyPrefix: "cda_"}, nil
+		},
+		SetSecret: func(_, _ string) error { return nil },
+	}
+	err := RunEnrollWizard(context.Background(), deps, "t")
+	if err != nil {
+		t.Fatalf("RunEnrollWizard: %v", err)
+	}
+	// Config from step-4 initial save must still exist with empty include_paths.
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if cfg.DeviceID != "d-2" {
+		t.Errorf("DeviceID = %q, initial config should have been written before final-confirm gate", cfg.DeviceID)
+	}
+	if len(cfg.IncludePaths) != 0 {
+		t.Errorf("IncludePaths should be empty, got %v", cfg.IncludePaths)
+	}
+}
+
 func TestLostKeyErrorImplementsErrorAndUnwrap(t *testing.T) {
 	cause := errors.New("disk full")
 	lk := &LostKeyError{DeviceID: "d-1", RawKey: "cda_x", Cause: cause}
