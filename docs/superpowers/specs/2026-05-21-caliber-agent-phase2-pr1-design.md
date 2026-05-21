@@ -288,17 +288,29 @@ for each dir under <root>:
 
     # Primary: scan JSONL files newest-first, bounded by total bytes read.
     # We stop at the first valid cwd that stats as a directory.
-    bytesBudget = 256 * 1024              # per-dir cap, total across files
+    bytesBudget   = 256 * 1024            # per-dir cap, total across files
+    perLineCap    = 4 * 1024 * 1024       # 4 MiB; drop oversize lines unparsed
     for each *.jsonl in dir, newest mtime first:
         if bytesBudget <= 0: break
-        open file; scan line-by-line:
+        open file with bufio.NewReaderSize(f, 64*1024)
+        loop:
             if bytesBudget <= 0: break
-            bytesBudget -= len(line)
+            line, err = reader.ReadString('\n')   # NOT bufio.Scanner: its default
+                                                  # MaxScanTokenSize is 64 KiB and
+                                                  # would fail on multi-MB tool-
+                                                  # output lines. ReadString handles
+                                                  # arbitrarily long lines.
+            bytesBudget -= len(line)              # charge full length even if we
+                                                  # skip parsing
+            if len(line) > perLineCap:
+                continue                          # malformed / giant tool output;
+                                                  # don't pay to JSON-parse it
             try: parse line as JSON
                   if obj has string field "cwd" and os.Stat(cwd) is dir:
                       cwd = obj.cwd
-                      break out of both loops
-            ignore parse errors
+                      break out of all loops
+            if err == io.EOF: break
+            ignore JSON parse errors
         close file
         if cwd != "": break
 
@@ -311,8 +323,12 @@ for each dir under <root>:
     if cwd == "":
         log debug "could not resolve cwd for <dir>"; skip this directory
 
-    SessionCt = count of *.jsonl in dir
-    LastSeen  = max mtime of *.jsonl in dir
+    SessionCt = count of *.jsonl in dir          // may be 0 (fallback-only dirs)
+    if SessionCt > 0:
+        LastSeen = max mtime of *.jsonl in dir
+    else:
+        LastSeen = mtime of dir itself            // empty Claude dirs still represent
+                                                  // a project the user touched
     emit ProjectCandidate{CWD: cwd, LastSeen, SessionCt}
 
 dedupe by CWD; sort by LastSeen desc.
@@ -788,6 +804,10 @@ This is independent of PR1 but is a **prerequisite** that must land first as its
 // apps/api/src/rest/devicesEnroll.ts — inside tx.transaction(async (tx) => {...})
 
 // CHANGE 1: lock the token row before reading.
+// Method order mirrors the known-good pattern in
+// apps/api/src/services/invites.ts:136 (.limit(1).for('update')) — drizzle's
+// builder is order-sensitive and the .for(...).limit(...) variant has been
+// observed to fail type-checking in this repo's drizzle version.
 const [tokenRow] = await tx
   .select({
     id: deviceEnrollmentTokens.id,
@@ -798,8 +818,8 @@ const [tokenRow] = await tx
   })
   .from(deviceEnrollmentTokens)
   .where(eq(deviceEnrollmentTokens.tokenHash, tokenHash))
-  .for("update")            // drizzle: .for("update"); compiles to SELECT ... FOR UPDATE
-  .limit(1);
+  .limit(1)
+  .for('update');           // compiles to SELECT ... FOR UPDATE
 
 // (validation block unchanged — checks tokenRow null / usedAt / expiresAt)
 
